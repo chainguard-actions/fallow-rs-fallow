@@ -1,0 +1,45 @@
+name: Test custom artifacts directory
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FALLOW_SKIP_BINARY_VERIFY: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+          artifacts-dir: fallow-test-artifacts
+
+      - name: Assert results file is in artifacts directory
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results path: $RESULTS"
+          if [ -z "$RESULTS" ]; then
+            echo "FAIL: results output is empty"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file does not exist at: $RESULTS"
+            exit 1
+          fi
+          # Check the file is under the artifacts dir
+          if [[ "$RESULTS" != fallow-test-artifacts/* ]] && [[ "$RESULTS" != */fallow-test-artifacts/* ]]; then
+            echo "FAIL: results file '$RESULTS' is not under fallow-test-artifacts/"
+            exit 1
+          fi
+          echo "PASS: results file is in artifacts directory: $RESULTS"

@@ -1,0 +1,55 @@
+name: Test SARIF output format
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FALLOW_SKIP_BINARY_VERIFY: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: sarif
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+
+      - name: Assert SARIF output is populated
+        env:
+          SARIF_PATH: ${{ steps.action.outputs.sarif }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "sarif path: $SARIF_PATH"
+          echo "issues: $ISSUES"
+          if [ -z "$SARIF_PATH" ]; then
+            echo "FAIL: sarif output is empty"
+            exit 1
+          fi
+          if [ ! -f "$SARIF_PATH" ]; then
+            echo "FAIL: sarif file does not exist at: $SARIF_PATH"
+            exit 1
+          fi
+          # Validate SARIF is valid JSON
+          if ! jq empty "$SARIF_PATH" 2>/dev/null; then
+            echo "FAIL: sarif file is not valid JSON"
+            exit 1
+          fi
+          # Check SARIF has the expected schema key
+          SCHEMA=$(jq -r '.["$schema"] // empty' "$SARIF_PATH")
+          echo "sarif schema: $SCHEMA"
+          VERSION=$(jq -r '.version // empty' "$SARIF_PATH")
+          echo "sarif version: $VERSION"
+          if [ -z "$VERSION" ]; then
+            echo "FAIL: sarif file missing version field"
+            exit 1
+          fi
+          echo "PASS: sarif file is valid with version=$VERSION"

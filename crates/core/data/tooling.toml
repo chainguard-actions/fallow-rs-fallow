@@ -1,0 +1,515 @@
+# Community-maintainable catalogue of known dev tooling packages.
+#
+# Packages listed here are tooling: they are used via the CLI or config files
+# rather than imported in application source. See `cli` and [[ambient_types]]
+# below for the entries that need a reference to count as used. This
+# complements the per-plugin `tooling_dependencies()` lists with tooling that
+# is not tied to any single framework plugin.
+#
+# This file is the single source of truth: it is embedded into the binary via
+# `include_str!` and parsed once at startup (see `crates/core/src/plugins/tooling.rs`).
+# There is NO regeneration step. To add a tool, add one entry below and open a PR.
+#
+# How to choose:
+#   - [[prefix]]: a scope or family where EVERY package is tooling
+#     (e.g. `@types/`, `@vitest/`). Matched with `name.starts_with(pattern)`.
+#   - [[exact]]: a single package name. Matched exactly.
+#
+# Do NOT add framework-plugin packages here (anything matching
+# `vite-plugin-*`, `prettier-plugin-*`, `eslint-plugin-*`, `@rollup/plugin-*`).
+# Those must be credited by the relevant plugin's config parser when they
+# actually appear in the config file, otherwise a declared-but-unused plugin is
+# silently treated as used (a false negative). The catalogue parse test rejects
+# such entries.
+#
+# `notes` (on prefix) and `ecosystem` (on exact) are optional, for human
+# context and grouping in the diff. They do not affect matching.
+#
+# `cli = true` marks a command-line tool. A command-line tool in
+# `devDependencies` is credited only when a package.json script, a CI workflow
+# or a git hook runs it, when its own config file exists, or when a plugin
+# credits it. `config` lists the config file patterns of a tool that no
+# plugin covers, relative to the package root or the project root. An entry
+# without `cli` is credited by name.
+#
+# The `@types/` prefix does not credit a type package in `devDependencies` on
+# its own. A `@types/X` package is credited there when the project declares X,
+# imports X or names X in a tsconfig `types` entry, or when it is listed under
+# [[ambient_types]] below.
+
+# ── Prefixes: package families where every member is tooling ──────────────
+
+[[prefix]]
+pattern = "@types/"
+notes = "TypeScript type definitions"
+
+[[prefix]]
+pattern = "husky"
+cli = true
+
+[[prefix]]
+pattern = "lint-staged"
+cli = true
+
+[[prefix]]
+pattern = "commitlint"
+
+[[prefix]]
+pattern = "@commitlint"
+
+[[prefix]]
+pattern = "stylelint"
+
+[[prefix]]
+pattern = "@vitest/"
+notes = "Vitest companion packages (coverage, ui)"
+
+[[prefix]]
+pattern = "@jest/"
+
+[[prefix]]
+pattern = "@tapjs/"
+
+[[prefix]]
+pattern = "@testing-library/"
+
+[[prefix]]
+pattern = "@playwright/"
+
+[[prefix]]
+pattern = "@react-native-community/cli"
+
+[[prefix]]
+pattern = "@react-native/"
+
+[[prefix]]
+pattern = "secretlint"
+
+[[prefix]]
+pattern = "@secretlint/"
+
+[[prefix]]
+pattern = "oxlint"
+cli = true
+
+[[prefix]]
+pattern = "@semantic-release/"
+
+[[prefix]]
+pattern = "semantic-release"
+
+[[prefix]]
+pattern = "@release-it/"
+
+[[prefix]]
+pattern = "@lerna-lite/"
+
+[[prefix]]
+pattern = "@changesets/"
+
+[[prefix]]
+pattern = "@graphql-codegen/"
+
+[[prefix]]
+pattern = "@biomejs/"
+
+[[prefix]]
+pattern = "@electron-forge/"
+
+[[prefix]]
+pattern = "@electron/"
+
+[[prefix]]
+pattern = "@formatjs/"
+
+# ── Exact package names ───────────────────────────────────────────────────
+
+[[exact]]
+name = "typescript"
+ecosystem = "core"
+
+[[exact]]
+name = "prettier"
+ecosystem = "formatting"
+cli = true
+
+[[exact]]
+name = "turbo"
+ecosystem = "monorepo"
+cli = true
+
+[[exact]]
+name = "concurrently"
+ecosystem = "scripts"
+cli = true
+
+[[exact]]
+name = "cross-env"
+ecosystem = "scripts"
+cli = true
+
+[[exact]]
+name = "rimraf"
+ecosystem = "scripts"
+cli = true
+
+[[exact]]
+name = "npm-run-all"
+ecosystem = "scripts"
+cli = true
+
+[[exact]]
+name = "npm-run-all2"
+ecosystem = "scripts"
+cli = true
+
+[[exact]]
+name = "nodemon"
+ecosystem = "scripts"
+cli = true
+
+[[exact]]
+name = "ts-node"
+ecosystem = "runtime"
+cli = true
+
+[[exact]]
+name = "tsx"
+ecosystem = "runtime"
+cli = true
+
+[[exact]]
+name = "knip"
+ecosystem = "analysis"
+
+[[exact]]
+name = "fallow"
+ecosystem = "analysis"
+cli = true
+config = [".fallowrc.json", ".fallowrc.jsonc", "fallow.toml", ".fallow.toml"]
+
+[[exact]]
+name = "jest"
+ecosystem = "testing"
+cli = true
+
+[[exact]]
+name = "vitest"
+ecosystem = "testing"
+cli = true
+
+[[exact]]
+name = "tap"
+ecosystem = "testing"
+cli = true
+
+[[exact]]
+name = "happy-dom"
+ecosystem = "testing"
+
+[[exact]]
+name = "jsdom"
+ecosystem = "testing"
+
+[[exact]]
+name = "vite"
+ecosystem = "bundler"
+cli = true
+
+[[exact]]
+name = "sass"
+ecosystem = "styling"
+
+[[exact]]
+name = "sass-embedded"
+ecosystem = "styling"
+
+[[exact]]
+name = "webpack"
+ecosystem = "bundler"
+cli = true
+
+[[exact]]
+name = "webpack-cli"
+ecosystem = "bundler"
+cli = true
+
+[[exact]]
+name = "webpack-dev-server"
+ecosystem = "bundler"
+cli = true
+
+[[exact]]
+name = "esbuild"
+ecosystem = "bundler"
+cli = true
+
+[[exact]]
+name = "rollup"
+ecosystem = "bundler"
+cli = true
+
+[[exact]]
+name = "swc"
+ecosystem = "transpiler"
+cli = true
+config = [".swcrc"]
+
+[[exact]]
+name = "@swc/core"
+ecosystem = "transpiler"
+
+[[exact]]
+name = "@swc/jest"
+ecosystem = "testing"
+
+[[exact]]
+name = "terser"
+ecosystem = "bundler"
+
+[[exact]]
+name = "cssnano"
+ecosystem = "styling"
+
+[[exact]]
+name = "sharp"
+ecosystem = "build"
+
+[[exact]]
+name = "release-it"
+ecosystem = "release"
+cli = true
+
+[[exact]]
+name = "lerna"
+ecosystem = "monorepo"
+cli = true
+config = ["lerna.json"]
+
+[[exact]]
+name = "dotenv-cli"
+ecosystem = "scripts"
+cli = true
+
+[[exact]]
+name = "dotenv-flow"
+ecosystem = "scripts"
+
+[[exact]]
+name = "oxfmt"
+ecosystem = "formatting"
+cli = true
+
+[[exact]]
+name = "jscpd"
+ecosystem = "analysis"
+cli = true
+config = [".jscpd.json"]
+
+[[exact]]
+name = "npm-check-updates"
+ecosystem = "deps"
+cli = true
+config = [".ncurc.{json,yml,yaml,js,cjs,mjs}"]
+
+[[exact]]
+name = "markdownlint-cli"
+ecosystem = "linting"
+cli = true
+
+[[exact]]
+name = "npm-package-json-lint"
+ecosystem = "linting"
+cli = true
+config = [".npmpackagejsonlintrc.json", "npmpackagejsonlint.config.js"]
+
+[[exact]]
+name = "synp"
+ecosystem = "deps"
+cli = true
+
+[[exact]]
+name = "flow-bin"
+ecosystem = "types"
+cli = true
+config = [".flowconfig"]
+
+[[exact]]
+name = "i18next-parser"
+ecosystem = "i18n"
+cli = true
+
+[[exact]]
+name = "i18next-conv"
+ecosystem = "i18n"
+cli = true
+
+[[exact]]
+name = "webpack-bundle-analyzer"
+ecosystem = "bundler"
+cli = true
+
+[[exact]]
+name = "@vitejs/plugin-vue"
+ecosystem = "bundler"
+
+[[exact]]
+name = "@vitejs/plugin-react"
+ecosystem = "bundler"
+
+[[exact]]
+name = "next-sitemap"
+ecosystem = "build"
+cli = true
+config = ["next-sitemap.config.{js,cjs,mjs}"]
+
+[[exact]]
+name = "tsup"
+ecosystem = "bundler"
+cli = true
+
+[[exact]]
+name = "unbuild"
+ecosystem = "bundler"
+cli = true
+config = ["build.config.{ts,js,mjs,cjs}"]
+
+[[exact]]
+name = "typedoc"
+ecosystem = "docs"
+cli = true
+
+[[exact]]
+name = "nx"
+ecosystem = "monorepo"
+cli = true
+
+[[exact]]
+name = "@manypkg/cli"
+ecosystem = "monorepo"
+cli = true
+
+[[exact]]
+name = "vue-tsc"
+ecosystem = "types"
+cli = true
+
+[[exact]]
+name = "@vue/tsconfig"
+ecosystem = "config"
+
+[[exact]]
+name = "@tsconfig/node20"
+ecosystem = "config"
+
+[[exact]]
+name = "@tsconfig/react-native"
+ecosystem = "config"
+
+[[exact]]
+name = "@typescript/native-preview"
+ecosystem = "core"
+cli = true
+
+[[exact]]
+name = "tw-animate-css"
+ecosystem = "styling"
+
+[[exact]]
+name = "@vitejs/plugin-react-swc"
+ecosystem = "bundler"
+
+[[exact]]
+name = "@vitejs/plugin-legacy"
+ecosystem = "bundler"
+
+[[exact]]
+name = "rolldown"
+ecosystem = "bundler"
+cli = true
+
+[[exact]]
+name = "rolldown-vite"
+ecosystem = "bundler"
+
+[[exact]]
+name = "oxc-transform"
+ecosystem = "transpiler"
+
+[[exact]]
+name = "playwright"
+ecosystem = "testing"
+cli = true
+
+[[exact]]
+name = "puppeteer"
+ecosystem = "testing"
+
+[[exact]]
+name = "madge"
+ecosystem = "analysis"
+cli = true
+config = [".madgerc"]
+
+[[exact]]
+name = "patch-package"
+ecosystem = "deps"
+cli = true
+config = ["patches/*.patch"]
+
+[[exact]]
+name = "electron"
+ecosystem = "build"
+
+[[exact]]
+name = "electron-builder"
+ecosystem = "build"
+cli = true
+
+[[exact]]
+name = "electron-vite"
+ecosystem = "build"
+cli = true
+
+# ── Ambient global type packages ──────────────────────────────────────────
+#
+# These packages declare globals (`process`, `describe`, `Bun`, `chrome`), so
+# a project uses them without importing anything. They are always credited.
+# Keep the list short: a type package that a project imports or whose target
+# it declares needs no entry.
+
+[[ambient_types]]
+name = "@types/node"
+
+[[ambient_types]]
+name = "@types/bun"
+
+[[ambient_types]]
+name = "bun-types"
+
+[[ambient_types]]
+name = "@types/deno"
+
+[[ambient_types]]
+name = "@types/jest"
+
+[[ambient_types]]
+name = "@types/mocha"
+
+[[ambient_types]]
+name = "@types/jasmine"
+
+[[ambient_types]]
+name = "@types/qunit"
+
+[[ambient_types]]
+name = "@types/web"
+
+[[ambient_types]]
+name = "@types/webpack-env"
+
+[[ambient_types]]
+name = "@types/chrome"
+
+[[ambient_types]]
+name = "@types/firefox-webext-browser"

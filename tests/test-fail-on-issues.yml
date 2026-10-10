@@ -1,0 +1,42 @@
+name: Test fail-on-issues gate
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FALLOW_SKIP_BINARY_VERIFY: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Run with fail-on-issues: false — should always succeed regardless of findings
+      - id: action-no-fail
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+
+      - name: Assert action with fail-on-issues false always succeeds
+        env:
+          OUTCOME: ${{ steps.action-no-fail.outcome }}
+          ISSUES: ${{ steps.action-no-fail.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success when fail-on-issues is false, got: $OUTCOME"
+            exit 1
+          fi
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS: action succeeded with fail-on-issues=false, issues=$ISSUES"

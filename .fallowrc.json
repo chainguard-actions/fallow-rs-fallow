@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "ignorePatterns": [
+    "tests/fixtures/**",
+    "tests/conformance/fixtures/**",
+    "editors/vscode/test/integration/fixtures/**",
+    "apps/review-electron/test/fixtures/**",
+    "benchmarks/knip6/**",
+    "reference/knip/**",
+    "fuzz/corpus/**",
+    "crates/cli/viz-assets/**"
+  ],
+  "ignoreUnresolvedImports": [
+    "./generated/lsp-initialization-options.js",
+    "../src/generated/lsp-initialization-options.js"
+  ],
+  "health": {
+    "ignore": [
+      "npm/fallow/scripts/**",
+      "scripts/check-contract-surfaces.mjs",
+      "scripts/public-smoke-conformance.mjs",
+      "scripts/styling-corpus-smoke.mjs"
+    ]
+  },
+  "duplicates": {
+    "ignore": [
+      "npm/fallow/scripts/**",
+      "editors/vscode/src/generated/output-contract.d.ts",
+      "npm/fallow/types/output-contract.d.ts"
+    ]
+  }
+}

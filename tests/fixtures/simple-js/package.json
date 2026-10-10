@@ -1,0 +1,9 @@
+{
+  "name": "simple-js-fixture",
+  "version": "1.0.0",
+  "description": "Simple JS fixture for fallow tests",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  }
+}
