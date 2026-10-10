@@ -1,0 +1,65 @@
+name: Test fix command in dry-run mode
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Run fix command in dry-run mode (default for CI safety)
+      - id: action
+        uses: .
+        with:
+          command: fix
+          root: tests/fixtures/js-project
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+          dry-run: 'true'
+
+      - name: Assert issues output is a number (fix count)
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues (fixes proposed): $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS: fix command ran in dry-run mode, proposed $ISSUES fix(es)"
+
+      - name: Assert results file exists and is valid JSON
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results path: $RESULTS"
+          if [ -z "$RESULTS" ]; then
+            echo "FAIL: results output is empty"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file does not exist at $RESULTS"
+            exit 1
+          fi
+          if ! jq empty "$RESULTS" 2>/dev/null; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
+          echo "PASS: results file exists and is valid JSON"
+
+      - name: Assert fixture files were not modified (dry-run)
+        run: |
+          # In dry-run mode, no files should be modified
+          if git diff --quiet tests/fixtures/js-project/; then
+            echo "PASS: no files were modified (dry-run mode confirmed)"
+          else
+            echo "FAIL: files were modified despite dry-run: true"
+            git diff tests/fixtures/js-project/
+            exit 1
+          fi

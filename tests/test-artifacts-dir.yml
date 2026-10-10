@@ -1,0 +1,58 @@
+name: Test custom artifacts-dir
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/js-project
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+          artifacts-dir: fallow-test-artifacts
+
+      - name: Assert results file is in custom artifacts dir
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results path: $RESULTS"
+          if [ -z "$RESULTS" ]; then
+            echo "FAIL: results output is empty"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file does not exist at $RESULTS"
+            exit 1
+          fi
+          # Check that the results file is under the custom artifacts dir
+          if [[ "$RESULTS" != fallow-test-artifacts/* ]] && [[ "$RESULTS" != *"/fallow-test-artifacts/"* ]]; then
+            echo "FAIL: results file '$RESULTS' is not under fallow-test-artifacts/"
+            exit 1
+          fi
+          if ! jq empty "$RESULTS" 2>/dev/null; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
+          echo "PASS: results file is in custom artifacts dir: $RESULTS"
+
+      - name: Assert issues output is a number
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS: issues=$ISSUES"

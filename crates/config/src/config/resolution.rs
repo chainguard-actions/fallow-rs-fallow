@@ -1,0 +1,2812 @@
+use std::collections::{BTreeMap, hash_map::DefaultHasher};
+use std::ffi::{OsStr, OsString};
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+
+use globset::{Glob, GlobMatcher, GlobSetBuilder};
+use rustc_hash::FxHashSet;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use super::boundaries::ResolvedBoundaryConfig;
+use super::duplicates_config::DuplicatesConfig;
+use super::flags::FlagsConfig;
+use super::format::OutputFormat;
+use super::health::HealthConfig;
+use super::resolve::ResolveConfig;
+use super::rules::{PartialRulesConfig, RulesConfig, Severity};
+use super::similar_code::SimilarCodeConfig;
+use super::used_class_members::UsedClassMemberRule;
+use crate::external_plugin::{ExternalPluginDef, discover_external_plugins};
+
+use super::{
+    BoundaryConfig, FallowConfig, FindingIgnoreMatcher, IgnoreDependencyMatcher,
+    IgnoreExportsUsedInFileConfig, IgnorePatternSet, ProductionConfig, SecurityConfig,
+    TypeAwareConfig,
+};
+
+/// Process-local dedup state for inter-file rule warnings.
+static INTER_FILE_WARN_SEEN: OnceLock<Mutex<FxHashSet<u64>>> = OnceLock::new();
+
+/// Stable hash of `(rule_name, sorted glob list)`.
+fn inter_file_warn_key(rule_name: &str, files: &[String]) -> u64 {
+    let mut sorted: Vec<&str> = files.iter().map(String::as_str).collect();
+    sorted.sort_unstable();
+    let mut hasher = DefaultHasher::new();
+    rule_name.hash(&mut hasher);
+    for s in &sorted {
+        s.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Returns `true` if this warning has not yet fired in the current process.
+fn record_inter_file_warn_seen(rule_name: &str, files: &[String]) -> bool {
+    let seen = INTER_FILE_WARN_SEEN.get_or_init(|| Mutex::new(FxHashSet::default()));
+    let key = inter_file_warn_key(rule_name, files);
+    seen.lock().map_or(true, |mut set| set.insert(key))
+}
+
+#[cfg(test)]
+fn reset_inter_file_warn_dedup_for_test() {
+    if let Some(seen) = INTER_FILE_WARN_SEEN.get()
+        && let Ok(mut set) = seen.lock()
+    {
+        set.clear();
+    }
+}
+
+/// Rule for ignoring specific exports.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IgnoreExportRule {
+    /// Glob pattern for files.
+    pub file: String,
+    /// Export names to ignore (`*` for all).
+    pub exports: Vec<String>,
+}
+
+/// `IgnoreExportRule` with the glob pre-compiled into a matcher.
+#[derive(Debug, Clone)]
+pub struct CompiledIgnoreExportRule {
+    /// Pre-compiled matcher for the rule's `file` glob.
+    pub matcher: globset::GlobMatcher,
+    /// Export names to ignore (`*` for all), copied from the raw rule.
+    pub exports: Vec<String>,
+}
+
+/// Rule for suppressing an `unresolved-catalog-reference` finding.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IgnoreCatalogReferenceRule {
+    /// Required exact package name whose `unresolved-catalog-reference` finding this rule suppresses; compared by string equality against the referenced package, so one rule targets one package's catalog reference (further narrowed by the optional `catalog` and `consumer` filters, all of which must match).
+    pub package: String,
+    /// Optional catalog-name filter: when set, the rule suppresses only references to this exact catalog name (string equality), and when omitted it applies regardless of which catalog is referenced. Use it to scope suppression to one catalog (e.g. `"react18"`) while leaving other catalog references for the same package reportable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<String>,
+    /// Optional glob matched against the consuming workspace `package.json` path (compiled into a glob matcher at config load): when set, the rule suppresses the finding only for consumers whose path matches, and when omitted it applies to every consumer. Use it to suppress a catalog reference in one specific workspace during a staged migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer: Option<String>,
+}
+
+/// `IgnoreCatalogReferenceRule` with the optional consumer glob pre-compiled.
+#[derive(Debug, Clone)]
+pub struct CompiledIgnoreCatalogReferenceRule {
+    /// Exact package name the rule suppresses, compared by string equality.
+    pub package: String,
+    /// Optional exact catalog-name filter; `None` matches any catalog.
+    pub catalog: Option<String>,
+    /// Optional pre-compiled glob over the consuming workspace `package.json`
+    /// path; `None` matches any consumer.
+    pub consumer_matcher: Option<globset::GlobMatcher>,
+}
+
+impl CompiledIgnoreCatalogReferenceRule {
+    /// Whether this rule suppresses an `unresolved-catalog-reference` finding.
+    #[must_use]
+    pub fn matches(&self, package: &str, catalog: &str, consumer_path: &str) -> bool {
+        if self.package != package {
+            return false;
+        }
+        if let Some(catalog_filter) = &self.catalog
+            && catalog_filter != catalog
+        {
+            return false;
+        }
+        if let Some(matcher) = &self.consumer_matcher
+            && !matcher.is_match(consumer_path)
+        {
+            return false;
+        }
+        true
+    }
+}
+
+/// Rule for suppressing dependency-override findings.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IgnoreDependencyOverrideRule {
+    /// Required exact package name whose `unused-dependency-override` or `misconfigured-dependency-override` finding this rule suppresses; compared by string equality against the override's target package, so one rule targets one override entry (further narrowable with the optional `source` filter).
+    pub package: String,
+    /// Optional source filter matched by exact string equality against the override's declaring-file label: set it to `"pnpm-workspace.yaml"` or `"package.json"` to scope the suppression to overrides declared in that file, or omit it to suppress the package's override regardless of where it is declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// `IgnoreDependencyOverrideRule` ready for matching.
+#[derive(Debug, Clone)]
+pub struct CompiledIgnoreDependencyOverrideRule {
+    /// Exact target package name the rule suppresses.
+    pub package: String,
+    /// Optional declaring-file filter (`"pnpm-workspace.yaml"` or
+    /// `"package.json"`); `None` matches either source.
+    pub source: Option<String>,
+}
+
+impl CompiledIgnoreDependencyOverrideRule {
+    /// Whether this rule suppresses a dependency-override finding.
+    #[must_use]
+    pub fn matches(&self, package: &str, source_label: &str) -> bool {
+        if self.package != package {
+            return false;
+        }
+        if let Some(source_filter) = &self.source
+            && source_filter != source_label
+        {
+            return false;
+        }
+        true
+    }
+}
+
+/// Per-file override entry.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConfigOverride {
+    /// Glob-pattern string array selecting which source files this override entry applies to (patterns are validated and compiled to matchers at config load). Set to scope the entry's rule severities to a subset of paths (e.g. `["src/generated/**", "**/*.test.ts"]`); when several override entries match one file, its severities come from every matching entry, applied in list order (later entries win on conflict).
+    pub files: Vec<String>,
+    /// Partial per-rule severity map applied only to files matching this entry's `files` globs; each rule key takes `error`, `warn`, or `off`, and omitted rules keep their top-level severity. Set to change how specific rules (e.g. unused-exports, unused-files) behave for the scoped paths. Inter-file rules (duplicate-exports, circular-dependencies, re-export-cycle) have no effect in an override; fallow warns during analysis and names the right mechanism instead (top-level `ignoreExports` for duplicate-exports, a file-level `// fallow-ignore-file` comment for circular-dependencies and re-export-cycle).
+    #[serde(default)]
+    pub rules: PartialRulesConfig,
+}
+
+/// Resolved override with pre-compiled glob matchers.
+#[derive(Debug, Clone)]
+pub struct ResolvedOverride {
+    /// Pre-compiled matchers for the entry's `files` globs; the override
+    /// applies to a file when any matcher matches.
+    pub matchers: Vec<globset::GlobMatcher>,
+    /// Partial severity map applied to matching files.
+    pub rules: PartialRulesConfig,
+}
+
+/// Which revision an analysis pass describes.
+///
+/// `fallow audit --base <ref>` analyzes the base revision in an isolated
+/// worktree in addition to the working tree. Diagnostics raised while the base
+/// pass runs must say which revision they came from, otherwise a base-only
+/// condition reads as a defect in the current configuration (issue #2013).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnalysisSnapshot {
+    /// The working tree, which is what every command analyzes by default.
+    #[default]
+    Current,
+    /// The base revision analyzed by `audit --base`.
+    Base,
+}
+
+impl AnalysisSnapshot {
+    /// True when this pass analyzes the `audit --base` revision.
+    #[must_use]
+    pub const fn is_base(self) -> bool {
+        matches!(self, Self::Base)
+    }
+}
+
+/// Fully resolved configuration with all globs pre-compiled.
+#[derive(Debug, Clone)]
+pub struct ResolvedConfig {
+    /// Project root every analysis path resolves against.
+    pub root: PathBuf,
+    /// Manual entry-point globs from the `entry` config key, matched against
+    /// discovered files on top of plugin- and manifest-derived entries.
+    pub entry_patterns: Vec<String>,
+    /// Compiled union of user `ignorePatterns` and the built-in default
+    /// ignores (`node_modules`, `dist`, minified bundles, ...); matching files
+    /// are excluded from discovery entirely, unless a `!` entry in
+    /// `ignorePatterns` lifts them (issue #2940).
+    pub ignore_patterns: IgnorePatternSet,
+    /// How many globs at the FRONT of [`Self::ignore_patterns`] came from the
+    /// user's `ignorePatterns` (the `!` exceptions are not globs of this
+    /// union and do not count). The rest, in order, are
+    /// [`DEFAULT_IGNORE_PATTERNS`].
+    ///
+    /// Source discovery needs the split to answer "which pattern removed this
+    /// file": a match index below this count is the project's own explicit
+    /// choice and is reported nowhere, while an index at or above it names a
+    /// built-in the user never asked for (issue #2638).
+    pub user_ignore_pattern_count: usize,
+    /// Post-analysis finding-path matcher built from `ignoreFindings`; hides
+    /// findings without removing files from the module graph.
+    pub ignore_findings: FindingIgnoreMatcher,
+    /// Output format for this run, passed through from the CLI at resolve time.
+    pub output: OutputFormat,
+    /// Cache directory: `cache.dir` resolved against the root, or the default
+    /// `<root>/.fallow`.
+    pub cache_dir: PathBuf,
+    /// Worker-thread count, passed through from the CLI at resolve time.
+    pub threads: usize,
+    /// When true, skip reading and writing the persistent caches for this run.
+    pub no_cache: bool,
+    /// Extraction-cache size ceiling in megabytes (`None` = no ceiling), from
+    /// the CLI override, `FALLOW_CACHE_MAX_SIZE`, or `cache.maxSizeMb`.
+    pub cache_max_size_mb: Option<u32>,
+    /// Hash over extraction-affecting config (the sorted external plugin
+    /// names), mixed into cache keys so plugin changes invalidate cached
+    /// extractions instead of serving stale results.
+    pub cache_config_hash: u64,
+    /// Package names and package-name globs excluded from both
+    /// unused-dependency and unlisted-dependency detection.
+    pub ignore_dependencies: IgnoreDependencyMatcher,
+    /// Command names whose file arguments do not become entry points; `*`
+    /// matches every command.
+    pub ignore_command_entries: Vec<String>,
+    /// Compiled globs matched against raw import specifiers (not filesystem
+    /// paths) whose `unresolved-import` findings are suppressed.
+    pub ignore_unresolved_imports: Vec<GlobMatcher>,
+    /// Raw `ignoreExports` rules as configured, kept alongside the compiled
+    /// form for surfaces that need the original glob text (config editing,
+    /// diagnostics).
+    pub ignore_export_rules: Vec<IgnoreExportRule>,
+    /// `ignoreExports` rules with their file globs pre-compiled for matching.
+    pub compiled_ignore_exports: Vec<CompiledIgnoreExportRule>,
+    /// `ignoreCatalogReferences` rules with consumer globs pre-compiled.
+    pub compiled_ignore_catalog_references: Vec<CompiledIgnoreCatalogReferenceRule>,
+    /// `ignoreDependencyOverrides` rules ready for matching.
+    pub compiled_ignore_dependency_overrides: Vec<CompiledIgnoreDependencyOverrideRule>,
+    /// Same-file-use suppression setting for `unused-export`.
+    pub ignore_exports_used_in_file: IgnoreExportsUsedInFileConfig,
+    /// Class-member names, globs, or heritage-scoped rules treated as
+    /// framework-used and exempt from `unused-class-member`.
+    pub used_class_members: Vec<UsedClassMemberRule>,
+    /// Decorator names stripped of the automatic `unused-class-member`
+    /// exemption that decorated members otherwise receive.
+    pub ignore_decorators: Vec<String>,
+    /// Compiled regex matched against each declared component prop's local
+    /// destructure binding name; a matching prop is exempted from
+    /// `unused-component-props`. `None` when `unusedComponentProps.ignorePattern`
+    /// is unset. Compiled from the validated raw pattern in [`Self::resolve`].
+    pub unused_component_props_ignore: Option<regex::Regex>,
+    /// Options for the `circular-dependencies` rule, passed through unchanged.
+    pub circular_dependencies: super::CircularDependenciesConfig,
+    /// Clone-detection settings, passed through unchanged.
+    pub duplicates: DuplicatesConfig,
+    /// Explicit similar-code candidate settings, passed through unchanged.
+    pub similar_code: SimilarCodeConfig,
+    /// Health and complexity thresholds, passed through unchanged.
+    pub health: HealthConfig,
+    /// TypeScript semantic-analysis opt-in, passed through unchanged.
+    pub type_aware: TypeAwareConfig,
+    /// Per-rule severities with production-mode adjustments applied: when
+    /// [`Self::production`] is set, `unused-dev-dependencies` and
+    /// `unused-optional-dependencies` are forced to `off`.
+    pub rules: RulesConfig,
+    /// Resolved architecture boundaries: preset expanded (honoring the
+    /// tsconfig `rootDir`), auto-discovered zones added, and rules validated.
+    pub boundaries: ResolvedBoundaryConfig,
+    /// Rule packs loaded from the `rulePacks` config key, in config order.
+    /// Validated at config load (`load_rule_packs` is also the validation
+    /// gate in the CLI and programmatic entry points); a pack that fails to
+    /// load here is skipped with a `tracing::error!` as defense in depth.
+    pub rule_packs: Vec<crate::rule_pack::RulePackDef>,
+    /// Source paths from the `rulePacks` config key, index-aligned with
+    /// [`Self::rule_packs`] when every configured pack loaded successfully.
+    pub rule_pack_sources: Vec<PathBuf>,
+    /// Production mode for this analysis pass: test/spec/story/dev files are
+    /// excluded from discovery. Out of [`FallowConfig::resolve`] this is the
+    /// global `production` bool ([`super::ProductionConfig::global`]); the
+    /// per-analysis object form and CLI/env overrides are applied post-resolve.
+    pub production: bool,
+    /// Quiet mode from the CLI: suppress non-essential progress and warning
+    /// output.
+    pub quiet: bool,
+    /// External plugin definitions: inline `framework` entries plus those
+    /// discovered from `plugins` paths, `.fallow/plugins/`, and root
+    /// `fallow-plugin-*` files (first occurrence of a name wins).
+    pub external_plugins: Vec<ExternalPluginDef>,
+    /// Globs for files loaded dynamically at runtime; matching files are
+    /// seeded as entry points so they stay reachable.
+    pub dynamically_loaded: Vec<String>,
+    /// Per-file severity overrides with globs pre-compiled, in config order.
+    pub overrides: Vec<ResolvedOverride>,
+    /// Authored Git baseline refs keyed by workspace root; validated against
+    /// discovered packages when an analysis requests package-scoped changes.
+    pub workspace_changed_since: BTreeMap<String, String>,
+    /// Workspace package root globs from `workspaces.patterns`, added to the
+    /// patterns that the manifests declare.
+    pub workspace_patterns: Vec<String>,
+    /// Saved regression baseline for `--fail-on-regression`, when embedded.
+    pub regression: Option<super::RegressionConfig>,
+    /// In-repo `fallow audit` defaults, passed through unchanged.
+    pub audit: super::AuditConfig,
+    /// Configured CODEOWNERS path override; `None` probes the standard
+    /// locations.
+    pub codeowners: Option<String>,
+    /// Workspace package names (or globs over them) whose public API is
+    /// treated as externally consumed, making their export surface a
+    /// reachability root.
+    pub public_packages: Vec<String>,
+    /// Feature-flag detection settings, passed through unchanged.
+    pub flags: FlagsConfig,
+    /// Security catalogue scoping with `requestReceivers` normalized
+    /// (trimmed, lowercased, deduplicated).
+    pub security: SecurityConfig,
+    /// `fallow fix` behavior settings, passed through unchanged.
+    pub fix: super::FixConfig,
+    /// Module-resolver settings (extra `exports` conditions), passed through
+    /// unchanged.
+    pub resolve: ResolveConfig,
+    /// When true, entry-point exports are subject to `unused-export`
+    /// detection instead of being auto-credited as used.
+    pub include_entry_exports: bool,
+    /// When true, the report keeps the export and member findings of an
+    /// unused file. When false, the rule pass hides them.
+    pub show_cascade: bool,
+    /// When true, drop Nuxt convention entry-pattern fallbacks that
+    /// `nuxt.config` does not explicitly declare; auto-import graph edges are
+    /// synthesized regardless.
+    pub auto_imports: bool,
+    /// When true, a source file that did not parse cleanly fails the run
+    /// through the `parse-error` gate. The CLI flag `--fail-on-parse-error`
+    /// arms the same gate.
+    pub fail_on_parse_error: bool,
+    /// Source files strictly larger than this many bytes are skipped at
+    /// discovery (never read, parsed, or analyzed), guarding against the
+    /// out-of-memory blowup a single multi-MB generated/vendored/bundled file
+    /// causes (issue #1086). `None` means no limit. Declaration files
+    /// (`.d.ts`/`.d.mts`/`.d.cts`) are exempt regardless of size because they
+    /// are reachability roots for global types. Defaults to
+    /// [`DEFAULT_MAX_FILE_SIZE_MB`] MB; the CLI overrides it post-resolve from
+    /// `--max-file-size` / `FALLOW_MAX_FILE_SIZE` (`0` = unlimited).
+    pub max_file_size_bytes: Option<u64>,
+    /// Which revision this analysis pass describes. Always
+    /// [`AnalysisSnapshot::Current`] out of [`FallowConfig::resolve`]; the CLI
+    /// sets [`AnalysisSnapshot::Base`] post-resolve for the isolated
+    /// `audit --base` pass so diagnostics can name the base revision.
+    pub analysis_snapshot: AnalysisSnapshot,
+    /// A stable hash of the config that decides which dead-code findings a
+    /// run reports: the merged user config after `extends`, without the keys
+    /// that only shape other commands or output, plus the loaded external
+    /// plugin and rule pack definitions. It holds no path of this machine,
+    /// so two checkouts of one commit give the same value. Settings that a
+    /// surface changes after resolution (for example `--include-entry-exports`)
+    /// are not in it; the analysis fingerprint adds them.
+    pub detection_config_digest: String,
+}
+
+/// Top-level config keys that do not change which dead-code findings a run
+/// reports. The detection digest leaves them out, so a health threshold or a
+/// cache setting does not change the analysis fingerprint.
+const NON_DETECTION_CONFIG_KEYS: &[&str] = &[
+    "minimumVersion",
+    "duplicates",
+    "similarCode",
+    "health",
+    "security",
+    "fix",
+    "codeowners",
+    "regression",
+    "audit",
+    "failOnParseError",
+    "cache",
+];
+
+/// Serialize `value` with every object key sorted, so a map field gives the
+/// same bytes whatever its insertion order.
+fn canonical_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<(String, serde_json::Value)> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            serde_json::Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key, canonical_json(value)))
+                    .collect(),
+            )
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(canonical_json).collect())
+        }
+        other => other,
+    }
+}
+
+fn canonical_json_string<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .map(canonical_json)
+        .map(|value| value.to_string())
+        .unwrap_or_default()
+}
+
+/// The canonical JSON of the detection-affecting user config keys.
+fn detection_config_json(config: &FallowConfig) -> String {
+    let mut value = serde_json::to_value(config).unwrap_or_default();
+    if let serde_json::Value::Object(map) = &mut value {
+        for key in NON_DETECTION_CONFIG_KEYS {
+            map.shift_remove(*key);
+        }
+    }
+    canonical_json(value).to_string()
+}
+
+/// Default per-file size ceiling (in megabytes) for source discovery. A value
+/// chosen so hand-written source effectively never reaches it while generated
+/// API clients, vendored bundles, and minified blobs do. See issue #1086.
+pub const DEFAULT_MAX_FILE_SIZE_MB: u32 = 5;
+
+/// [`DEFAULT_MAX_FILE_SIZE_MB`] expressed in bytes.
+pub const DEFAULT_MAX_FILE_SIZE_BYTES: u64 = DEFAULT_MAX_FILE_SIZE_MB as u64 * 1024 * 1024;
+
+/// Convert a user-supplied megabyte ceiling into the byte limit stored on
+/// [`ResolvedConfig::max_file_size_bytes`]. `Some(0)` means "no limit"
+/// (`None`); any other `Some(n)` is `n` MB in bytes; `None` (unset) keeps the
+/// built-in [`DEFAULT_MAX_FILE_SIZE_BYTES`].
+#[must_use]
+pub fn resolve_max_file_size_bytes(max_file_size_mb: Option<u32>) -> Option<u64> {
+    match max_file_size_mb {
+        None => Some(DEFAULT_MAX_FILE_SIZE_BYTES),
+        Some(0) => None,
+        Some(mb) => Some(u64::from(mb) * 1024 * 1024),
+    }
+}
+
+/// Hash the extraction-affecting configuration a persisted cache is keyed on:
+/// the external plugin names and the user flag patterns, which the parse
+/// applies. Built-in-only flag patterns add nothing, so a config without a
+/// `flags` section keeps the hash it had before flag patterns joined it.
+///
+/// Public because a run is not the only thing that needs it: `fallow doctor`
+/// inspects the cache without running an analysis, and it resolves config with
+/// caching disabled, which zeroes the stored hash. Comparing against that zero
+/// reported every healthy cache as config drift.
+#[must_use]
+pub fn cache_config_hash(external_plugins: &[ExternalPluginDef], flags: &FlagsConfig) -> u64 {
+    let mut names: Vec<&str> = external_plugins.iter().map(|p| p.name.as_str()).collect();
+    names.sort_unstable();
+    let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+    for name in names {
+        hash_str(&mut hasher, name);
+    }
+    let patterns = flags.patterns();
+    if !patterns.is_builtin_only() {
+        hasher.update(b"\0flags");
+        hasher.update(&(patterns.sdk_patterns.len() as u64).to_le_bytes());
+        for (function, name_arg, provider) in &patterns.sdk_patterns {
+            hash_str(&mut hasher, function);
+            hasher.update(&(*name_arg as u64).to_le_bytes());
+            hash_str(&mut hasher, provider);
+        }
+        hasher.update(&(patterns.env_prefixes.len() as u64).to_le_bytes());
+        for prefix in &patterns.env_prefixes {
+            hash_str(&mut hasher, prefix);
+        }
+        hasher.update(&[u8::from(patterns.config_object_heuristics)]);
+    }
+    hasher.digest()
+}
+
+fn hash_str(hasher: &mut xxhash_rust::xxh3::Xxh3, value: &str) {
+    hasher.update(&(value.len() as u32).to_le_bytes());
+    hasher.update(value.as_bytes());
+}
+
+/// Environment variable that moves the persistent analysis cache.
+pub const CACHE_DIR_ENV: &str = "FALLOW_CACHE_DIR";
+
+/// Read the non-empty `FALLOW_CACHE_DIR` value from the process environment.
+///
+/// Every host that loads a project config (CLI, LSP, MCP, Node bindings)
+/// applies this value with [`ResolvedConfig::override_cache_dir`], so the
+/// variable has one meaning on every surface. It wins over `cache.dir`.
+#[must_use]
+pub fn cache_dir_env_override() -> Option<PathBuf> {
+    std::env::var_os(CACHE_DIR_ENV).and_then(cache_dir_from_env_value)
+}
+
+/// Parse a raw `FALLOW_CACHE_DIR` value. An empty value is no override.
+#[must_use]
+pub fn cache_dir_from_env_value(raw: OsString) -> Option<PathBuf> {
+    Some(PathBuf::from(raw)).filter(|path| !path.as_os_str().is_empty())
+}
+
+/// Environment variable that caps the extraction cache size in megabytes.
+/// It is not a CLI flag because the cap is a platform or CI concern, not an
+/// analysis input (ADR-009).
+pub const CACHE_MAX_SIZE_ENV: &str = "FALLOW_CACHE_MAX_SIZE";
+
+/// Read `FALLOW_CACHE_MAX_SIZE` from the process environment. It wins over
+/// `cache.maxSizeMb` on every host, like [`cache_dir_env_override`].
+#[must_use]
+pub fn cache_max_size_env_override() -> Option<u32> {
+    std::env::var_os(CACHE_MAX_SIZE_ENV)
+        .as_deref()
+        .and_then(cache_max_size_from_env_value)
+}
+
+/// Parse a raw `FALLOW_CACHE_MAX_SIZE` value. Only a positive whole number of
+/// megabytes is an override.
+#[must_use]
+pub fn cache_max_size_from_env_value(raw: &OsStr) -> Option<u32> {
+    raw.to_str()?
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|mb| *mb > 0)
+}
+
+/// Environment variable that turns `workspaces.changedSince` off for every
+/// run of a process, like `--no-package-baselines` does for one run. A CI job
+/// that saves or gates a whole-project baseline sets it once.
+pub const PACKAGE_BASELINES_ENV: &str = "FALLOW_PACKAGE_BASELINES";
+
+/// Whether a raw `FALLOW_PACKAGE_BASELINES` value turns the package map off.
+/// `false`, `0`, `no` and `off` do, in any case. Every other value keeps the
+/// map, so a typo never widens a run.
+#[must_use]
+pub fn package_baselines_disabled_by_env_value(raw: &OsStr) -> bool {
+    raw.to_str().is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "false" | "0" | "no" | "off"
+        )
+    })
+}
+
+fn resolve_cache_dir(root: &Path, configured: Option<PathBuf>) -> PathBuf {
+    let Some(dir) = configured else {
+        return root.join(".fallow");
+    };
+    if dir.is_absolute() {
+        dir
+    } else {
+        root.join(dir)
+    }
+}
+
+fn cache_dir_is_inside_root(root: &Path, cache_dir: &Path) -> bool {
+    if cache_dir.starts_with(root) {
+        return true;
+    }
+    let canonical_root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let canonical_cache =
+        dunce::canonicalize(cache_dir).unwrap_or_else(|_| cache_dir.to_path_buf());
+    canonical_cache.starts_with(&canonical_root)
+}
+
+/// Name of the subdirectory that one project root owns inside a shared cache
+/// directory: the root's folder name for a reader, then a hash of the full
+/// root path, so two roots with the same folder name stay apart.
+fn per_root_cache_subdir(root: &Path) -> String {
+    let path = root.to_string_lossy().replace('\\', "/");
+    let hash = xxhash_rust::xxh3::xxh3_64(path.as_bytes());
+    let name: String = root
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if name.is_empty() {
+        format!("{hash:016x}")
+    } else {
+        format!("{name}-{hash:016x}")
+    }
+}
+
+fn normalize_user_glob_pattern(pattern: &str) -> &str {
+    pattern.strip_prefix("./").unwrap_or(pattern)
+}
+
+/// Built-in discovery ignore patterns, unioned into
+/// [`ResolvedConfig::ignore_patterns`] after the user's own `ignorePatterns`.
+///
+/// Public and ordered because the order IS the index layout of that union:
+/// user patterns occupy `0..user_ignore_pattern_count` and these follow, in
+/// this order. Source discovery maps a match index back to the pattern text
+/// through that layout when it reports which built-in removed a candidate
+/// source file (issue #2638), so reordering this list or changing where it is
+/// appended changes an output contract.
+///
+/// A `!` entry in `ignorePatterns` is not part of this union. It is an
+/// exception that the ignore set applies after the union, so it can lift a
+/// built-in for its own subtree (issue #2940). The `node_modules` and `.git`
+/// patterns can never be lifted.
+pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/.git/**",
+    "**/coverage/**",
+    "**/*.min.js",
+    "**/*.min.mjs",
+    "**/*.min.cjs",
+    "**/*.bundle.js",
+];
+
+#[expect(
+    clippy::expect_used,
+    reason = "user glob patterns are validated before config resolution"
+)]
+fn compile_ignore_patterns(ignore_patterns: &[String]) -> (IgnorePatternSet, usize) {
+    let mut ignore_builder = GlobSetBuilder::new();
+    let mut user_pattern_count = 0;
+    let mut exceptions: Vec<&str> = Vec::new();
+    for pattern in ignore_patterns {
+        if let Some(body) = pattern.strip_prefix('!') {
+            exceptions.push(normalize_user_glob_pattern(body));
+            continue;
+        }
+        let normalized = normalize_user_glob_pattern(pattern);
+        ignore_builder.add(
+            Glob::new(normalized).expect("ignorePatterns entry was validated at config load time"),
+        );
+        user_pattern_count += 1;
+    }
+
+    for pattern in DEFAULT_IGNORE_PATTERNS {
+        ignore_builder.add(Glob::new(pattern).expect("default ignore pattern is valid"));
+    }
+
+    let set = IgnorePatternSet::new(ignore_builder.build().unwrap_or_default(), &exceptions);
+    (set, user_pattern_count)
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "user glob patterns are validated before config resolution"
+)]
+fn compile_ignore_unresolved_imports(patterns: &[String]) -> Vec<GlobMatcher> {
+    patterns
+        .iter()
+        .map(|pattern| {
+            let normalized = normalize_user_glob_pattern(pattern);
+            Glob::new(normalized)
+                .expect("ignoreUnresolvedImports entry was validated at config load time")
+                .compile_matcher()
+        })
+        .collect()
+}
+
+fn resolve_rules_for_production(mut rules: RulesConfig, production: bool) -> RulesConfig {
+    if production {
+        rules.unused_dev_dependencies = Severity::Off;
+        rules.unused_optional_dependencies = Severity::Off;
+    }
+    rules
+}
+
+fn resolve_boundaries(
+    mut boundaries: super::boundaries::BoundaryConfig,
+    root: &Path,
+) -> ResolvedBoundaryConfig {
+    expand_boundary_preset(&mut boundaries, root);
+    let logical_groups = boundaries.expand_auto_discover(root);
+    let mut resolved = boundaries.resolve();
+    resolved.logical_groups = logical_groups;
+    resolved
+}
+
+/// Expand the boundary preset in place, with the tsconfig `rootDir` as the
+/// source root. Does nothing without a preset.
+pub(super) fn expand_boundary_preset(
+    boundaries: &mut super::boundaries::BoundaryConfig,
+    root: &Path,
+) {
+    if boundaries.preset.is_some() {
+        let source_root = crate::workspace::parse_tsconfig_root_dir(root)
+            .filter(|r| r != "." && !r.starts_with("..") && !std::path::Path::new(r).is_absolute())
+            .unwrap_or_else(|| "src".to_owned());
+        if source_root != "src" {
+            tracing::info!("boundary preset: using rootDir '{source_root}' from tsconfig.json");
+        }
+        boundaries.expand(&source_root);
+    }
+}
+
+/// Inter-file rules that a per-file override cannot change.
+///
+/// `circular-dependency` is not in this list: a cycle takes the highest
+/// severity of its files, and a cycle whose files all resolve to `off` is
+/// dropped, so a per-file override does change the result.
+fn ineffective_inter_file_override_rules(rules: &PartialRulesConfig) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if rules.duplicate_exports.is_some() {
+        names.push("duplicate-exports");
+    }
+    if rules.re_export_cycle.is_some() {
+        names.push("re-export-cycle");
+    }
+    names
+}
+
+fn warn_inter_file_overrides(rules: &PartialRulesConfig, files: &[String]) {
+    let ineffective = ineffective_inter_file_override_rules(rules);
+    if ineffective.contains(&"duplicate-exports")
+        && record_inter_file_warn_seen("duplicate-exports", files)
+    {
+        let files = files.join(", ");
+        tracing::warn!(
+            "overrides.rules.duplicate-exports has no effect for files matching [{files}]: duplicate-exports is an inter-file rule. Use top-level `ignoreExports` to exclude these files from duplicate-export grouping."
+        );
+    }
+    if ineffective.contains(&"re-export-cycle")
+        && record_inter_file_warn_seen("re-export-cycle", files)
+    {
+        let files = files.join(", ");
+        tracing::warn!(
+            "overrides.rules.re-export-cycle has no effect for files matching [{files}]: re-export-cycle is an inter-file rule (the cycle spans multiple barrels). Use a file-level `// fallow-ignore-file re-export-cycle` comment in one participating file instead, or set `rules.re-export-cycle: off` at the top level."
+        );
+    }
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "override glob patterns are validated before config resolution"
+)]
+fn compile_overrides(overrides: Vec<ConfigOverride>) -> Vec<ResolvedOverride> {
+    overrides
+        .into_iter()
+        .filter_map(|override_entry| {
+            warn_inter_file_overrides(&override_entry.rules, &override_entry.files);
+            let matchers: Vec<globset::GlobMatcher> = override_entry
+                .files
+                .iter()
+                .map(|pattern| {
+                    Glob::new(pattern)
+                        .expect("overrides[].files pattern was validated at config load time")
+                        .compile_matcher()
+                })
+                .collect();
+            if matchers.is_empty() {
+                None
+            } else {
+                Some(ResolvedOverride {
+                    matchers,
+                    rules: override_entry.rules,
+                })
+            }
+        })
+        .collect()
+}
+
+/// Compile `ignoreExports` file globs into matchers paired with export names.
+#[expect(
+    clippy::expect_used,
+    reason = "user glob patterns are validated before config resolution"
+)]
+fn compile_ignore_export_rules(rules: &[IgnoreExportRule]) -> Vec<CompiledIgnoreExportRule> {
+    rules
+        .iter()
+        .map(|rule| CompiledIgnoreExportRule {
+            matcher: Glob::new(&rule.file)
+                .expect("ignoreExports[].file was validated at config load time")
+                .compile_matcher(),
+            exports: rule.exports.clone(),
+        })
+        .collect()
+}
+
+/// Compile `ignoreCatalogReferences` rules, pre-compiling the consumer glob.
+#[expect(
+    clippy::expect_used,
+    reason = "user glob patterns are validated before config resolution"
+)]
+fn compile_ignore_catalog_reference_rules(
+    rules: &[IgnoreCatalogReferenceRule],
+) -> Vec<CompiledIgnoreCatalogReferenceRule> {
+    rules
+        .iter()
+        .map(|rule| CompiledIgnoreCatalogReferenceRule {
+            package: rule.package.clone(),
+            catalog: rule.catalog.clone(),
+            consumer_matcher: rule.consumer.as_ref().map(|pattern| {
+                Glob::new(pattern)
+                    .expect("ignoreCatalogReferences[].consumer was validated at config load time")
+                    .compile_matcher()
+            }),
+        })
+        .collect()
+}
+
+/// Convert `ignoreDependencyOverrides` rules into their match-ready form.
+fn compile_ignore_dependency_override_rules(
+    rules: &[IgnoreDependencyOverrideRule],
+) -> Vec<CompiledIgnoreDependencyOverrideRule> {
+    rules
+        .iter()
+        .map(|rule| CompiledIgnoreDependencyOverrideRule {
+            package: rule.package.clone(),
+            source: rule.source.clone(),
+        })
+        .collect()
+}
+
+struct CompiledIgnoreSettings {
+    patterns: IgnorePatternSet,
+    user_pattern_count: usize,
+    findings: FindingIgnoreMatcher,
+    unresolved_imports: Vec<GlobMatcher>,
+    exports: Vec<CompiledIgnoreExportRule>,
+    catalog_references: Vec<CompiledIgnoreCatalogReferenceRule>,
+    dependency_overrides: Vec<CompiledIgnoreDependencyOverrideRule>,
+}
+
+fn compile_ignore_settings(config: &FallowConfig) -> CompiledIgnoreSettings {
+    let (patterns, user_pattern_count) = compile_ignore_patterns(&config.ignore_patterns);
+    CompiledIgnoreSettings {
+        patterns,
+        user_pattern_count,
+        findings: FindingIgnoreMatcher::compile(&config.ignore_findings),
+        unresolved_imports: compile_ignore_unresolved_imports(&config.ignore_unresolved_imports),
+        exports: compile_ignore_export_rules(&config.ignore_exports),
+        catalog_references: compile_ignore_catalog_reference_rules(
+            &config.ignore_catalog_references,
+        ),
+        dependency_overrides: compile_ignore_dependency_override_rules(
+            &config.ignore_dependency_overrides,
+        ),
+    }
+}
+
+struct ResolvedPluginSettings {
+    external_plugins: Vec<ExternalPluginDef>,
+    rule_packs: Vec<crate::rule_pack::RulePackDef>,
+    rule_pack_sources: Vec<PathBuf>,
+}
+
+fn resolve_plugin_settings(
+    root: &Path,
+    configured_plugins: &[String],
+    framework: Vec<ExternalPluginDef>,
+    rule_packs: &[String],
+) -> ResolvedPluginSettings {
+    let mut external_plugins = discover_external_plugins(root, configured_plugins);
+    external_plugins.extend(framework);
+
+    let configured_rule_packs = rule_packs;
+    let rule_packs =
+        crate::rule_pack::load_rule_packs(root, configured_rule_packs).unwrap_or_else(|errors| {
+            for error in &errors {
+                tracing::error!("invalid rule pack: {error}");
+            }
+            Vec::new()
+        });
+    let rule_pack_sources = if rule_packs.len() == configured_rule_packs.len() {
+        configured_rule_packs.iter().map(PathBuf::from).collect()
+    } else {
+        Vec::new()
+    };
+
+    ResolvedPluginSettings {
+        external_plugins,
+        rule_packs,
+        rule_pack_sources,
+    }
+}
+
+struct ResolvedCacheSettings {
+    dir: PathBuf,
+    max_size_mb: Option<u32>,
+    config_hash: u64,
+}
+
+struct ResolvedProductionRules {
+    production: bool,
+    rules: RulesConfig,
+}
+
+fn resolve_production_rules(
+    production_config: ProductionConfig,
+    rules: RulesConfig,
+) -> ResolvedProductionRules {
+    let production = production_config.global();
+    ResolvedProductionRules {
+        production,
+        rules: resolve_rules_for_production(rules, production),
+    }
+}
+
+fn resolve_cache_settings(
+    root: &Path,
+    configured_dir: Option<PathBuf>,
+    configured_max_size_mb: Option<u32>,
+    override_max_size_mb: Option<u32>,
+    no_cache: bool,
+    config_hash: impl FnOnce() -> u64,
+) -> ResolvedCacheSettings {
+    ResolvedCacheSettings {
+        dir: resolve_cache_dir(root, configured_dir),
+        max_size_mb: override_max_size_mb.or(configured_max_size_mb),
+        config_hash: if no_cache { 0 } else { config_hash() },
+    }
+}
+
+fn normalize_security_config(security: SecurityConfig) -> SecurityConfig {
+    SecurityConfig {
+        request_receivers: security.normalized_request_receivers(),
+        ..security
+    }
+}
+
+struct ResolvedPathPolicySettings {
+    boundaries: ResolvedBoundaryConfig,
+    overrides: Vec<ResolvedOverride>,
+}
+
+fn resolve_path_policy_settings(
+    boundaries: BoundaryConfig,
+    overrides: Vec<ConfigOverride>,
+    root: &Path,
+) -> ResolvedPathPolicySettings {
+    ResolvedPathPolicySettings {
+        boundaries: resolve_boundaries(boundaries, root),
+        overrides: compile_overrides(overrides),
+    }
+}
+
+fn compile_unused_component_props_ignore(pattern: Option<&str>) -> Option<regex::Regex> {
+    pattern.and_then(|pattern| match regex::Regex::new(pattern) {
+        Ok(re) => Some(re),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "ignoring invalid unusedComponentProps.ignorePattern; this config was \
+                 not validated through FallowConfig::load"
+            );
+            None
+        }
+    })
+}
+
+impl FallowConfig {
+    /// Resolve into a fully resolved config with compiled globs.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "public cross-crate API: ResolvedConfig builder whose runtime-override parameters (root, output, threads, no_cache, quiet, cache_max_size_mb) are an established stable signature; bundling them would break callers"
+    )]
+    pub fn resolve(
+        self,
+        root: PathBuf,
+        output: OutputFormat,
+        threads: usize,
+        no_cache: bool,
+        quiet: bool,
+        cache_max_size_mb: Option<u32>,
+    ) -> ResolvedConfig {
+        let compiled_ignores = compile_ignore_settings(&self);
+        let config_json = detection_config_json(&self);
+
+        let production_rules = resolve_production_rules(self.production, self.rules);
+
+        let plugins =
+            resolve_plugin_settings(&root, &self.plugins, self.framework, &self.rule_packs);
+
+        let cache = resolve_cache_settings(
+            &root,
+            self.cache.dir,
+            self.cache.max_size_mb,
+            cache_max_size_mb,
+            no_cache,
+            || cache_config_hash(&plugins.external_plugins, &self.flags),
+        );
+
+        let detection_config_digest = fallow_types::identity::fnv1a64_parts(&[
+            "config",
+            &config_json,
+            &canonical_json_string(&{
+                let mut sorted: Vec<&ExternalPluginDef> = plugins.external_plugins.iter().collect();
+                sorted.sort_by(|a, b| a.name.cmp(&b.name));
+                sorted
+            }),
+            &canonical_json_string(&plugins.rule_packs),
+        ]);
+
+        let path_policy = resolve_path_policy_settings(self.boundaries, self.overrides, &root);
+        let (workspace_patterns, workspace_changed_since) = self
+            .workspaces
+            .map(|workspaces| (workspaces.patterns, workspaces.changed_since))
+            .unwrap_or_default();
+
+        let unused_component_props_ignore = compile_unused_component_props_ignore(
+            self.unused_component_props.ignore_pattern.as_deref(),
+        );
+
+        ResolvedConfig {
+            root,
+            entry_patterns: self.entry,
+            ignore_patterns: compiled_ignores.patterns,
+            user_ignore_pattern_count: compiled_ignores.user_pattern_count,
+            ignore_findings: compiled_ignores.findings,
+            output,
+            cache_dir: cache.dir,
+            threads,
+            no_cache,
+            cache_max_size_mb: cache.max_size_mb,
+            cache_config_hash: cache.config_hash,
+            ignore_dependencies: IgnoreDependencyMatcher::compile(&self.ignore_dependencies),
+            ignore_command_entries: self.ignore_command_entries,
+            ignore_unresolved_imports: compiled_ignores.unresolved_imports,
+            ignore_export_rules: self.ignore_exports,
+            compiled_ignore_exports: compiled_ignores.exports,
+            compiled_ignore_catalog_references: compiled_ignores.catalog_references,
+            compiled_ignore_dependency_overrides: compiled_ignores.dependency_overrides,
+            ignore_exports_used_in_file: self.ignore_exports_used_in_file,
+            used_class_members: self.used_class_members,
+            ignore_decorators: self.ignore_decorators,
+            unused_component_props_ignore,
+            circular_dependencies: self.circular_dependencies,
+            duplicates: self.duplicates,
+            similar_code: self.similar_code,
+            health: self.health,
+            type_aware: self.type_aware,
+            rules: production_rules.rules,
+            boundaries: path_policy.boundaries,
+            rule_packs: plugins.rule_packs,
+            rule_pack_sources: plugins.rule_pack_sources,
+            production: production_rules.production,
+            quiet,
+            external_plugins: plugins.external_plugins,
+            dynamically_loaded: self.dynamically_loaded,
+            overrides: path_policy.overrides,
+            workspace_changed_since,
+            workspace_patterns,
+            regression: self.regression,
+            audit: self.audit,
+            codeowners: self.codeowners,
+            public_packages: self.public_packages,
+            flags: self.flags,
+            security: normalize_security_config(self.security),
+            fix: self.fix,
+            resolve: self.resolve,
+            include_entry_exports: self.include_entry_exports,
+            show_cascade: self.show_cascade,
+            auto_imports: self.auto_imports,
+            fail_on_parse_error: self.fail_on_parse_error,
+            max_file_size_bytes: Some(DEFAULT_MAX_FILE_SIZE_BYTES),
+            analysis_snapshot: AnalysisSnapshot::Current,
+            detection_config_digest,
+        }
+    }
+}
+
+impl ResolvedConfig {
+    /// Apply a `FALLOW_PACKAGE_BASELINES` value: a false value empties
+    /// `workspaces.changedSince`, so no run of the process reads the map.
+    pub fn apply_package_baselines_env(&mut self, raw: Option<&OsStr>) {
+        if raw.is_some_and(package_baselines_disabled_by_env_value) {
+            self.workspace_changed_since.clear();
+        }
+    }
+
+    /// Replace the resolved cache directory with a host override, such as
+    /// `FALLOW_CACHE_DIR`. A relative path resolves from the project root,
+    /// the same base as `cache.dir`.
+    pub fn override_cache_dir(&mut self, dir: PathBuf) {
+        self.cache_dir = resolve_cache_dir(&self.root, Some(dir));
+    }
+
+    /// Give this project root its own subdirectory when the cache directory
+    /// is outside the root.
+    ///
+    /// A host that analyzes more than one root in one process, such as the
+    /// language server with a multi-root workspace, calls this. Without it,
+    /// the roots write the same `cache.bin` and `graph-cache.bin`, and each
+    /// save replaces the cache of the other root. The CLI does not call it,
+    /// so a shared CI cache stays valid when the checkout path changes. A
+    /// cache directory inside the root already belongs to that root and
+    /// stays unchanged.
+    pub fn scope_shared_cache_dir_to_root(&mut self) {
+        if cache_dir_is_inside_root(&self.root, &self.cache_dir) {
+            return;
+        }
+        self.cache_dir = self.cache_dir.join(per_root_cache_subdir(&self.root));
+    }
+
+    /// Resolve the effective rules for a given file path.
+    /// Starts with base rules and applies matching overrides in order.
+    #[must_use]
+    pub fn resolve_rules_for_path(&self, path: &Path) -> RulesConfig {
+        if self.overrides.is_empty() {
+            return self.rules.clone();
+        }
+
+        let relative = path.strip_prefix(&self.root).unwrap_or(path);
+        let relative_str = relative.to_string_lossy();
+
+        let mut rules = self.rules.clone();
+        for override_entry in &self.overrides {
+            let matches = override_entry
+                .matchers
+                .iter()
+                .any(|m| m.is_match(relative_str.as_ref()));
+            if matches {
+                rules.apply_partial(&override_entry.rules);
+            }
+        }
+        rules
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CacheConfig;
+    use crate::config::boundaries::BoundaryConfig;
+    use crate::config::health::HealthConfig;
+
+    #[test]
+    fn workspace_patterns_reach_resolved_config() {
+        let authored: FallowConfig =
+            serde_json::from_str(r#"{"workspaces":{"patterns":["apps/*/*"]}}"#)
+                .expect("workspace patterns deserialize");
+        let resolved = authored.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Json,
+            1,
+            true,
+            true,
+            None,
+        );
+
+        assert_eq!(resolved.workspace_patterns, vec!["apps/*/*".to_string()]);
+    }
+
+    #[test]
+    fn workspace_changed_since_reaches_resolved_config() {
+        let authored: FallowConfig = serde_json::from_str(
+            r#"{"workspaces":{"changedSince":{"packages/web":"main","packages/legacy":"release/2024.10"}}}"#,
+        )
+        .expect("workspace baselines deserialize");
+        let resolved = authored.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Json,
+            1,
+            true,
+            true,
+            None,
+        );
+
+        assert_eq!(resolved.workspace_changed_since.len(), 2);
+        assert_eq!(resolved.workspace_changed_since["packages/web"], "main");
+        assert_eq!(
+            resolved.workspace_changed_since["packages/legacy"],
+            "release/2024.10"
+        );
+    }
+
+    #[test]
+    fn cache_config_hash_keys_on_user_flag_patterns() {
+        let builtin = cache_config_hash(&[], &FlagsConfig::default());
+        let with_pattern = |function: &str| FlagsConfig {
+            sdk_patterns: vec![super::super::flags::SdkPattern {
+                function: function.to_string(),
+                name_arg: 0,
+                provider: None,
+            }],
+            ..FlagsConfig::default()
+        };
+
+        assert_eq!(
+            builtin,
+            xxhash_rust::xxh3::Xxh3::new().digest(),
+            "a config without flag patterns keeps the plugin-only hash"
+        );
+        assert_ne!(builtin, cache_config_hash(&[], &with_pattern("isOn")));
+        assert_ne!(
+            cache_config_hash(&[], &with_pattern("isOn")),
+            cache_config_hash(&[], &with_pattern("isOff"))
+        );
+        assert_ne!(
+            builtin,
+            cache_config_hash(
+                &[],
+                &FlagsConfig {
+                    config_object_heuristics: true,
+                    ..FlagsConfig::default()
+                }
+            )
+        );
+        assert_ne!(
+            builtin,
+            cache_config_hash(
+                &[],
+                &FlagsConfig {
+                    env_prefixes: vec!["MYAPP_".to_string()],
+                    ..FlagsConfig::default()
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn overrides_deserialize() {
+        let json_str = r#"{
+            "overrides": [{
+                "files": ["*.test.ts"],
+                "rules": {
+                    "unused-exports": "off"
+                }
+            }]
+        }"#;
+        let config: FallowConfig = serde_json::from_str(json_str).unwrap();
+        assert_eq!(config.overrides.len(), 1);
+        assert_eq!(config.overrides[0].files, vec!["*.test.ts"]);
+        assert_eq!(
+            config.overrides[0].rules.unused_exports,
+            Some(Severity::Off)
+        );
+        assert_eq!(config.overrides[0].rules.unused_files, None);
+    }
+
+    #[test]
+    fn resolve_rules_for_path_no_overrides() {
+        let config = FallowConfig {
+            schema: None,
+            minimum_version: None,
+            extends: vec![],
+            entry: vec![],
+            ignore_patterns: vec![],
+            ignore_findings: vec![],
+            framework: vec![],
+            workspaces: None,
+            ignore_dependencies: vec![],
+            ignore_command_entries: vec![],
+            ignore_unresolved_imports: vec![],
+            ignore_exports: vec![],
+            ignore_catalog_references: vec![],
+            ignore_dependency_overrides: vec![],
+            ignore_exports_used_in_file: IgnoreExportsUsedInFileConfig::default(),
+            used_class_members: vec![],
+            ignore_decorators: vec![],
+            unused_component_props: crate::UnusedComponentPropsConfig::default(),
+            circular_dependencies: crate::CircularDependenciesConfig::default(),
+            duplicates: DuplicatesConfig::default(),
+            similar_code: SimilarCodeConfig::default(),
+            health: HealthConfig::default(),
+            rules: RulesConfig::default(),
+            boundaries: BoundaryConfig::default(),
+            production: false.into(),
+            plugins: vec![],
+            rule_packs: vec![],
+            dynamically_loaded: vec![],
+            overrides: vec![],
+            regression: None,
+            type_aware: crate::TypeAwareConfig::default(),
+            audit: crate::config::AuditConfig::default(),
+            codeowners: None,
+            public_packages: vec![],
+            flags: FlagsConfig::default(),
+            security: SecurityConfig::default(),
+            fix: crate::config::FixConfig::default(),
+            resolve: ResolveConfig::default(),
+            sealed: false,
+            include_entry_exports: false,
+            show_cascade: false,
+            auto_imports: false,
+            fail_on_parse_error: false,
+            cache: CacheConfig::default(),
+        };
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        let rules = resolved.resolve_rules_for_path(Path::new("/project/src/foo.ts"));
+        assert_eq!(rules.unused_files, Severity::Error);
+    }
+
+    #[test]
+    fn resolve_rules_for_path_with_matching_override() {
+        let config = FallowConfig {
+            schema: None,
+            minimum_version: None,
+            extends: vec![],
+            entry: vec![],
+            ignore_patterns: vec![],
+            ignore_findings: vec![],
+            framework: vec![],
+            workspaces: None,
+            ignore_dependencies: vec![],
+            ignore_command_entries: vec![],
+            ignore_unresolved_imports: vec![],
+            ignore_exports: vec![],
+            ignore_catalog_references: vec![],
+            ignore_dependency_overrides: vec![],
+            ignore_exports_used_in_file: IgnoreExportsUsedInFileConfig::default(),
+            used_class_members: vec![],
+            ignore_decorators: vec![],
+            unused_component_props: crate::UnusedComponentPropsConfig::default(),
+            circular_dependencies: crate::CircularDependenciesConfig::default(),
+            duplicates: DuplicatesConfig::default(),
+            similar_code: SimilarCodeConfig::default(),
+            health: HealthConfig::default(),
+            rules: RulesConfig::default(),
+            boundaries: BoundaryConfig::default(),
+            production: false.into(),
+            plugins: vec![],
+            rule_packs: vec![],
+            dynamically_loaded: vec![],
+            overrides: vec![ConfigOverride {
+                files: vec!["*.test.ts".to_string()],
+                rules: PartialRulesConfig {
+                    unused_exports: Some(Severity::Off),
+                    ..Default::default()
+                },
+            }],
+            regression: None,
+            type_aware: crate::TypeAwareConfig::default(),
+            audit: crate::config::AuditConfig::default(),
+            codeowners: None,
+            public_packages: vec![],
+            flags: FlagsConfig::default(),
+            security: SecurityConfig::default(),
+            fix: crate::config::FixConfig::default(),
+            resolve: ResolveConfig::default(),
+            sealed: false,
+            include_entry_exports: false,
+            show_cascade: false,
+            auto_imports: false,
+            fail_on_parse_error: false,
+            cache: CacheConfig::default(),
+        };
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+
+        let test_rules = resolved.resolve_rules_for_path(Path::new("/project/src/utils.test.ts"));
+        assert_eq!(test_rules.unused_exports, Severity::Off);
+        assert_eq!(test_rules.unused_files, Severity::Error); // not overridden
+
+        let src_rules = resolved.resolve_rules_for_path(Path::new("/project/src/utils.ts"));
+        assert_eq!(src_rules.unused_exports, Severity::Error);
+    }
+
+    #[test]
+    fn resolve_rules_for_path_later_override_wins() {
+        let config = FallowConfig {
+            schema: None,
+            minimum_version: None,
+            extends: vec![],
+            entry: vec![],
+            ignore_patterns: vec![],
+            ignore_findings: vec![],
+            framework: vec![],
+            workspaces: None,
+            ignore_dependencies: vec![],
+            ignore_command_entries: vec![],
+            ignore_unresolved_imports: vec![],
+            ignore_exports: vec![],
+            ignore_catalog_references: vec![],
+            ignore_dependency_overrides: vec![],
+            ignore_exports_used_in_file: IgnoreExportsUsedInFileConfig::default(),
+            used_class_members: vec![],
+            ignore_decorators: vec![],
+            unused_component_props: crate::UnusedComponentPropsConfig::default(),
+            circular_dependencies: crate::CircularDependenciesConfig::default(),
+            duplicates: DuplicatesConfig::default(),
+            similar_code: SimilarCodeConfig::default(),
+            health: HealthConfig::default(),
+            rules: RulesConfig::default(),
+            boundaries: BoundaryConfig::default(),
+            production: false.into(),
+            plugins: vec![],
+            rule_packs: vec![],
+            dynamically_loaded: vec![],
+            overrides: vec![
+                ConfigOverride {
+                    files: vec!["*.ts".to_string()],
+                    rules: PartialRulesConfig {
+                        unused_files: Some(Severity::Warn),
+                        ..Default::default()
+                    },
+                },
+                ConfigOverride {
+                    files: vec!["*.test.ts".to_string()],
+                    rules: PartialRulesConfig {
+                        unused_files: Some(Severity::Off),
+                        ..Default::default()
+                    },
+                },
+            ],
+            regression: None,
+            type_aware: crate::TypeAwareConfig::default(),
+            audit: crate::config::AuditConfig::default(),
+            codeowners: None,
+            public_packages: vec![],
+            flags: FlagsConfig::default(),
+            security: SecurityConfig::default(),
+            fix: crate::config::FixConfig::default(),
+            resolve: ResolveConfig::default(),
+            sealed: false,
+            include_entry_exports: false,
+            show_cascade: false,
+            auto_imports: false,
+            fail_on_parse_error: false,
+            cache: CacheConfig::default(),
+        };
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+
+        let rules = resolved.resolve_rules_for_path(Path::new("/project/foo.test.ts"));
+        assert_eq!(rules.unused_files, Severity::Off);
+
+        let rules2 = resolved.resolve_rules_for_path(Path::new("/project/foo.ts"));
+        assert_eq!(rules2.unused_files, Severity::Warn);
+    }
+
+    #[test]
+    fn resolve_keeps_inter_file_rule_override_after_warning() {
+        let config = FallowConfig {
+            schema: None,
+            minimum_version: None,
+            extends: vec![],
+            entry: vec![],
+            ignore_patterns: vec![],
+            ignore_findings: vec![],
+            framework: vec![],
+            workspaces: None,
+            ignore_dependencies: vec![],
+            ignore_command_entries: vec![],
+            ignore_unresolved_imports: vec![],
+            ignore_exports: vec![],
+            ignore_catalog_references: vec![],
+            ignore_dependency_overrides: vec![],
+            ignore_exports_used_in_file: IgnoreExportsUsedInFileConfig::default(),
+            used_class_members: vec![],
+            ignore_decorators: vec![],
+            unused_component_props: crate::UnusedComponentPropsConfig::default(),
+            circular_dependencies: crate::CircularDependenciesConfig::default(),
+            duplicates: DuplicatesConfig::default(),
+            similar_code: SimilarCodeConfig::default(),
+            health: HealthConfig::default(),
+            rules: RulesConfig::default(),
+            boundaries: BoundaryConfig::default(),
+            production: false.into(),
+            plugins: vec![],
+            rule_packs: vec![],
+            dynamically_loaded: vec![],
+            overrides: vec![ConfigOverride {
+                files: vec!["**/ui/**".to_string()],
+                rules: PartialRulesConfig {
+                    duplicate_exports: Some(Severity::Off),
+                    unused_files: Some(Severity::Warn),
+                    ..Default::default()
+                },
+            }],
+            regression: None,
+            type_aware: crate::TypeAwareConfig::default(),
+            audit: crate::config::AuditConfig::default(),
+            codeowners: None,
+            public_packages: vec![],
+            flags: FlagsConfig::default(),
+            security: SecurityConfig::default(),
+            fix: crate::config::FixConfig::default(),
+            resolve: ResolveConfig::default(),
+            sealed: false,
+            include_entry_exports: false,
+            show_cascade: false,
+            auto_imports: false,
+            fail_on_parse_error: false,
+            cache: CacheConfig::default(),
+        };
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(
+            resolved.overrides.len(),
+            1,
+            "inter-file rule warning must not drop the override; co-located non-inter-file rules still apply"
+        );
+        let rules = resolved.resolve_rules_for_path(Path::new("/project/ui/dialog.ts"));
+        assert_eq!(rules.unused_files, Severity::Warn);
+    }
+
+    #[test]
+    fn circular_dependency_override_is_not_reported_as_ineffective() {
+        let rules = PartialRulesConfig {
+            circular_dependencies: Some(Severity::Off),
+            duplicate_exports: Some(Severity::Off),
+            re_export_cycle: Some(Severity::Off),
+            ..PartialRulesConfig::default()
+        };
+        assert_eq!(
+            ineffective_inter_file_override_rules(&rules),
+            vec!["duplicate-exports", "re-export-cycle"]
+        );
+
+        let only_circular = PartialRulesConfig {
+            circular_dependencies: Some(Severity::Off),
+            ..PartialRulesConfig::default()
+        };
+        assert!(ineffective_inter_file_override_rules(&only_circular).is_empty());
+    }
+
+    #[test]
+    fn inter_file_warn_dedup_returns_true_only_on_first_key_match() {
+        reset_inter_file_warn_dedup_for_test();
+        let files_a = vec!["__test_dedup_a/*".to_string()];
+        let files_b = vec!["__test_dedup_b/*".to_string()];
+
+        assert!(record_inter_file_warn_seen("duplicate-exports", &files_a));
+        assert!(!record_inter_file_warn_seen("duplicate-exports", &files_a));
+        assert!(!record_inter_file_warn_seen("duplicate-exports", &files_a));
+
+        assert!(record_inter_file_warn_seen("circular-dependency", &files_a));
+        assert!(!record_inter_file_warn_seen(
+            "circular-dependency",
+            &files_a
+        ));
+
+        assert!(record_inter_file_warn_seen("duplicate-exports", &files_b));
+
+        let files_reordered = vec![
+            "__test_dedup_b/*".to_string(),
+            "__test_dedup_a/*".to_string(),
+        ];
+        let files_natural = vec![
+            "__test_dedup_a/*".to_string(),
+            "__test_dedup_b/*".to_string(),
+        ];
+        reset_inter_file_warn_dedup_for_test();
+        assert!(record_inter_file_warn_seen(
+            "duplicate-exports",
+            &files_natural
+        ));
+        assert!(!record_inter_file_warn_seen(
+            "duplicate-exports",
+            &files_reordered
+        ));
+    }
+
+    #[test]
+    fn resolve_called_n_times_dedupes_inter_file_warning_to_one() {
+        reset_inter_file_warn_dedup_for_test();
+        let files = vec!["__test_resolve_dedup/**".to_string()];
+        let build_config = || FallowConfig {
+            schema: None,
+            minimum_version: None,
+            extends: vec![],
+            entry: vec![],
+            ignore_patterns: vec![],
+            ignore_findings: vec![],
+            framework: vec![],
+            workspaces: None,
+            ignore_dependencies: vec![],
+            ignore_command_entries: vec![],
+            ignore_unresolved_imports: vec![],
+            ignore_exports: vec![],
+            ignore_catalog_references: vec![],
+            ignore_dependency_overrides: vec![],
+            ignore_exports_used_in_file: IgnoreExportsUsedInFileConfig::default(),
+            used_class_members: vec![],
+            ignore_decorators: vec![],
+            unused_component_props: crate::UnusedComponentPropsConfig::default(),
+            circular_dependencies: crate::CircularDependenciesConfig::default(),
+            duplicates: DuplicatesConfig::default(),
+            similar_code: SimilarCodeConfig::default(),
+            health: HealthConfig::default(),
+            rules: RulesConfig::default(),
+            boundaries: BoundaryConfig::default(),
+            production: false.into(),
+            plugins: vec![],
+            rule_packs: vec![],
+            dynamically_loaded: vec![],
+            overrides: vec![ConfigOverride {
+                files: files.clone(),
+                rules: PartialRulesConfig {
+                    duplicate_exports: Some(Severity::Off),
+                    ..Default::default()
+                },
+            }],
+            regression: None,
+            type_aware: crate::TypeAwareConfig::default(),
+            audit: crate::config::AuditConfig::default(),
+            codeowners: None,
+            public_packages: vec![],
+            flags: FlagsConfig::default(),
+            security: SecurityConfig::default(),
+            fix: crate::config::FixConfig::default(),
+            resolve: ResolveConfig::default(),
+            sealed: false,
+            include_entry_exports: false,
+            show_cascade: false,
+            auto_imports: false,
+            fail_on_parse_error: false,
+            cache: CacheConfig::default(),
+        };
+        for _ in 0..10 {
+            let _ = build_config().resolve(
+                PathBuf::from("/project"),
+                OutputFormat::Human,
+                1,
+                true,
+                true,
+                None,
+            );
+        }
+        assert!(
+            !record_inter_file_warn_seen("duplicate-exports", &files),
+            "warn key for duplicate-exports + __test_resolve_dedup/** should be marked after the first resolve"
+        );
+    }
+
+    /// Helper to build a FallowConfig with minimal boilerplate.
+    fn make_config(production: bool) -> FallowConfig {
+        FallowConfig {
+            schema: None,
+            minimum_version: None,
+            extends: vec![],
+            entry: vec![],
+            ignore_patterns: vec![],
+            ignore_findings: vec![],
+            framework: vec![],
+            workspaces: None,
+            ignore_dependencies: vec![],
+            ignore_command_entries: vec![],
+            ignore_unresolved_imports: vec![],
+            ignore_exports: vec![],
+            ignore_catalog_references: vec![],
+            ignore_dependency_overrides: vec![],
+            ignore_exports_used_in_file: IgnoreExportsUsedInFileConfig::default(),
+            used_class_members: vec![],
+            ignore_decorators: vec![],
+            unused_component_props: crate::UnusedComponentPropsConfig::default(),
+            circular_dependencies: crate::CircularDependenciesConfig::default(),
+            duplicates: DuplicatesConfig::default(),
+            similar_code: SimilarCodeConfig::default(),
+            health: HealthConfig::default(),
+            rules: RulesConfig::default(),
+            boundaries: BoundaryConfig::default(),
+            production: production.into(),
+            plugins: vec![],
+            rule_packs: vec![],
+            dynamically_loaded: vec![],
+            overrides: vec![],
+            regression: None,
+            type_aware: crate::TypeAwareConfig::default(),
+            audit: crate::config::AuditConfig::default(),
+            codeowners: None,
+            public_packages: vec![],
+            flags: FlagsConfig::default(),
+            security: SecurityConfig::default(),
+            fix: crate::config::FixConfig::default(),
+            resolve: ResolveConfig::default(),
+            sealed: false,
+            include_entry_exports: false,
+            show_cascade: false,
+            auto_imports: false,
+            fail_on_parse_error: false,
+            cache: CacheConfig::default(),
+        }
+    }
+
+    #[test]
+    fn resolve_tracks_rule_pack_sources_in_config_order() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("rule-packs")).unwrap();
+        std::fs::write(
+            dir.path().join("rule-packs/team-policy.jsonc"),
+            r#"{
+  "version": 1,
+  "name": "team-policy",
+  "rules": [
+    {
+      "id": "no-moment",
+      "kind": "banned-import",
+      "specifiers": ["moment"]
+    }
+  ]
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = make_config(false);
+        config.rule_packs = vec!["rule-packs/team-policy.jsonc".to_string()];
+
+        let resolved = config.resolve(
+            dir.path().to_path_buf(),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+
+        assert_eq!(resolved.rule_packs.len(), 1);
+        assert_eq!(resolved.rule_packs[0].name, "team-policy");
+        assert_eq!(
+            resolved.rule_pack_sources,
+            vec![PathBuf::from("rule-packs/team-policy.jsonc")]
+        );
+    }
+
+    #[test]
+    fn resolve_production_forces_dev_deps_off() {
+        let resolved = make_config(true).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(
+            resolved.rules.unused_dev_dependencies,
+            Severity::Off,
+            "production mode should force unused_dev_dependencies to off"
+        );
+    }
+
+    #[test]
+    fn resolve_production_forces_optional_deps_off() {
+        let resolved = make_config(true).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(
+            resolved.rules.unused_optional_dependencies,
+            Severity::Off,
+            "production mode should force unused_optional_dependencies to off"
+        );
+    }
+
+    #[test]
+    fn resolve_production_preserves_other_rules() {
+        let resolved = make_config(true).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(resolved.rules.unused_files, Severity::Error);
+        assert_eq!(resolved.rules.unused_exports, Severity::Error);
+        assert_eq!(resolved.rules.unused_dependencies, Severity::Error);
+    }
+
+    #[test]
+    fn resolve_non_production_keeps_dev_deps_default() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(
+            resolved.rules.unused_dev_dependencies,
+            Severity::Warn,
+            "non-production should keep default severity"
+        );
+        assert_eq!(resolved.rules.unused_optional_dependencies, Severity::Warn);
+    }
+
+    #[test]
+    fn resolve_production_flag_stored() {
+        let resolved = make_config(true).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(resolved.production);
+
+        let resolved2 = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(!resolved2.production);
+    }
+
+    #[test]
+    fn resolve_default_ignores_node_modules() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(
+            resolved
+                .ignore_patterns
+                .is_match("node_modules/lodash/index.js")
+        );
+        assert!(
+            resolved
+                .ignore_patterns
+                .is_match("packages/a/node_modules/react/index.js")
+        );
+    }
+
+    #[test]
+    fn resolve_default_ignores_dist() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(resolved.ignore_patterns.is_match("dist/bundle.js"));
+        assert!(
+            resolved
+                .ignore_patterns
+                .is_match("packages/ui/dist/index.js")
+        );
+    }
+
+    /// Issue #2638: source discovery maps a `GlobSet` match index back to the
+    /// pattern text through this layout, so the split point and the order of
+    /// the built-ins are an output contract, not an implementation detail.
+    /// A future reordering of `compile_ignore_patterns` fails here first.
+    #[test]
+    fn the_compiled_ignore_union_puts_user_patterns_first_and_the_built_ins_in_order() {
+        let mut config = make_config(false);
+        config.ignore_patterns = vec!["vendor/**".to_owned(), "legacy/**".to_owned()];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+
+        assert_eq!(resolved.user_ignore_pattern_count, 2);
+        assert_eq!(
+            resolved.ignore_patterns.len(),
+            2 + DEFAULT_IGNORE_PATTERNS.len(),
+            "the union only ever adds"
+        );
+        assert_eq!(
+            resolved.ignore_patterns.matches("vendor/a.ts"),
+            vec![0],
+            "a user pattern keeps its configured index"
+        );
+        for (offset, pattern) in DEFAULT_IGNORE_PATTERNS.iter().enumerate() {
+            let sample = match *pattern {
+                "**/node_modules/**" => "node_modules/react/index.js",
+                "**/dist/**" => "dist/a.ts",
+                "**/build/**" => "build/a.ts",
+                "**/.git/**" => ".git/hooks/a.js",
+                "**/coverage/**" => "coverage/a.ts",
+                "**/*.min.js" => "a.min.js",
+                "**/*.min.mjs" => "a.min.mjs",
+                "**/*.min.cjs" => "a.min.cjs",
+                "**/*.bundle.js" => "a.bundle.js",
+                other => panic!("no sample path for built-in ignore {other}"),
+            };
+            assert_eq!(
+                resolved.ignore_patterns.matches(sample),
+                vec![resolved.user_ignore_pattern_count + offset],
+                "{pattern} must sit at its DEFAULT_IGNORE_PATTERNS offset"
+            );
+        }
+    }
+
+    /// A file both a user pattern and a built-in match reports the user index
+    /// first, which is how discovery tells an explicit project choice from a
+    /// built-in the user never asked for (issue #2638).
+    #[test]
+    fn a_user_pattern_that_overlaps_a_built_in_matches_at_the_lower_index() {
+        let mut config = make_config(false);
+        config.ignore_patterns = vec!["dist/**".to_owned()];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+
+        let matches = resolved.ignore_patterns.matches("dist/a.ts");
+        assert_eq!(matches.first(), Some(&0));
+        assert!(matches.len() > 1, "the built-in still matches too");
+    }
+
+    #[test]
+    fn resolve_default_ignores_build_at_any_depth() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(
+            resolved.ignore_patterns.is_match("build/output.js"),
+            "root build/ should be ignored"
+        );
+        assert!(
+            resolved.ignore_patterns.is_match("src/build/helper.ts"),
+            "nested build/ should be ignored, like dist/ and coverage/"
+        );
+        assert!(
+            resolved
+                .ignore_patterns
+                .is_match("projects/app/build/index.js"),
+            "build/ inside a workspace package should be ignored"
+        );
+    }
+
+    #[test]
+    fn resolve_default_ignores_match_build_only_as_a_whole_segment() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(!resolved.ignore_patterns.is_match("src/build.ts"));
+        assert!(!resolved.ignore_patterns.is_match("src/rebuild/helper.ts"));
+        assert!(!resolved.ignore_patterns.is_match("src/buildings/a.ts"));
+        assert!(!resolved.ignore_patterns.is_match("src/prebuild/a.ts"));
+    }
+
+    /// A workspace package directory named `build` keeps its entry in workspace
+    /// discovery, because a declared member holding a manifest survives
+    /// `ignorePatterns`, but everything inside it is filtered out: the source
+    /// files never reach the walker in `crates/core/src/discover/walk.rs`, and
+    /// the manifest never reaches the dependency filter in
+    /// `crates/core/src/analyze/unused_deps.rs`. Both consumers read this one
+    /// globset, so pin both paths here and keep the consequence a deliberate
+    /// choice rather than a documentation guess.
+    #[test]
+    fn resolve_default_ignores_cover_a_workspace_package_named_build() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(
+            resolved
+                .ignore_patterns
+                .is_match("packages/build/package.json"),
+            "the manifest stops contributing unused-dependency findings"
+        );
+        assert!(
+            resolved
+                .ignore_patterns
+                .is_match("packages/build/src/index.ts"),
+            "the package's source stops being analyzed entirely"
+        );
+        assert!(
+            resolved
+                .ignore_patterns
+                .is_match("packages/build/src/nested/deep.ts"),
+            "including source below the package's own subdirectories"
+        );
+    }
+
+    /// A framework config inside a nested `build/` directory is filtered out of
+    /// discovery with everything else under the segment, so the path aliases it
+    /// declares are lost and imports through them are reported as unlisted
+    /// dependencies. Pinned so that consequence is a recorded choice.
+    #[test]
+    fn resolve_default_ignores_cover_a_framework_config_inside_build() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(
+            resolved
+                .ignore_patterns
+                .is_match("app/build/webpack.config.js")
+        );
+    }
+
+    #[test]
+    fn resolve_default_ignores_minified_files() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(resolved.ignore_patterns.is_match("vendor/jquery.min.js"));
+        assert!(resolved.ignore_patterns.is_match("lib/utils.min.mjs"));
+        assert!(resolved.ignore_patterns.is_match("lib/legacy.min.cjs"));
+        assert!(resolved.ignore_patterns.is_match("public/app.bundle.js"));
+        assert!(
+            resolved
+                .ignore_patterns
+                .is_match("src/vendor/app.bundle.js")
+        );
+        // Hand-written source with a similar name stays analyzed.
+        assert!(!resolved.ignore_patterns.is_match("src/bundle.ts"));
+        assert!(!resolved.ignore_patterns.is_match("src/app.cjs"));
+    }
+
+    #[test]
+    fn resolve_max_file_size_bytes_default_and_unlimited() {
+        // Unset keeps the built-in default.
+        assert_eq!(
+            resolve_max_file_size_bytes(None),
+            Some(DEFAULT_MAX_FILE_SIZE_BYTES)
+        );
+        // `0` means no limit.
+        assert_eq!(resolve_max_file_size_bytes(Some(0)), None);
+        // Any other value is that many megabytes in bytes.
+        assert_eq!(resolve_max_file_size_bytes(Some(2)), Some(2 * 1024 * 1024));
+        assert_eq!(DEFAULT_MAX_FILE_SIZE_MB, 5);
+    }
+
+    #[test]
+    fn resolve_sets_default_max_file_size() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(
+            resolved.max_file_size_bytes,
+            Some(DEFAULT_MAX_FILE_SIZE_BYTES)
+        );
+    }
+
+    #[test]
+    fn resolve_default_ignores_git() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(resolved.ignore_patterns.is_match(".git/objects/ab/123.js"));
+    }
+
+    #[test]
+    fn resolve_default_ignores_coverage() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(
+            resolved
+                .ignore_patterns
+                .is_match("coverage/lcov-report/index.js")
+        );
+    }
+
+    #[test]
+    fn resolve_source_files_not_ignored_by_default() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(!resolved.ignore_patterns.is_match("src/index.ts"));
+        assert!(
+            !resolved
+                .ignore_patterns
+                .is_match("src/components/Button.tsx")
+        );
+        assert!(!resolved.ignore_patterns.is_match("lib/utils.js"));
+    }
+
+    #[test]
+    fn resolve_custom_ignore_patterns_merged_with_defaults() {
+        let mut config = make_config(false);
+        config.ignore_patterns = vec!["**/__generated__/**".to_string()];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(
+            resolved
+                .ignore_patterns
+                .is_match("src/__generated__/types.ts")
+        );
+        assert!(resolved.ignore_patterns.is_match("node_modules/foo/bar.js"));
+    }
+
+    #[test]
+    fn resolve_normalizes_leading_dot_ignore_patterns() {
+        let mut config = make_config(false);
+        config.ignore_patterns = vec!["./src/generated/**".to_string()];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+
+        assert!(resolved.ignore_patterns.is_match("src/generated/client.ts"));
+        assert!(
+            !resolved
+                .ignore_patterns
+                .is_match("./src/generated/client.ts")
+        );
+    }
+
+    #[test]
+    fn resolve_normalizes_leading_dot_ignore_unresolved_imports() {
+        let mut config = make_config(false);
+        config.ignore_unresolved_imports = vec!["./src/generated/**".to_string()];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+
+        assert!(
+            resolved
+                .ignore_unresolved_imports
+                .iter()
+                .any(|matcher| matcher.is_match("src/generated/client"))
+        );
+        assert!(
+            !resolved
+                .ignore_unresolved_imports
+                .iter()
+                .any(|matcher| matcher.is_match("./src/generated/client"))
+        );
+    }
+
+    #[test]
+    fn resolve_passes_through_entry_patterns() {
+        let mut config = make_config(false);
+        config.entry = vec!["src/**/*.ts".to_string(), "lib/**/*.js".to_string()];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(resolved.entry_patterns, vec!["src/**/*.ts", "lib/**/*.js"]);
+    }
+
+    #[test]
+    fn resolve_passes_through_ignore_dependencies() {
+        let mut config = make_config(false);
+        config.ignore_dependencies = vec!["postcss".to_string(), "autoprefixer".to_string()];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(resolved.ignore_dependencies.is_ignored("postcss"));
+        assert!(resolved.ignore_dependencies.is_ignored("autoprefixer"));
+        assert!(!resolved.ignore_dependencies.is_ignored("postcss-cli"));
+    }
+
+    #[test]
+    fn resolve_passes_through_ignore_command_entries() {
+        let mut config = make_config(false);
+        config.ignore_command_entries = vec!["my-codegen".to_string()];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(resolved.ignore_command_entries, vec!["my-codegen"]);
+    }
+
+    #[test]
+    fn resolve_compiles_ignore_unresolved_imports_as_raw_specifier_globs() {
+        let mut config = make_config(false);
+        config.ignore_unresolved_imports = vec![
+            "@example/icons".to_string(),
+            "@example/icons/**".to_string(),
+            "../generated/**".to_string(),
+        ];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+
+        assert!(
+            resolved
+                .ignore_unresolved_imports
+                .iter()
+                .any(|matcher| matcher.is_match("@example/icons"))
+        );
+        assert!(
+            resolved
+                .ignore_unresolved_imports
+                .iter()
+                .any(|matcher| matcher.is_match("@example/icons/metadata"))
+        );
+        assert!(
+            resolved
+                .ignore_unresolved_imports
+                .iter()
+                .any(|matcher| matcher.is_match("../generated/client"))
+        );
+    }
+
+    #[test]
+    fn ignore_unresolved_imports_subpath_glob_does_not_match_bare_specifier() {
+        let mut config = make_config(false);
+        config.ignore_unresolved_imports = vec!["@example/icons/**".to_string()];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+
+        assert!(
+            !resolved.ignore_unresolved_imports[0].is_match("@example/icons"),
+            "globset treats @example/icons/** as subpaths only; list the bare specifier separately"
+        );
+        assert!(resolved.ignore_unresolved_imports[0].is_match("@example/icons/metadata"));
+    }
+
+    #[test]
+    fn resolve_sets_cache_dir() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/my/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(resolved.cache_dir, PathBuf::from("/my/project/.fallow"));
+    }
+
+    #[test]
+    fn resolve_uses_relative_configured_cache_dir_from_root() {
+        let config = FallowConfig {
+            cache: crate::CacheConfig {
+                dir: Some(PathBuf::from(".cache/fallow")),
+                ..Default::default()
+            },
+            ..make_config(false)
+        };
+        let resolved = config.resolve(
+            PathBuf::from("/my/project"),
+            OutputFormat::Human,
+            1,
+            false,
+            true,
+            None,
+        );
+        assert_eq!(
+            resolved.cache_dir,
+            PathBuf::from("/my/project/.cache/fallow")
+        );
+    }
+
+    #[test]
+    fn cache_dir_override_wins_over_configured_cache_dir() {
+        let config = FallowConfig {
+            cache: crate::CacheConfig {
+                dir: Some(PathBuf::from(".cache/from-config")),
+                ..Default::default()
+            },
+            ..make_config(false)
+        };
+        let mut resolved = config.resolve(
+            PathBuf::from("/my/project"),
+            OutputFormat::Human,
+            1,
+            false,
+            true,
+            None,
+        );
+
+        resolved.override_cache_dir(PathBuf::from(".cache/from-env"));
+        assert_eq!(
+            resolved.cache_dir,
+            PathBuf::from("/my/project/.cache/from-env")
+        );
+        resolved.override_cache_dir(PathBuf::from("/tmp/fallow-cache"));
+        assert_eq!(resolved.cache_dir, PathBuf::from("/tmp/fallow-cache"));
+    }
+
+    fn resolved_with_cache_dir(root: &str, cache_dir: &str) -> ResolvedConfig {
+        let mut resolved = make_config(false).resolve(
+            PathBuf::from(root),
+            OutputFormat::Human,
+            1,
+            false,
+            true,
+            None,
+        );
+        resolved.override_cache_dir(PathBuf::from(cache_dir));
+        resolved
+    }
+
+    #[test]
+    fn scoped_shared_cache_dir_gives_each_root_its_own_subdirectory() {
+        let mut first = resolved_with_cache_dir("/work/app", "/var/cache/fallow");
+        let mut second = resolved_with_cache_dir("/other/app", "/var/cache/fallow");
+        first.scope_shared_cache_dir_to_root();
+        second.scope_shared_cache_dir_to_root();
+
+        assert_eq!(
+            first.cache_dir.parent(),
+            Some(Path::new("/var/cache/fallow"))
+        );
+        assert_eq!(
+            second.cache_dir.parent(),
+            Some(Path::new("/var/cache/fallow"))
+        );
+        assert_ne!(
+            first.cache_dir, second.cache_dir,
+            "two roots with the same folder name must not share a cache"
+        );
+        let name = first
+            .cache_dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(name.starts_with("app-"), "the folder name leads: {name}");
+    }
+
+    #[test]
+    fn scoped_cache_dir_is_stable_for_one_root() {
+        let mut first = resolved_with_cache_dir("/work/app", "/var/cache/fallow");
+        let mut again = resolved_with_cache_dir("/work/app", "/var/cache/fallow");
+        first.scope_shared_cache_dir_to_root();
+        again.scope_shared_cache_dir_to_root();
+        assert_eq!(first.cache_dir, again.cache_dir);
+    }
+
+    #[test]
+    fn scoping_keeps_a_cache_dir_inside_the_root() {
+        let mut relative = resolved_with_cache_dir("/work/app", ".cache/fallow");
+        relative.scope_shared_cache_dir_to_root();
+        assert_eq!(relative.cache_dir, PathBuf::from("/work/app/.cache/fallow"));
+
+        let mut absolute = resolved_with_cache_dir("/work/app", "/work/app/.fallow");
+        absolute.scope_shared_cache_dir_to_root();
+        assert_eq!(absolute.cache_dir, PathBuf::from("/work/app/.fallow"));
+    }
+
+    #[test]
+    fn resolve_keeps_absolute_configured_cache_dir() {
+        let config = FallowConfig {
+            cache: crate::CacheConfig {
+                dir: Some(PathBuf::from("/tmp/fallow-cache")),
+                ..Default::default()
+            },
+            ..make_config(false)
+        };
+        let resolved = config.resolve(
+            PathBuf::from("/my/project"),
+            OutputFormat::Human,
+            1,
+            false,
+            true,
+            None,
+        );
+        assert_eq!(resolved.cache_dir, PathBuf::from("/tmp/fallow-cache"));
+    }
+
+    #[test]
+    fn resolve_passes_through_thread_count() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            8,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(resolved.threads, 8);
+    }
+
+    #[test]
+    fn resolve_passes_through_quiet_flag() {
+        let resolved = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            false,
+            None,
+        );
+        assert!(!resolved.quiet);
+
+        let resolved2 = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(resolved2.quiet);
+    }
+
+    #[test]
+    fn resolve_passes_through_no_cache_flag() {
+        let resolved_no_cache = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(resolved_no_cache.no_cache);
+
+        let resolved_with_cache = make_config(false).resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            false,
+            true,
+            None,
+        );
+        assert!(!resolved_with_cache.no_cache);
+    }
+
+    #[test]
+    #[should_panic(expected = "validated at config load time")]
+    fn resolve_panics_on_unvalidated_invalid_override_glob() {
+        let mut config = make_config(false);
+        config.overrides = vec![ConfigOverride {
+            files: vec!["[invalid".to_string()],
+            rules: PartialRulesConfig {
+                unused_files: Some(Severity::Off),
+                ..Default::default()
+            },
+        }];
+        let _ = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+    }
+
+    #[test]
+    fn resolve_override_with_empty_files_skipped() {
+        let mut config = make_config(false);
+        config.overrides = vec![ConfigOverride {
+            files: vec![],
+            rules: PartialRulesConfig {
+                unused_files: Some(Severity::Off),
+                ..Default::default()
+            },
+        }];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(
+            resolved.overrides.is_empty(),
+            "override with no file patterns should be skipped"
+        );
+    }
+
+    #[test]
+    fn resolve_multiple_valid_overrides() {
+        let mut config = make_config(false);
+        config.overrides = vec![
+            ConfigOverride {
+                files: vec!["*.test.ts".to_string()],
+                rules: PartialRulesConfig {
+                    unused_exports: Some(Severity::Off),
+                    ..Default::default()
+                },
+            },
+            ConfigOverride {
+                files: vec!["*.stories.tsx".to_string()],
+                rules: PartialRulesConfig {
+                    unused_files: Some(Severity::Off),
+                    ..Default::default()
+                },
+            },
+        ];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(resolved.overrides.len(), 2);
+    }
+
+    #[test]
+    fn ignore_export_rule_deserialize() {
+        let json = r#"{"file": "src/types/*.ts", "exports": ["*"]}"#;
+        let rule: IgnoreExportRule = serde_json::from_str(json).unwrap();
+        assert_eq!(rule.file, "src/types/*.ts");
+        assert_eq!(rule.exports, vec!["*"]);
+    }
+
+    #[test]
+    fn ignore_export_rule_specific_exports() {
+        let json = r#"{"file": "src/constants.ts", "exports": ["FOO", "BAR", "BAZ"]}"#;
+        let rule: IgnoreExportRule = serde_json::from_str(json).unwrap();
+        assert_eq!(rule.exports.len(), 3);
+        assert!(rule.exports.contains(&"FOO".to_string()));
+    }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn arb_resolved_config(production: bool) -> ResolvedConfig {
+            make_config(production).resolve(
+                PathBuf::from("/project"),
+                OutputFormat::Human,
+                1,
+                true,
+                true,
+                None,
+            )
+        }
+
+        proptest! {
+            /// Resolved config always has non-empty ignore patterns (defaults are always added).
+            #[test]
+            fn resolved_config_has_default_ignores(production in any::<bool>()) {
+                let resolved = arb_resolved_config(production);
+                prop_assert!(
+                    resolved.ignore_patterns.is_match("node_modules/foo/bar.js"),
+                    "Default ignore should match node_modules"
+                );
+                prop_assert!(
+                    resolved.ignore_patterns.is_match("dist/bundle.js"),
+                    "Default ignore should match dist"
+                );
+            }
+
+            /// Production mode always forces dev and optional deps to Off.
+            #[test]
+            fn production_forces_dev_deps_off(_unused in Just(())) {
+                let resolved = arb_resolved_config(true);
+                prop_assert_eq!(
+                    resolved.rules.unused_dev_dependencies,
+                    Severity::Off,
+                    "Production should force unused_dev_dependencies off"
+                );
+                prop_assert_eq!(
+                    resolved.rules.unused_optional_dependencies,
+                    Severity::Off,
+                    "Production should force unused_optional_dependencies off"
+                );
+            }
+
+            /// Non-production mode preserves default severity for dev deps.
+            #[test]
+            fn non_production_preserves_dev_deps_default(_unused in Just(())) {
+                let resolved = arb_resolved_config(false);
+                prop_assert_eq!(
+                    resolved.rules.unused_dev_dependencies,
+                    Severity::Warn,
+                    "Non-production should keep default dev dep severity"
+                );
+            }
+
+            /// Default cache dir is root/.fallow.
+            #[test]
+            fn cache_dir_defaults_to_root_fallow(dir_suffix in "[a-zA-Z0-9_]{1,20}") {
+                let root = PathBuf::from(format!("/project/{dir_suffix}"));
+                let expected_cache = root.join(".fallow");
+                let resolved = make_config(false).resolve(
+                    root,
+                    OutputFormat::Human,
+                    1,
+                    true,
+                    true,
+                    None,
+                );
+                prop_assert_eq!(
+                    resolved.cache_dir, expected_cache,
+                    "Default cache dir should be root/.fallow"
+                );
+            }
+
+            /// Thread count is always passed through exactly.
+            #[test]
+            fn threads_passed_through(threads in 1..64usize) {
+                let resolved = make_config(false).resolve(
+                    PathBuf::from("/project"),
+                    OutputFormat::Human,
+                    threads,
+                    true,
+                    true, None,
+                );
+                prop_assert_eq!(
+                    resolved.threads, threads,
+                    "Thread count should be passed through"
+                );
+            }
+
+            /// Custom ignore patterns are merged with defaults, not replacing them.
+            /// Uses a pattern regex that cannot match node_modules paths, so the
+            /// assertion proves the default pattern is what provides the match.
+            #[test]
+            fn custom_ignores_dont_replace_defaults(pattern in "[a-z_]{1,10}/[a-z_]{1,10}") {
+                let mut config = make_config(false);
+                config.ignore_patterns = vec![pattern];
+                let resolved = config.resolve(
+                    PathBuf::from("/project"),
+                    OutputFormat::Human,
+                    1,
+                    true,
+                    true, None,
+                );
+                prop_assert!(
+                    resolved.ignore_patterns.is_match("node_modules/foo/bar.js"),
+                    "Default node_modules ignore should still be active"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_expands_boundary_preset() {
+        use crate::config::boundaries::BoundaryPreset;
+
+        let mut config = make_config(false);
+        config.boundaries.preset = Some(BoundaryPreset::Hexagonal);
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(resolved.boundaries.zones.len(), 3);
+        assert_eq!(resolved.boundaries.rules.len(), 3);
+        assert_eq!(resolved.boundaries.zones[0].name, "adapters");
+        assert_eq!(
+            resolved.boundaries.classify_zone("src/adapters/http.ts"),
+            Some("adapters")
+        );
+    }
+
+    #[test]
+    fn resolve_boundary_preset_with_user_override() {
+        use crate::config::boundaries::{BoundaryPreset, BoundaryZone};
+
+        let mut config = make_config(false);
+        config.boundaries.preset = Some(BoundaryPreset::Hexagonal);
+        config.boundaries.zones = vec![BoundaryZone {
+            name: "domain".to_string(),
+            patterns: vec!["src/core/**".to_string()],
+            auto_discover: vec![],
+            root: None,
+        }];
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert_eq!(resolved.boundaries.zones.len(), 3);
+        assert_eq!(
+            resolved.boundaries.classify_zone("src/core/user.ts"),
+            Some("domain")
+        );
+        assert_eq!(
+            resolved.boundaries.classify_zone("src/domain/user.ts"),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_no_preset_unchanged() {
+        let config = make_config(false);
+        let resolved = config.resolve(
+            PathBuf::from("/project"),
+            OutputFormat::Human,
+            1,
+            true,
+            true,
+            None,
+        );
+        assert!(resolved.boundaries.is_empty());
+    }
+}

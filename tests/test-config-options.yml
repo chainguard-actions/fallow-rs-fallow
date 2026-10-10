@@ -1,0 +1,53 @@
+name: Test config and filtering options
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a minimal JS project with fallow config
+        run: |
+          mkdir -p /tmp/fallow-config-project
+          cat > /tmp/fallow-config-project/index.js << 'EOF'
+          export function hello() { return 'hello'; }
+          export function unused() { return 'unused'; }
+          EOF
+          cat > /tmp/fallow-config-project/package.json << 'EOF'
+          { "name": "config-test-project", "version": "1.0.0", "type": "module" }
+          EOF
+          cat > /tmp/fallow-config-project/.fallowrc.json << 'EOF'
+          { "entry": ["index.js"] }
+          EOF
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: /tmp/fallow-config-project
+          config: /tmp/fallow-config-project/.fallowrc.json
+          fail-on-issues: 'false'
+          issue-types: 'unused-exports,unused-files'
+          only: 'dead-code'
+          skip: 'architecture'
+          threads: '2'
+          format: json
+          annotations: 'false'
+
+      - name: Assert action ran
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected in harness environment)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

@@ -1,0 +1,40 @@
+name: Test fail-on-issues gate
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Run dead-code with fail-on-issues: false — should always succeed
+      - id: action-no-fail
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/js-project
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - name: Assert action succeeded with fail-on-issues false
+        env:
+          OUTCOME: ${{ steps.action-no-fail.outcome }}
+          ISSUES: ${{ steps.action-no-fail.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success but got '$OUTCOME'"
+            exit 1
+          fi
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS: action succeeded with fail-on-issues: false, issues=$ISSUES"
