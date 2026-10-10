@@ -885,9 +885,10 @@ if [ -n "${GITHUB_ENV:-}" ]; then
   # Preserve exact argv for pinned-CLI compatibility as inert runner-owned
   # data. Later steps parse this JSON instead of executing a workspace file.
   ANALYSIS_ARGS_JSON=$(jq -cn --args '$ARGS.positional' -- "${ARGS[@]}" "${EXTRA_ARGS[@]}")
+  _safe_prefix=$(printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r')
   printf '%s\n' \
     "FALLOW_RENDER_PATH_PREFIX_SET=${FALLOW_RENDER_PATH_PREFIX_SET}" \
-    "FALLOW_RENDER_PATH_PREFIX=${FALLOW_RENDER_PATH_PREFIX}" \
+    "FALLOW_RENDER_PATH_PREFIX=${_safe_prefix}" \
     "FALLOW_ANALYSIS_ARGS_JSON=${ANALYSIS_ARGS_JSON}" >> "$GITHUB_ENV"
 fi
 

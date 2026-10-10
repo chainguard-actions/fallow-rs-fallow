@@ -10,32 +10,40 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 1 finding(s) were identified and resolved across 1 iteration(s).
+Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 2 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Sub-rule (a): All 8 run: steps in action.yml interpolate ${{ github.action_path }} directly inside the shell command string. Per the check rules, ANY ${{ ... }} expression in a run: block is a script-injection finding, including github.* contexts, because the value flows through YAML template substitution before the shell sees it. The affected lines are: 'run: bash ${{ github.action_path }}/action/scripts/install.sh', 'run: bash ${{ github.action_path }}/action/scripts/broker-token.sh', 'run: bash ${{ github.action_path }}/action/scripts/analyze.sh', 'run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh', 'run: bash ${{ github.action_path }}/action/scripts/comment.sh', 'run: bash ${{ github.action_path }}/action/scripts/annotate.sh', 'run: bash ${{ github.action_path }}/action/scripts/summary.sh', and 'run: bash ${{ github.action_path }}/action/scripts/review.sh'. The safe pattern is to reference the action path via the $GITHUB_ACTION_PATH environment variable instead.
+Sub-rule (a): `${{ github.action_path }}` is interpolated directly inside `run:` shell command strings in action.yml. Although `github.action_path` is GitHub-controlled, the check requires that NO `${{ ... }}` expression appear anywhere inside a `run:` block. All eight run: steps use the pattern `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`.
 
 Locations:
 
-- `action.yml:453`
-- `action.yml:461`
-- `action.yml:479`
-- `action.yml:485`
-- `action.yml:537`
-- `action.yml:556`
-- `action.yml:572`
-- `action.yml:608`
+- `action.yml:370`
+- `action.yml:379`
+- `action.yml:420`
+- `action.yml:440`
+- `action.yml:490`
+- `action.yml:510`
+- `action.yml:530`
+- `action.yml:550`
+
+### github-env-injection (severity: high)
+
+In action/scripts/analyze.sh, the variable `FALLOW_RENDER_PATH_PREFIX` is derived from `inputs.args` (a user-controlled input, mapped via `INPUT_ARGS`) and written to `$GITHUB_ENV` without the required sanitization step (`printf '%s' ... | tr -d '\n\r'`). The write is: `printf '%s\n' ... "FALLOW_RENDER_PATH_PREFIX=${FALLOW_RENDER_PATH_PREFIX}" ... >> "$GITHUB_ENV"`. An attacker who controls `inputs.args` can pass `--report-path-prefix $'\nFOO=bar'` to inject arbitrary key=value pairs into $GITHUB_ENV, potentially overriding environment variables used by subsequent steps.
+
+Locations:
+
+- `action/scripts/analyze.sh:535`
 
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection
+**Fixes applied:** script-injection, github-env-injection
 
 **Notes:**
 
-Fixed all 8 script-injection findings in action.yml by replacing `bash ${{ github.action_path }}/action/scripts/SCRIPT.sh` with `bash "$GITHUB_ACTION_PATH/action/scripts/SCRIPT.sh"` in the run: steps for: install.sh, broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh, and review.sh. The 2 remaining `${{ github.action_path }}` references are in env: blocks (ACTION_JQ_DIR) and are not script-injection findings.
+Fixed script-injection in action.yml: moved `${{ github.action_path }}` out of all 8 `run:` blocks into `env:` blocks as `ACTION_PATH: ${{ github.action_path }}`, then referenced it as `"$ACTION_PATH/action/scripts/<script>.sh"` in each `run:` line. Fixed github-env-injection in action/scripts/analyze.sh: added `_safe_prefix=$(printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r')` before the `printf` that writes to `$GITHUB_ENV`, and used `_safe_prefix` instead of the raw variable to prevent newline injection from user-controlled `INPUT_ARGS`.
 
