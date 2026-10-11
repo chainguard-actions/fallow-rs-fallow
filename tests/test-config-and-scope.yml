@@ -1,4 +1,4 @@
-name: Test threads input
+name: Test config and scope inputs
 on:
   workflow_dispatch:
 jobs:
@@ -14,12 +14,18 @@ jobs:
           root: .
           format: json
           fail-on-issues: 'false'
-          threads: '2'
+          auto-changed-since: 'false'
+          config: ''
+          issue-types: 'unused-exports,unused-files'
+          only: ''
+          skip: 'health,dupes'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
           if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
             echo "PASS: action ran (outcome=$OUTCOME)"
           else

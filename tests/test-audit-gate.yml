@@ -16,13 +16,18 @@ jobs:
           root: .
           format: json
           fail-on-issues: 'false'
+          auto-changed-since: 'false'
           gate: 'new-only'
           security-gate: 'new'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
         run: |
           echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          echo "verdict: $VERDICT"
           if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
             echo "PASS: action ran (outcome=$OUTCOME)"
           else
