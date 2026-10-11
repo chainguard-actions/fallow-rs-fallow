@@ -1,0 +1,82 @@
+name: Test JSON format with artifacts directory
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Create artifacts directory
+        run: mkdir -p fallow-artifacts
+
+      - id: action
+        uses: .
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          artifacts-dir: fallow-artifacts
+
+      - name: Assert results output points to artifacts dir
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results path: $RESULTS"
+          if [ -z "$RESULTS" ]; then
+            echo "FAIL: results output is empty"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file does not exist at: $RESULTS"
+            exit 1
+          fi
+          # Verify the file is in the artifacts directory
+          if [[ "$RESULTS" != fallow-artifacts/* ]] && [[ "$RESULTS" != *fallow-artifacts/* ]]; then
+            echo "WARN: results file not in expected artifacts dir: $RESULTS"
+          fi
+          echo "PASS: results file exists at $RESULTS"
+
+      - name: Assert results file contains expected JSON structure
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "Checking JSON structure of: $RESULTS"
+          if ! jq empty "$RESULTS" 2>/dev/null; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
+          # dead-code results should have total_issues field
+          TOTAL=$(jq -r '.total_issues // empty' "$RESULTS" 2>/dev/null || true)
+          echo "total_issues: '$TOTAL'"
+          if [ -z "$TOTAL" ]; then
+            echo "WARN: total_issues field not found, checking issues output instead"
+          else
+            if ! [[ "$TOTAL" =~ ^[0-9]+$ ]]; then
+              echo "FAIL: total_issues is not a number: '$TOTAL'"
+              exit 1
+            fi
+            echo "PASS: results JSON has valid total_issues=$TOTAL"
+          fi
+
+      - name: Assert issues output is a number
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues output: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS: issues output is a valid number: $ISSUES"

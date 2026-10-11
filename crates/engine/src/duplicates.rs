@@ -1,0 +1,339 @@
+//! Duplication result types exposed through the engine boundary.
+
+use std::path::{Path, PathBuf};
+
+use fallow_config::DuplicatesConfig;
+use fallow_types::discover::DiscoveredFile;
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::results::DuplicationAnalysis;
+
+#[path = "duplication_detector/mod.rs"]
+mod detector;
+
+#[cfg(test)]
+pub(crate) use detector::token_types;
+pub(crate) use detector::types;
+
+/// Detector internals re-exported for the engine's own benches and
+/// integration tests; not part of the supported engine API surface.
+#[doc(hidden)]
+pub use detector::{detect, normalize, tokenize};
+
+/// Engine alias for [`fallow_types::duplicates::CloneGroup`].
+pub type CloneGroup = fallow_types::duplicates::CloneGroup;
+/// Engine alias for [`fallow_types::duplicates::CloneGroupKind`].
+pub type CloneGroupKind = fallow_types::duplicates::CloneGroupKind;
+/// Engine alias for [`fallow_types::duplicates::CloneInstance`].
+pub type CloneInstance = fallow_types::duplicates::CloneInstance;
+/// Engine alias for [`fallow_types::duplicates::DefaultIgnoreSkips`].
+pub type DefaultIgnoreSkips = fallow_types::duplicates::DefaultIgnoreSkips;
+/// Engine alias for [`fallow_types::duplicates::DuplicationReport`].
+pub type DuplicationReport = fallow_types::duplicates::DuplicationReport;
+/// Engine alias for [`fallow_types::duplicates::DuplicationStats`].
+pub type DuplicationStats = fallow_types::duplicates::DuplicationStats;
+/// Engine alias for [`fallow_types::duplicates::RefactoringKind`].
+pub type RefactoringKind = fallow_types::duplicates::RefactoringKind;
+/// Engine alias for [`fallow_types::duplicates::RefactoringSuggestion`].
+pub type RefactoringSuggestion = fallow_types::duplicates::RefactoringSuggestion;
+
+pub use detector::{
+    CloneFingerprintKey, CloneFingerprintSet, FINGERPRINT_PREFIX, clone_fingerprint,
+    dominant_identifier, group_refactoring_suggestion,
+};
+
+/// Refresh clone-family and mirrored-directory fields after clone groups change.
+pub fn refresh_clone_families(report: &mut DuplicationReport, root: &Path) {
+    report.clone_families = detector::families::group_into_families(&report.clone_groups, root);
+    report.mirrored_directories =
+        detector::families::detect_mirrored_directories(&report.clone_families, root);
+}
+
+/// Rebuild the fields that a scope filter invalidates: clone families,
+/// mirrored directories, statistics and the report order.
+///
+/// A scope filter (`--changed-since`, `--workspace`, a diff) narrows the corpus,
+/// so `stats` describes the narrowed corpus after this call. A presentation cap
+/// such as `--top` must not call this.
+pub fn refresh_scoped_report(report: &mut DuplicationReport, root: &Path) {
+    refresh_clone_families(report, root);
+    report.stats = recompute_stats(report);
+    report.sort();
+}
+
+/// The scope of one duplication run, as the surface resolved it.
+///
+/// Every field is optional. A field that is `None` does not narrow the run.
+#[derive(Debug, Clone, Copy)]
+pub struct DuplicationScope<'a> {
+    /// The resolved change scope: a global changed-file set or the
+    /// configured package baselines.
+    pub changes: Option<&'a crate::change_scope::ChangeScope>,
+    /// A unified diff. Finding paths resolve against the report root.
+    pub diff: Option<&'a fallow_output::DiffIndex>,
+    /// `--workspace`, `--changed-workspaces` and a positional path: the union
+    /// of these roots.
+    pub workspace_roots: Option<&'a [PathBuf]>,
+}
+
+/// Narrow a duplication report to the scope of the run.
+///
+/// The CLI, the programmatic API and the MCP typed path call this one function,
+/// so a scope narrows the same way on every surface. Each filter keeps a clone
+/// group when at least one instance is in scope, and keeps every instance of
+/// that group: a reviewer sees the full clone family. The filters run in this
+/// order: changed files, the diff, the workspace roots.
+pub fn apply_scope(report: &mut DuplicationReport, scope: &DuplicationScope<'_>, root: &Path) {
+    if let Some(changes) = scope.changes {
+        changes.retain_duplication(report, root);
+    }
+    if let Some(diff) = scope.diff {
+        crate::diff_scope::filter_duplication_by_diff(report, diff, root);
+    }
+    if let Some(roots) = scope.workspace_roots {
+        filter_to_workspaces(report, roots, root);
+    }
+}
+
+/// Keep only the clone groups with at least one instance under one of the
+/// workspace roots.
+///
+/// The full cross-workspace index is still built, so a group can hold an
+/// instance in the selected workspace and one in another workspace. The group
+/// stays whole: the documented rule is that a group is in scope when one of
+/// its instances is. Clone families, statistics and the order are rebuilt from
+/// the groups that stay.
+pub fn filter_to_workspaces(report: &mut DuplicationReport, roots: &[PathBuf], root: &Path) {
+    report.clone_groups.retain(|group| {
+        group
+            .instances
+            .iter()
+            .any(|instance| roots.iter().any(|scope| instance.file.starts_with(scope)))
+    });
+    refresh_scoped_report(report, root);
+}
+
+/// Keep only the `n` highest-ranked clone groups (`--top`).
+///
+/// `stats` keeps describing the corpus the run measured. Truncation is a
+/// presentation choice, so rewriting `clone_groups` or `clone_instances` from
+/// the truncated array would put two scopes in one object next to the
+/// untouched `files_with_clones` and `duplication_percentage`. Consumers read
+/// the shown and omitted split from `DuplicationReport::clone_groups_shown`
+/// and `clone_groups_omitted`.
+pub fn apply_top(report: &mut DuplicationReport, n: usize, root: &Path) {
+    report.sort();
+    report.clone_groups.truncate(n);
+    refresh_clone_families(report, root);
+    report.sort();
+}
+
+/// Recompute duplication statistics after clone groups have been filtered.
+///
+/// Uses per-file line deduplication, matching the detector's stats model, so
+/// overlapping clone instances do not inflate the duplicated line count.
+///
+/// `clone_families` is read from `report.clone_families`, so a scope filter
+/// must call [`refresh_clone_families`] before this. A presentation cap such
+/// as `--top` must not call this at all: it truncates the arrays while `stats`
+/// keeps describing the corpus the run measured.
+#[must_use]
+pub fn recompute_stats(report: &DuplicationReport) -> DuplicationStats {
+    let mut files_with_clones: FxHashSet<&Path> = FxHashSet::default();
+    let mut file_dup_lines: FxHashMap<&Path, FxHashSet<usize>> = FxHashMap::default();
+    let mut duplicated_tokens = 0usize;
+    let mut clone_instances = 0usize;
+
+    for group in &report.clone_groups {
+        for instance in &group.instances {
+            files_with_clones.insert(&instance.file);
+            clone_instances += 1;
+            let lines = file_dup_lines.entry(&instance.file).or_default();
+            for line in instance.start_line..=instance.end_line {
+                lines.insert(line);
+            }
+        }
+        duplicated_tokens += group.token_count * group.instances.len().saturating_sub(1);
+    }
+
+    let duplicated_lines: usize = file_dup_lines.values().map(FxHashSet::len).sum();
+
+    DuplicationStats {
+        total_files: report.stats.total_files,
+        files_with_clones: files_with_clones.len(),
+        total_lines: report.stats.total_lines,
+        duplicated_lines,
+        total_tokens: report.stats.total_tokens,
+        duplicated_tokens: duplicated_tokens.min(report.stats.total_tokens),
+        clone_groups: report.clone_groups.len(),
+        clone_families: report.clone_families.len(),
+        clone_instances,
+        duplication_percentage: if report.stats.total_lines > 0 {
+            (duplicated_lines as f64 / report.stats.total_lines as f64) * 100.0
+        } else {
+            0.0
+        },
+        clone_groups_below_min_occurrences: report.stats.clone_groups_below_min_occurrences,
+        clone_groups_ignored: report.stats.clone_groups_ignored,
+        near_candidates_skipped: report.stats.near_candidates_skipped,
+    }
+}
+
+/// Compare two JS/TS sources by duplicate-token kind sequence.
+///
+/// This keeps CLI audit's non-behavioral change check from depending on the
+/// tokenizer module shape.
+#[must_use]
+pub fn source_token_kinds_equivalent(
+    path: &Path,
+    current: &str,
+    base: &str,
+    cross_language: bool,
+) -> bool {
+    let current_tokens = detector::tokenize::tokenize_file(path, current, cross_language);
+    let base_tokens = detector::tokenize::tokenize_file(path, base, cross_language);
+    current_tokens
+        .tokens
+        .iter()
+        .map(|token| &token.kind)
+        .eq(base_tokens.tokens.iter().map(|token| &token.kind))
+}
+
+/// Run duplication detection on a discovered file set.
+#[must_use]
+pub fn find_duplicates(
+    root: &Path,
+    files: &[DiscoveredFile],
+    config: &DuplicatesConfig,
+) -> DuplicationReport {
+    detector::find_duplicates(root, files, config)
+}
+
+/// Run duplication detection and include metadata about built-in ignored files.
+#[must_use]
+pub fn find_duplicates_with_defaults(
+    root: &Path,
+    files: &[DiscoveredFile],
+    config: &DuplicatesConfig,
+    cache_dir: Option<&Path>,
+) -> DuplicationAnalysis {
+    detector::detect_duplicates(root, files, config, None, cache_dir)
+}
+
+/// Run focused duplication detection and include metadata about built-in ignored files.
+#[must_use]
+pub fn find_duplicates_touching_files_with_defaults(
+    root: &Path,
+    files: &[DiscoveredFile],
+    config: &DuplicatesConfig,
+    changed_files: &[PathBuf],
+    cache_dir: Option<&Path>,
+) -> DuplicationAnalysis {
+    let changed_files = changed_files.iter().cloned().collect::<FxHashSet<_>>();
+    detector::detect_duplicates(root, files, config, Some(&changed_files), cache_dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn instance(file: &str, start_line: usize, end_line: usize) -> CloneInstance {
+        CloneInstance {
+            is_symlink: false,
+            file: PathBuf::from(file),
+            start_line,
+            end_line,
+            start_col: 0,
+            end_col: 0,
+            fragment: String::new(),
+        }
+    }
+
+    fn report(clone_groups: Vec<CloneGroup>) -> DuplicationReport {
+        DuplicationReport {
+            clone_groups,
+            clone_families: Vec::new(),
+            mirrored_directories: Vec::new(),
+            stats: DuplicationStats {
+                total_files: 3,
+                total_lines: 100,
+                total_tokens: 1_000,
+                clone_groups_below_min_occurrences: 4,
+                ..DuplicationStats::default()
+            },
+        }
+    }
+
+    #[test]
+    fn recompute_stats_deduplicates_overlapping_lines_per_file() {
+        let report = report(vec![
+            CloneGroup {
+                instances: vec![instance("src/a.ts", 1, 10), instance("src/b.ts", 20, 24)],
+                token_count: 30,
+                line_count: 10,
+                similarity: None,
+            },
+            CloneGroup {
+                instances: vec![instance("src/a.ts", 5, 12), instance("src/c.ts", 40, 44)],
+                token_count: 20,
+                line_count: 8,
+                similarity: None,
+            },
+        ]);
+
+        let stats = recompute_stats(&report);
+
+        assert_eq!(stats.total_files, 3);
+        assert_eq!(stats.files_with_clones, 3);
+        assert_eq!(stats.total_lines, 100);
+        assert_eq!(stats.duplicated_lines, 22);
+        assert_eq!(stats.total_tokens, 1_000);
+        assert_eq!(stats.duplicated_tokens, 50);
+        assert_eq!(stats.clone_groups, 2);
+        assert_eq!(stats.clone_instances, 4);
+        assert!((stats.duplication_percentage - 22.0).abs() < f64::EPSILON);
+        assert_eq!(stats.clone_groups_below_min_occurrences, 4);
+    }
+
+    #[test]
+    fn recompute_stats_handles_zero_total_lines() {
+        let mut report = report(vec![CloneGroup {
+            instances: vec![instance("src/a.ts", 1, 1)],
+            token_count: 5,
+            line_count: 1,
+            similarity: None,
+        }]);
+        report.stats.total_lines = 0;
+
+        let stats = recompute_stats(&report);
+
+        assert_eq!(stats.duplicated_lines, 1);
+        assert!(stats.duplication_percentage.abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn clone_fingerprint_set_delegates_without_leaking_core_type() {
+        let groups = vec![CloneGroup {
+            instances: vec![
+                CloneInstance {
+                    fragment: "const value = 1;".to_string(),
+                    ..instance("src/a.ts", 1, 1)
+                },
+                CloneInstance {
+                    fragment: "const value = 1;".to_string(),
+                    ..instance("src/b.ts", 2, 2)
+                },
+            ],
+            token_count: 5,
+            line_count: 1,
+            similarity: None,
+        }];
+        let fingerprints = CloneFingerprintSet::from_groups(&groups);
+        let fingerprint = fingerprints.fingerprint_for_group(&groups[0]);
+
+        assert!(fingerprint.starts_with(FINGERPRINT_PREFIX));
+        assert!(fingerprints.find_group(&groups, &fingerprint).is_some());
+    }
+}

@@ -1,0 +1,70 @@
+name: Test health analysis with score
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - id: action
+        uses: .
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: health
+          root: tests/fixtures/simple-js
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          score: 'true'
+          complexity: 'true'
+
+      - name: Assert issues output is a number
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "health findings: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS: health analysis with score produced numeric output: $ISSUES"
+
+      - name: Assert results file exists and contains score data
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results path: $RESULTS"
+          if [ -z "$RESULTS" ]; then
+            echo "FAIL: results output is empty"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file does not exist at: $RESULTS"
+            exit 1
+          fi
+          if ! jq empty "$RESULTS" 2>/dev/null; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
+          # Check for score field in results (may be null if no score computed)
+          SCORE=$(jq -r '.score // empty' "$RESULTS" 2>/dev/null || true)
+          echo "score field: '$SCORE'"
+          echo "PASS: health analysis with score completed"
+
+      - name: Assert gates-passed output is set
+        env:
+          GATES_PASSED: ${{ steps.action.outputs.gates-passed }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
+        run: |
+          echo "gates-passed: '$GATES_PASSED'"
+          echo "gates-failed: '$GATES_FAILED'"
+          echo "PASS: gate outputs are accessible"

@@ -1,0 +1,654 @@
+name: 'Fallow - Codebase Intelligence'
+description: 'Codebase intelligence for TypeScript and JavaScript in CI: gate PRs on complexity, duplication, architecture, unused code.'
+author: 'Bart Waardenburg'
+branding:
+  icon: 'search'
+  color: 'orange'
+inputs:
+  command:
+    description: 'Command to run: dead-code (unused code), dupes (code duplication), health (complexity), audit (changed-file quality gate), security (security candidates), fix (auto-remove unused code). Default runs all analyses. Legacy alias: check = dead-code.'
+    required: false
+    default: ''
+  root:
+    description: 'Project root directory'
+    required: false
+    default: '.'
+  config:
+    description: 'Path to config file (.fallowrc.json, .fallowrc.jsonc, fallow.toml, or .fallow.toml)'
+    required: false
+  format:
+    description: 'Output format (human, json, sarif, compact, markdown, codeclimate, pr-comment-github, pr-comment-gitlab, review-github, review-gitlab, badge)'
+    required: false
+    default: 'sarif'
+  sarif:
+    description: 'Upload SARIF to GitHub Code Scanning. Available on public repos (free) and private or internal repos with GitHub Advanced Security. Requires permissions: security-events: write.'
+    required: false
+    default: 'false'
+  production:
+    description: 'Production mode: exclude test/dev files, only analyze start/build scripts'
+    required: false
+    default: 'false'
+  production-dead-code:
+    description: 'Combined mode only: run dead-code analysis in production mode'
+    required: false
+    default: 'false'
+  production-health:
+    description: 'Combined mode only: run health analysis in production mode'
+    required: false
+    default: 'false'
+  production-dupes:
+    description: 'Combined mode only: run duplication analysis in production mode'
+    required: false
+    default: 'false'
+  fail-on-issues:
+    description: 'Exit with code 1 if issues are found. This gates on the issue count only. Every other gate fails the job independently of it, through the input that owns it: fail-on-regression, threshold, min-severity, min-score, security-gate, fail-on-stale-baseline, type-aware-require and fail-on-empty-analysis. Audit is the exception: command: audit gates on its verdict through this input, so audit with fail-on-issues: false stays a reporting configuration.'
+    required: false
+    default: 'true'
+  changed-since:
+    description: 'Only report issues in files changed since this git ref (requires fetch-depth: 0)'
+    required: false
+  auto-changed-since:
+    description: 'Automatically scope analysis to changed files in PR context using the base SHA (requires fetch-depth: 0). Ignored when changed-since is explicitly set.'
+    required: false
+    default: 'true'
+  baseline:
+    description: 'Path to baseline file for comparison. Used by dead-code, dupes, health and the combined run. The fix, audit and security commands reject it with exit 2 (audit uses dead-code-baseline, health-baseline and dupes-baseline).'
+    required: false
+  save-baseline:
+    description: 'Save current results as a baseline file. Used by dead-code, dupes, health and the combined run. The fix, audit and security commands reject it with exit 2.'
+    required: false
+  fail-on-stale-baseline:
+    description: 'Fail the job when the loaded baseline has entries that match nothing this run. The staleness warning itself needs no input: any run that loads a baseline reports it, and a run scoped to changed files re-reads the baseline over the whole project first, because a scoped run cannot judge a whole-project baseline. This input only decides whether that verdict fails the job. When the run still cannot judge the baseline (`production`, `workspace`, `changed-workspaces`, or a positional path passed through `args`) it warns and stands down instead of passing silently. Independent of `fail-on-issues`.'
+    required: false
+    default: 'false'
+  version:
+    description: 'Fallow version override. When omitted, the action uses the project package.json fallow dependency spec if present, otherwise latest. The action ref (uses: fallow-rs/fallow@...) and this CLI version are independent; see the README CI section (https://github.com/fallow-rs/fallow#ci) for the resolution order. Pin a current fallow version so Ed25519 + SHA-256 binary verification can run.'
+    required: false
+    default: ''
+  args:
+    description: 'Additional arguments to pass to fallow (space-separated)'
+    required: false
+    default: ''
+  artifacts-dir:
+    description: 'Directory for generated action artifacts such as fallow-results.json, fallow-results.sarif, fallow-stderr.log, and fallow-analysis-args.sh. Relative to the workflow workspace.'
+    required: false
+    default: '.'
+  comment:
+    description: 'Post results as a PR comment and Fallow Check Run (requires pull-requests: write for the comment and checks: write for the check)'
+    required: false
+    default: 'false'
+  github-token:
+    description: 'GitHub token for PR comments and SARIF upload'
+    required: false
+    default: ${{ github.token }}
+  branded-token:
+    description: 'Post PR comments and reviews as the Fallow app (branded) when the workflow grants `permissions: id-token: write`. Set to false to always post with github-token. Falls back to github-token automatically when id-token is unavailable.'
+    required: false
+    default: 'true'
+  broker-url:
+    description: 'Base URL of the Fallow token broker used to mint the branded app token. Defaults to Fallow Cloud.'
+    required: false
+    default: 'https://api.fallow.cloud'
+  annotations:
+    description: 'Emit findings as inline PR annotations via workflow commands (no Advanced Security required). On fallow >= 3.4.2 the action renders these natively via `fallow report --format github-annotations`; older fallow versions use a frozen legacy renderer, and the step log shows a notice to upgrade. The step log line "fallow: annotations rendered via native github-annotations" (or "via legacy jq renderer") tells you which renderer ran. The job summary follows the same rule with `github-summary`.'
+    required: false
+    default: 'true'
+  review-comments:
+    description: 'Post findings as inline PR review comments with rich markdown formatting (code blocks, tables, links, suggestions). Creates a single review per run. Automatically disables plain-text annotations when enabled.'
+    required: false
+    default: 'false'
+  review-guidance:
+    description: 'Append collapsed "What to do" guidance blocks to inline review comments. Requires review-comments: true.'
+    required: false
+    default: 'false'
+  review-id:
+    description: 'Isolate inline comments when multiple Fallow review jobs target the same pull request. Use a stable identifier of 1-64 ASCII letters, digits, dots, underscores, or hyphens.'
+    required: false
+    default: ''
+  max-annotations:
+    description: 'Maximum number of inline annotations to emit (default: 50). On the native path the action applies this cap to the rendered stream (GitHub itself displays at most 10 annotations per type per step).'
+    required: false
+    default: '50'
+  max-comments:
+    description: 'Maximum number of inline review comments + items in the sticky details table (default: 50). Mirrors max-annotations for the typed pr-comment / review formats.'
+    required: false
+    default: '50'
+  comment-layout:
+    description: 'Sticky PR comment layout: default, compact, gate-only, or details. Use gate-only when a native Check Run is the primary PR surface.'
+    required: false
+    default: 'default'
+  comment-id:
+    description: 'Sticky-comment marker id, embedded in the HTML comment that identifies fallow''s comment for upsert. Defaults to ''fallow-results'', auto-suffixed with the workspace name when running scoped to a single workspace package.'
+    required: false
+    default: ''
+  summary-scope:
+    description: 'Sticky PR summary comment scope: ''all'' (default, include project-level dependency/catalog/override findings even when their anchor line is outside the diff) or ''diff'' (apply the diff filter to those findings too). Does not affect inline review comments. If the diff file is unavailable, fallow reports all findings.'
+    required: false
+    default: 'all'
+  diff-filter:
+    description: 'Diff-aware finding filter: ''added'' (default, only findings on PR-added lines), ''diff_context'' (added lines plus surrounding context), ''file'' (any file touched by the PR), ''nofilter'' (every finding).'
+    required: false
+    default: 'added'
+  diff-file:
+    description: 'Path to a unified-diff file. When set (directly OR derived by the analyze step from `gh pr diff` / `git diff --unified=0`), fallow narrows source-anchored findings to lines inside an added hunk; project-level findings (unused deps, catalog entries, dependency overrides) bypass the analysis filter. Sticky summary comments can opt into filtering project-level findings too with `summary-scope: diff`; inline review comments stay line-scoped. Also drives line-level scoping of the runtime-coverage `hot-path-touched` verdict. When both `diff-file` and `changed-since` are set, the diff filter wins for line-level filtering and `changed-since` still scopes file discovery; fallow logs a one-line stderr note. The analyze step propagates the resolved path via $GITHUB_ENV so the comment / review steps reuse the same file.'
+    required: false
+    default: ''
+  api-retries:
+    description: 'Maximum HTTP retry attempts for fallow ci reconcile-review and the bash gh-api wrappers. Defaults to 3.'
+    required: false
+    default: '3'
+  api-retry-delay:
+    description: 'Floor delay in seconds between rate-limited retries. Server-supplied Retry-After overrides this when present. Defaults to 2.'
+    required: false
+    default: '2'
+  # Dupes-specific inputs
+  dupes-mode:
+    description: 'Detection mode for dupes command (strict, mild, weak, semantic)'
+    required: false
+    default: 'mild'
+  min-tokens:
+    description: 'Minimum token count for a clone (dupes command)'
+    required: false
+  min-lines:
+    description: 'Minimum line count for a clone (dupes command)'
+    required: false
+  threshold:
+    description: 'Fail if duplication exceeds this percentage (dupes command, 0 = no limit)'
+    required: false
+  skip-local:
+    description: 'Only report cross-directory duplicates (dupes command)'
+    required: false
+    default: 'false'
+  cross-language:
+    description: 'Strip TypeScript type annotations for TS<->JS clone matching (dupes command)'
+    required: false
+    default: 'false'
+  ignore-imports:
+    description: 'Exclude import declarations from clone detection (dupes command)'
+    required: false
+    default: 'false'
+  # Workspace
+  workspace:
+    description: "Scope output to one or more workspaces. Supports exact package names, globs matched against name and workspace path (apps/*, @scope/*), and !-prefixed negations. Comma-separated values ('web,admin') or a single pattern."
+    required: false
+  changed-workspaces:
+    description: "Git-derived monorepo scoping: scope output to workspaces containing any file changed since REF (e.g., 'origin/main'). Auto-derives the workspace set from git diff so CI jobs don't maintain a hand-written list. Requires git history (fetch-depth: 0). Mutually exclusive with 'workspace'. A missing ref or non-git directory is a hard error (exit 2) rather than silent full-scope fallback."
+    required: false
+  # Health-specific inputs
+  max-cyclomatic:
+    description: 'Maximum cyclomatic complexity threshold (health command, default: 20)'
+    required: false
+  max-cognitive:
+    description: 'Maximum cognitive complexity threshold (health command, default: 15)'
+    required: false
+  max-crap:
+    description: 'Maximum CRAP score threshold (health and audit commands, default: 30.0). Functions meeting or exceeding this score are reported alongside complexity findings. Pair with coverage data for accurate per-function scoring.'
+    required: false
+  coverage:
+    description: 'Path to Istanbul coverage-final.json data for accurate CRAP scoring (health, audit, and bare command).'
+    required: false
+  runtime-coverage:
+    description: 'Path to paid runtime coverage input for the health command: a V8 coverage directory, V8 JSON file, or Istanbul coverage-final.json'
+    required: false
+  coverage-root:
+    description: 'Rebase Istanbul file paths before matching coverage or runtime coverage input (health and audit commands)'
+    required: false
+  min-invocations-hot:
+    description: 'Hot-path threshold for runtime coverage findings (health command, default: 100)'
+    required: false
+  min-observation-volume:
+    description: 'Minimum observation volume required for high-confidence runtime coverage verdicts (health command)'
+    required: false
+  low-traffic-threshold:
+    description: 'Fraction of total trace volume below which an invoked function is classified as low_traffic instead of active (health command)'
+    required: false
+  top:
+    description: 'Show only the N worst offenders (health and dupes commands)'
+    required: false
+  sort:
+    description: 'Sort order for health results: cyclomatic (default), cognitive, lines, or severity (health command)'
+    required: false
+  file-scores:
+    description: 'Compute per-file maintainability index (health command)'
+    required: false
+    default: 'false'
+  hotspots:
+    description: 'Identify files that are both complex and frequently changing (health command)'
+    required: false
+    default: 'false'
+  targets:
+    description: 'Show ranked refactoring recommendations (health command)'
+    required: false
+    default: 'false'
+  complexity:
+    description: 'Show only complexity findings section (health command)'
+    required: false
+    default: 'false'
+  since:
+    description: 'Git history window for hotspot analysis: durations (6m, 90d, 1y) or ISO dates (health command)'
+    required: false
+  min-commits:
+    description: 'Minimum commits for a file to appear in hotspot ranking (health command, default: 3)'
+    required: false
+  score:
+    description: 'Compute health score (0-100 with letter grade). Enables the health delta header in PR comments. Works with health and bare command (all analyses).'
+    required: false
+    default: 'false'
+  min-severity:
+    description: 'health command only: fail when a complexity finding reaches this severity (moderate, high, critical). The fail-on-issues count gate is separate and still counts every finding; set fail-on-issues: false to gate on severity alone.'
+    required: false
+  min-score:
+    description: 'health command only: fail when the health score drops below this threshold (0-100). Implies --score, so the action also passes --complexity unless a health section input is set, keeping findings, annotations and SARIF populated; target_thresholds and hotspot_summary are not restored. When this is set the CLI turns its own findings rule off and the fail-on-issues count gate stands down with it, so the score alone decides the run.'
+    required: false
+  fail-on-empty-analysis:
+    description: 'Fail the job when the run analyzed no source file at all, so every count it reports is zero because nothing was measured. Warns and passes by default, because a repository whose scope legitimately holds no source should keep passing.'
+    required: false
+    default: 'false'
+  save-snapshot:
+    description: 'Save vital signs snapshot to .fallow/snapshots/ for trend tracking. Use actions/cache to persist across runs. Provide a path or leave empty for default. Works with health and bare command.'
+    required: false
+  trend:
+    description: 'Compare current metrics against the most recent saved snapshot and show per-metric deltas. Requires a previous snapshot from save-snapshot. Works with health and bare command.'
+    required: false
+  # Check-specific inputs
+  issue-types:
+    description: 'Comma-separated issue types to report (dead-code command). Valid: unused-files, unused-exports, unused-types, unused-deps, unused-enum-members, unused-class-members, unresolved-imports, unlisted-deps, duplicate-exports, circular-deps'
+    required: false
+  include-entry-exports:
+    description: 'Report unused exports in entry files instead of auto-marking them as used. Catches framework export typos. Applied to dead-code analysis; also configurable persistently via includeEntryExports in your fallow config.'
+    required: false
+    default: 'false'
+  type-aware:
+    description: 'Enable optional project-wide TypeScript semantic evidence. Does not emit compiler diagnostics or generic typed lint findings. Accepts true, false, or auto (default). auto provisions the exact-version fallow-type-aware sidecar when the project fallow config enables typeAware and lets the config drive the analysis. true also passes --type-aware; false skips sidecar provisioning and passes --no-type-aware.'
+    required: false
+    default: 'auto'
+  type-aware-projects:
+    description: 'Comma-separated tsconfig paths for type-aware analysis. Empty uses automatic project discovery.'
+    required: false
+    default: ''
+  type-aware-require:
+    description: 'Semantic completeness policy: best-effort or complete. complete fails the action when semantic analysis is partial or unavailable, including valid zero-finding JSON runs.'
+    required: false
+    default: ''
+  # Audit-specific inputs
+  gate:
+    description: 'Audit verdict gate: new-only (default) fails only introduced findings, all fails on every finding in changed files.'
+    required: false
+  security-gate:
+    description: 'Security regression gate: new fails on candidates introduced on changed lines, newly-reachable fails on existing candidates that became reachable from entry points.'
+    required: false
+  dead-code-baseline:
+    description: 'Path to a dead-code baseline for the audit command.'
+    required: false
+  health-baseline:
+    description: 'Path to a health baseline for the audit command.'
+    required: false
+  dupes-baseline:
+    description: 'Path to a duplication baseline for the audit command.'
+    required: false
+  # Regression detection
+  fail-on-regression:
+    description: 'Exit with code 1 if issue counts regressed compared to baseline (dead-code command)'
+    required: false
+    default: 'false'
+  tolerance:
+    description: 'Allowed regression tolerance before failing (e.g. "2%" or "5") (dead-code command)'
+    required: false
+    default: '0'
+  regression-baseline:
+    description: 'Path to regression baseline file for comparison (dead-code command)'
+    required: false
+  save-regression-baseline:
+    description: 'Save current results as a regression baseline file (dead-code command)'
+    required: false
+  # Fix-specific inputs
+  dry-run:
+    description: 'Preview changes without modifying files (fix command, default: true for CI safety)'
+    required: false
+    default: 'true'
+  # Global flags
+  no-cache:
+    description: 'Disable incremental parse cache (force full re-parse of all files)'
+    required: false
+    default: 'false'
+  threads:
+    description: 'Number of parser threads (default: available CPU cores)'
+    required: false
+  # Bare invocation selectors
+  only:
+    description: 'Run only these analyses when no command is specified (comma-separated: dead-code,dupes,health)'
+    required: false
+  skip:
+    description: 'Skip these analyses when no command is specified (comma-separated: dead-code,dupes,health)'
+    required: false
+outputs:
+  results:
+    description: 'Path to JSON results file'
+    value: ${{ steps.analyze.outputs.results }}
+  sarif:
+    description: 'Path to SARIF results file'
+    value: ${{ steps.analyze.outputs.sarif }}
+  issues:
+    description: 'Number of issues (dead-code), clone groups (dupes), security candidates (security), introduced findings counted by the audit verdict (audit), or fixes proposed/applied (fix). Audit count is gate-aware: with `gate: new-only` (default) it sums attribution.*_introduced; with `gate: all` it sums summary.* totals. Security count is gate-aware when `security-gate` is set. For audit, prefer `outputs.verdict` for severity-aware gating.'
+    value: ${{ steps.analyze.outputs.issues }}
+  verdict:
+    description: 'Audit verdict (pass/warn/fail). Empty when command is not audit. The threshold step gates on this for audit so warn-tier findings do not fail CI.'
+    value: ${{ steps.analyze.outputs.verdict }}
+  gate:
+    description: 'Audit gate (new-only/all) or security gate (new/newly-reachable) that was applied. Empty when no gate ran.'
+    value: ${{ steps.analyze.outputs.gate }}
+  changed-files-unavailable:
+    description: 'true when the analyze step could not enumerate PR-changed files (transient GitHub API failure, expired token, missing permissions); false on the happy path. Always emitted, regardless of whether changed-since was requested. Gate on this in downstream workflow steps to detect when analysis ran unscoped vs scoped.'
+    value: ${{ steps.analyze.outputs.changed_files_unavailable }}
+  baseline-entries:
+    description: 'Entries in the loaded baseline. Empty when no baseline was loaded or the fallow version predates the staleness envelope. On a pull request these six outputs describe the unscoped baseline re-read, not the scoped analysis, because a scoped run cannot judge a whole-project baseline.'
+    value: ${{ steps.analyze.outputs.baseline_entries }}
+  baseline-matched:
+    description: 'Baseline entries that matched a current finding. Empty when no baseline was loaded.'
+    value: ${{ steps.analyze.outputs.baseline_matched }}
+  baseline-stale-entries:
+    description: 'Baseline entries that matched nothing this run. Empty when no baseline was loaded.'
+    value: ${{ steps.analyze.outputs.baseline_stale_entries }}
+  baseline-advisory:
+    description: 'Which staleness advisory the baseline earned: none, partial, or zero-overlap. Empty when no baseline was loaded.'
+    value: ${{ steps.analyze.outputs.baseline_advisory }}
+  baseline-change-scoped:
+    description: 'true when the run behind these numbers analyzed only part of the project, so the baseline could not be judged. Read this before dividing baseline-matched by baseline-entries.'
+    value: ${{ steps.analyze.outputs.baseline_change_scoped }}
+  baseline-scope-reasons:
+    description: 'Names of the channels that narrowed the run, in the order fallow publishes them, separated by a comma and a space (for example "changed-since, production"). Empty when the run was not narrowed or the fallow version predates the member. Read it to tell narrowing you can remove from narrowing you chose.'
+    value: ${{ steps.analyze.outputs.baseline_scope_reasons }}
+  baseline-unrecognised:
+    description: 'true when the loaded file carries no key the running command writes into its own baselines, so it is a baseline another command saved or an object with nothing of that command in it. Empty when no baseline was loaded, when the baseline belongs to the command that read it, or when the fallow version predates the member. A baseline saved on a project with nothing to record is empty and is NOT reported here.'
+    value: ${{ steps.analyze.outputs.baseline_unrecognised }}
+  baseline-saved-by:
+    description: 'The command that saved the loaded baseline (dead-code, dupes or health), when baseline-unrecognised is true and the file names a writer that fallow knows. Empty otherwise, and when the fallow version predates the member. The value set is open: a later fallow can add a writer.'
+    value: ${{ steps.analyze.outputs.baseline_saved_by }}
+  baseline-gate-trips:
+    description: 'true when the baseline has entries that match nothing and the run could judge it, or when the loaded file is not this command''s own baseline. That is what fail-on-stale-baseline exits on. Gate on this in a downstream step to report staleness without failing the job.'
+    value: ${{ steps.analyze.outputs.baseline_gate_trips }}
+  baseline-path:
+    description: 'The baseline the run compared against, as the baseline input spelled it. Empty when no baseline was loaded and when one reached the run through the args input, where this action never sees the path.'
+    value: ${{ steps.analyze.outputs.baseline_path }}
+  gates-failed:
+    description: 'Comma-separated names of the gates whose status is fail. A gate appears here whether or not its owning input made it fail the job.'
+    value: ${{ steps.analyze.outputs.gates_failed }}
+  gates-warned:
+    description: 'Comma-separated names of the gates whose status is warn.'
+    value: ${{ steps.analyze.outputs.gates_warned }}
+  gates-skipped:
+    description: 'Comma-separated names of the gates that stood down without judging the run.'
+    value: ${{ steps.analyze.outputs.gates_skipped }}
+  gates-passed:
+    description: 'Comma-separated names of the gates that ran and passed.'
+    value: ${{ steps.analyze.outputs.gates_passed }}
+  analysis-degraded:
+    description: 'true when the run recorded a diagnostic meaning its findings were computed over less than the whole project. Read from the envelope root, or from the dead_code section on command: audit.'
+    value: ${{ steps.analyze.outputs.analysis_degraded }}
+  requests-unapplied:
+    description: 'Comma-separated names of the narrowing requests the run could not apply, each with its reason in parentheses (for example "changed-since (git-failed)"). Empty when every narrowing request applied and when nothing was asked for. Any entry means the report covers MORE than was requested, so a changed-code review read it as if it were scoped. Only requests that narrow the report are listed (the envelope entries whose affects is "scope"); a request that writes a file beside the report, such as sarif-file, never appears here, because its failure does not change what the report covers.'
+    value: ${{ steps.analyze.outputs.requests_unapplied }}
+  post-skipped-reason:
+    description: 'Reason the Post review comments step skipped posting (pagination_failure / none). Set to pagination_failure only when the inline-review POST was actually aborted to avoid duplicate threads (multi-comment dedup lookup failed). Empty when the Post review comments step did not run.'
+    value: ${{ steps.review.outputs.post_skipped_reason }}
+  dedup-lookup-failed:
+    description: 'true when a dedup lookup failed on the Post PR comment or Post review comments step. Distinct from post-skipped-reason: the summary-only paths post a fresh comment anyway (potential duplicate) when their lookup fails, while the multi-comment review path aborts. Gate on this to detect either degraded state. Resolves to "true" if EITHER step reported a failure, "false" otherwise.'
+    value: ${{ (steps.review.outputs.dedup_lookup_failed == 'true' || steps.comment.outputs.dedup_lookup_failed == 'true') && 'true' || 'false' }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - name: Install fallow
+      shell: bash
+      env:
+        FALLOW_VERSION: ${{ inputs.version }}
+        INPUT_ROOT: ${{ inputs.root }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_TYPE_AWARE: ${{ inputs.type-aware }}
+      run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"
+    - name: Fallow branded token
+      id: fallow-token
+      shell: bash
+      env:
+        BRANDED_TOKEN: ${{ inputs.branded-token }}
+        BROKER_URL: ${{ inputs.broker-url }}
+      run: bash "$GITHUB_ACTION_PATH/action/scripts/broker-token.sh"
+    # `restore-keys` are literal string-prefix matches, so `inputs.root` cannot
+    # go into the key raw: the restore prefix for `root=packages/app` is
+    # `fallow-cache-<os>-packages/app-`, which is a literal prefix of the real
+    # key for `root=packages/app-admin`, and the first job silently restores the
+    # second's parse cache. A fixed-width digest ends the root segment at a
+    # known length, so no root's prefix can extend into another's.
+    - name: Fallow cache key
+      id: fallow-cache-key
+      shell: bash
+      env:
+        INPUT_ROOT: ${{ inputs.root }}
+      run: |
+        if command -v sha256sum > /dev/null 2>&1; then
+          digest=$(printf '%s' "${INPUT_ROOT:-.}" | sha256sum)
+        else
+          digest=$(printf '%s' "${INPUT_ROOT:-.}" | shasum -a 256)
+        fi
+        printf 'root_digest=%s\n' "${digest:0:16}" >> "$GITHUB_OUTPUT"
+    - name: Cache analysis results
+      uses: chainguard-actions/actions-cache@244dfed44d8c4e917b332280fb2c1063eda3d9be # v5
+      with:
+        path: ${{ inputs.root }}/.fallow
+        key: fallow-cache-${{ runner.os }}-${{ steps.fallow-cache-key.outputs.root_digest }}-${{ hashFiles(format('{0}/**/package.json', inputs.root)) }}
+        restore-keys: |
+          fallow-cache-${{ runner.os }}-${{ steps.fallow-cache-key.outputs.root_digest }}-
+    - name: Run analysis
+      id: analyze
+      shell: bash
+      env:
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_ROOT: ${{ inputs.root }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_SARIF: ${{ inputs.sarif }}
+        INPUT_PRODUCTION: ${{ inputs.production }}
+        INPUT_PRODUCTION_DEAD_CODE: ${{ inputs.production-dead-code }}
+        INPUT_PRODUCTION_HEALTH: ${{ inputs.production-health }}
+        INPUT_PRODUCTION_DUPES: ${{ inputs.production-dupes }}
+        INPUT_CHANGED_SINCE: ${{ inputs.changed-since }}
+        INPUT_AUTO_CHANGED_SINCE: ${{ inputs.auto-changed-since }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        EVENT_NAME: ${{ github.event_name }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_SAVE_BASELINE: ${{ inputs.save-baseline }}
+        INPUT_FAIL_ON_STALE_BASELINE: ${{ inputs.fail-on-stale-baseline }}
+        INPUT_ARGS: ${{ inputs.args }}
+        INPUT_DUPES_MODE: ${{ inputs.dupes-mode }}
+        INPUT_MIN_TOKENS: ${{ inputs.min-tokens }}
+        INPUT_MIN_LINES: ${{ inputs.min-lines }}
+        INPUT_THRESHOLD: ${{ inputs.threshold }}
+        INPUT_SKIP_LOCAL: ${{ inputs.skip-local }}
+        INPUT_CROSS_LANGUAGE: ${{ inputs.cross-language }}
+        INPUT_IGNORE_IMPORTS: ${{ inputs.ignore-imports }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_WORKSPACE: ${{ inputs.workspace }}
+        INPUT_CHANGED_WORKSPACES: ${{ inputs.changed-workspaces }}
+        INPUT_MAX_CYCLOMATIC: ${{ inputs.max-cyclomatic }}
+        INPUT_MAX_COGNITIVE: ${{ inputs.max-cognitive }}
+        INPUT_MAX_CRAP: ${{ inputs.max-crap }}
+        INPUT_COVERAGE: ${{ inputs.coverage }}
+        INPUT_PRODUCTION_COVERAGE: ${{ inputs.runtime-coverage }}
+        INPUT_COVERAGE_ROOT: ${{ inputs.coverage-root }}
+        INPUT_MIN_INVOCATIONS_HOT: ${{ inputs.min-invocations-hot }}
+        INPUT_MIN_OBSERVATION_VOLUME: ${{ inputs.min-observation-volume }}
+        INPUT_LOW_TRAFFIC_THRESHOLD: ${{ inputs.low-traffic-threshold }}
+        INPUT_TOP: ${{ inputs.top }}
+        INPUT_SORT: ${{ inputs.sort }}
+        INPUT_FILE_SCORES: ${{ inputs.file-scores }}
+        INPUT_HOTSPOTS: ${{ inputs.hotspots }}
+        INPUT_TARGETS: ${{ inputs.targets }}
+        INPUT_COMPLEXITY: ${{ inputs.complexity }}
+        INPUT_SINCE: ${{ inputs.since }}
+        INPUT_MIN_COMMITS: ${{ inputs.min-commits }}
+        INPUT_SCORE: ${{ inputs.score }}
+        INPUT_MIN_SEVERITY: ${{ inputs.min-severity }}
+        INPUT_MIN_SCORE: ${{ inputs.min-score }}
+        INPUT_FAIL_ON_EMPTY_ANALYSIS: ${{ inputs.fail-on-empty-analysis }}
+        INPUT_FAIL_ON_ISSUES: ${{ inputs.fail-on-issues }}
+        INPUT_SAVE_SNAPSHOT: ${{ inputs.save-snapshot }}
+        INPUT_TREND: ${{ inputs.trend }}
+        INPUT_ISSUE_TYPES: ${{ inputs.issue-types }}
+        INPUT_INCLUDE_ENTRY_EXPORTS: ${{ inputs.include-entry-exports }}
+        INPUT_TYPE_AWARE: ${{ inputs.type-aware }}
+        INPUT_TYPE_AWARE_PROJECTS: ${{ inputs.type-aware-projects }}
+        INPUT_TYPE_AWARE_REQUIRE: ${{ inputs.type-aware-require }}
+        INPUT_GATE: ${{ inputs.gate }}
+        INPUT_SECURITY_GATE: ${{ inputs.security-gate }}
+        INPUT_DEAD_CODE_BASELINE: ${{ inputs.dead-code-baseline }}
+        INPUT_HEALTH_BASELINE: ${{ inputs.health-baseline }}
+        INPUT_DUPES_BASELINE: ${{ inputs.dupes-baseline }}
+        INPUT_FAIL_ON_REGRESSION: ${{ inputs.fail-on-regression }}
+        INPUT_TOLERANCE: ${{ inputs.tolerance }}
+        INPUT_REGRESSION_BASELINE: ${{ inputs.regression-baseline }}
+        INPUT_SAVE_REGRESSION_BASELINE: ${{ inputs.save-regression-baseline }}
+        INPUT_NO_CACHE: ${{ inputs.no-cache }}
+        INPUT_THREADS: ${{ inputs.threads }}
+        INPUT_ONLY: ${{ inputs.only }}
+        INPUT_SKIP: ${{ inputs.skip }}
+        INPUT_ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+        # User-supplied diff overrides the analyze step's auto-generation
+        # below; analyze.sh leaves it untouched when the user already
+        # supplied a path. When the user did not, analyze.sh writes
+        # the diff under artifacts-dir and exports it via $GITHUB_ENV so subsequent
+        # steps (comment.sh, review.sh) skip their own `gh pr diff`
+        # fetch and reuse the same file.
+        FALLOW_DIFF_FILE: ${{ inputs.diff-file }}
+      run: bash "$GITHUB_ACTION_PATH/action/scripts/analyze.sh"
+    - name: Check Code Scanning availability
+      id: ghas-check
+      if: >-
+        inputs.command != 'fix' && inputs.sarif == 'true' && steps.analyze.outputs.sarif != '' && always()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+      run: bash "$GITHUB_ACTION_PATH/action/scripts/check-code-scanning.sh"
+    - name: Upload SARIF
+      if: >-
+        inputs.command != 'fix' && inputs.sarif == 'true' && steps.analyze.outputs.sarif != '' && steps.ghas-check.outputs.available == 'true' && always()
+      uses: chainguard-actions/github-codeql-action/upload-sarif@05a2b18f97905888db8f883471cc925f1a97a01c # v4
+      with:
+        sarif_file: ${{ steps.analyze.outputs.sarif }}
+        category: fallow
+        token: ${{ inputs.github-token }}
+    - name: Post PR comment
+      id: comment
+      if: >-
+        inputs.comment == 'true' && github.event_name == 'pull_request' && inputs.command != 'security' && always() && steps.analyze.outputs.issues != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.fallow-token.outputs.token || inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        GH_REPO: ${{ github.repository }}
+        FALLOW_COMMAND: ${{ steps.analyze.outputs.command }}
+        CHANGED_SINCE: ${{ steps.analyze.outputs.changed_since }}
+        INPUT_ROOT: ${{ inputs.root }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_WORKSPACE: ${{ inputs.workspace }}
+        FALLOW_RESULTS_FILE: ${{ steps.analyze.outputs.results }}
+        FALLOW_COMMENT_ID: ${{ inputs.comment-id }}
+        FALLOW_SUMMARY_SCOPE: ${{ inputs.summary-scope }}
+        FALLOW_PR_COMMENT_LAYOUT: ${{ inputs.comment-layout }}
+        FALLOW_DIFF_FILTER: ${{ inputs.diff-filter }}
+        FALLOW_ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+        # FALLOW_DIFF_FILE is propagated from the analyze step via
+        # $GITHUB_ENV. Declaring it here would override the propagation
+        # whenever inputs.diff-file is empty (the default), forcing
+        # comment.sh to re-fetch the diff via `gh pr diff` and
+        # double-paying the API quota.
+        FALLOW_API_RETRIES: ${{ inputs.api-retries }}
+        FALLOW_API_RETRY_DELAY: ${{ inputs.api-retry-delay }}
+      run: bash "$GITHUB_ACTION_PATH/action/scripts/comment.sh"
+    - name: Emit inline annotations
+      if: >-
+        always() && inputs.annotations == 'true' && inputs.review-comments != 'true' && inputs.command != 'fix' && inputs.command != 'security' && steps.analyze.outputs.issues != '' && steps.analyze.outputs.issues != '0'
+      shell: bash
+      env:
+        FALLOW_COMMAND: ${{ steps.analyze.outputs.command }}
+        MAX_ANNOTATIONS: ${{ inputs.max-annotations }}
+        ACTION_JQ_DIR: ${{ github.action_path }}/action/jq
+        CHANGED_SINCE: ${{ steps.analyze.outputs.changed_since }}
+        INPUT_ROOT: ${{ inputs.root }}
+        FALLOW_RESULTS_FILE: ${{ steps.analyze.outputs.results }}
+        FALLOW_SCOPED_RESULTS_FILE: ${{ inputs.artifacts-dir }}/fallow-results-scoped.json
+        FALLOW_CHANGED_FILES_FILE: ${{ inputs.artifacts-dir }}/fallow-changed-files.json
+        FALLOW_PR_DECISION_FILE: ${{ inputs.artifacts-dir }}/fallow-pr-decision.json
+      run: bash "$GITHUB_ACTION_PATH/action/scripts/annotate.sh"
+    - name: Job summary
+      if: always() && steps.analyze.outputs.issues != ''
+      shell: bash
+      env:
+        FALLOW_COMMAND: ${{ steps.analyze.outputs.command }}
+        ACTION_JQ_DIR: ${{ github.action_path }}/action/jq
+        CHANGED_SINCE: ${{ steps.analyze.outputs.changed_since }}
+        INPUT_ROOT: ${{ inputs.root }}
+        FALLOW_RESULTS_FILE: ${{ steps.analyze.outputs.results }}
+        FALLOW_SCOPED_RESULTS_FILE: ${{ inputs.artifacts-dir }}/fallow-results-scoped.json
+        FALLOW_CHANGED_FILES_FILE: ${{ inputs.artifacts-dir }}/fallow-changed-files.json
+        FALLOW_PR_COMMENT_ENVELOPE_FILE: ${{ inputs.artifacts-dir }}/fallow-pr-comment-envelope.json
+        FALLOW_BASELINE_ADVISORY: ${{ steps.analyze.outputs.baseline_advisory }}
+        FALLOW_BASELINE_STALE_ENTRIES: ${{ steps.analyze.outputs.baseline_stale_entries }}
+        FALLOW_BASELINE_ENTRIES: ${{ steps.analyze.outputs.baseline_entries }}
+        FALLOW_BASELINE_GATE_TRIPS: ${{ steps.analyze.outputs.baseline_gate_trips }}
+        FALLOW_BASELINE_UNRECOGNISED: ${{ steps.analyze.outputs.baseline_unrecognised }}
+        FALLOW_BASELINE_SAVED_BY: ${{ steps.analyze.outputs.baseline_saved_by }}
+        FALLOW_BASELINE_PATH: ${{ steps.analyze.outputs.baseline_path }}
+        FALLOW_GATES_FAILED: ${{ steps.analyze.outputs.gates_failed }}
+        FALLOW_GATES_WARNED: ${{ steps.analyze.outputs.gates_warned }}
+        FALLOW_GATES_SKIPPED: ${{ steps.analyze.outputs.gates_skipped }}
+        FALLOW_GATES_PASSED: ${{ steps.analyze.outputs.gates_passed }}
+        FALLOW_ANALYSIS_DEGRADED: ${{ steps.analyze.outputs.analysis_degraded }}
+      run: bash "$GITHUB_ACTION_PATH/action/scripts/summary.sh"
+    - name: Post review comments
+      id: review
+      if: >-
+        inputs.review-comments == 'true' && github.event_name == 'pull_request' && inputs.command != 'fix' && inputs.command != 'security' && always() && steps.analyze.outputs.issues != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.fallow-token.outputs.token || inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        GH_REPO: ${{ github.repository }}
+        FALLOW_COMMAND: ${{ steps.analyze.outputs.command }}
+        FALLOW_ROOT: ${{ inputs.root }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_WORKSPACE: ${{ inputs.workspace }}
+        FALLOW_RESULTS_FILE: ${{ steps.analyze.outputs.results }}
+        FALLOW_REVIEW_GUIDANCE: ${{ inputs.review-guidance }}
+        FALLOW_REVIEW_ID: ${{ inputs.review-id }}
+        MAX_COMMENTS: ${{ inputs.max-comments || inputs.max-annotations }}
+        CHANGED_SINCE: ${{ steps.analyze.outputs.changed_since }}
+        FALLOW_COMMENT_ID: ${{ inputs.comment-id }}
+        FALLOW_DIFF_FILTER: ${{ inputs.diff-filter }}
+        FALLOW_ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+        # FALLOW_DIFF_FILE is propagated from the analyze step via
+        # $GITHUB_ENV (see comment on the comment step env block).
+        FALLOW_API_RETRIES: ${{ inputs.api-retries }}
+        FALLOW_API_RETRY_DELAY: ${{ inputs.api-retry-delay }}
+      run: bash "$GITHUB_ACTION_PATH/action/scripts/review.sh"

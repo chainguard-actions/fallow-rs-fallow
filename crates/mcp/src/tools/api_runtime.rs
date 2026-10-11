@@ -1,0 +1,269 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use fallow_api::{
+    AnalysisOptions, CoverageInputs, ProgrammaticError, load_health_config, resolve_coverage_inputs,
+};
+use rmcp::ErrorData as McpError;
+use rmcp::model::{CallToolResult, ContentBlock};
+
+pub(super) async fn run_api_blocking<T, F>(
+    tool: &'static str,
+    task: F,
+) -> Result<Result<T, ProgrammaticError>, McpError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, ProgrammaticError> + Send + 'static,
+{
+    let timeout = super::timeout_duration();
+    run_api_blocking_with_timeout(tool, timeout, task).await
+}
+
+async fn run_api_blocking_with_timeout<T, F>(
+    tool: &'static str,
+    timeout: Duration,
+    task: F,
+) -> Result<Result<T, ProgrammaticError>, McpError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, ProgrammaticError> + Send + 'static,
+{
+    let task = tokio::task::spawn_blocking(task);
+    match tokio::time::timeout(timeout, task).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(err)) => Err(McpError::internal_error(
+            format!("{tool} task failed: {err}"),
+            None,
+        )),
+        Err(_) => Ok(Err(ProgrammaticError::new(
+            format!("{tool} task timed out after {}s", timeout.as_secs()),
+            2,
+        )
+        .with_code("FALLOW_MCP_API_TIMEOUT")
+        .with_help(
+            "Set FALLOW_TIMEOUT_SECS to increase the response deadline. API-backed analysis may finish in-process after the MCP timeout response.",
+        )
+        .with_context(tool))),
+    }
+}
+
+/// `FALLOW_DIFF_FILE` for the typed route. It goes into
+/// `AnalysisOptions::ambient_diff_file`, never `diff_file`: the variable comes
+/// from the environment the server inherited, so a bad file stands down with a
+/// `not-applied` outcome, as it does on the CLI route, instead of failing the
+/// call (issue #2799).
+pub(super) fn env_diff_file() -> Option<PathBuf> {
+    env_path("FALLOW_DIFF_FILE")
+}
+
+/// `FALLOW_COVERAGE` / `FALLOW_COVERAGE_ROOT` as the typed route's
+/// environment layer, read at the adapter boundary. Empty values count as
+/// unset, as they do for the CLI.
+fn env_coverage_inputs() -> CoverageInputs {
+    coverage_inputs_from(|name: &str| std::env::var_os(name))
+}
+
+/// [`env_coverage_inputs`] over an injectable lookup, so the reader itself is
+/// testable without mutating the process environment for the rest of the
+/// suite.
+fn coverage_inputs_from(lookup: impl Fn(&str) -> Option<OsString>) -> CoverageInputs {
+    let path = |name: &str| {
+        lookup(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    CoverageInputs {
+        coverage: path("FALLOW_COVERAGE"),
+        coverage_root: path("FALLOW_COVERAGE_ROOT"),
+    }
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Resolve the typed route's Istanbul coverage inputs with the precedence the
+/// CLI uses (#2368): the explicit tool parameters, then the environment layer,
+/// then `health.coverage` / `health.coverageRoot` from the project config,
+/// which is loaded only when a higher layer leaves an input unset. Engine
+/// auto-detection still applies when every layer is empty.
+/// `explicit_root_context` names the tool's own parameter when the explicit
+/// root is rejected as relative.
+///
+/// `env` is [`None`] on every production call, which is the single place the
+/// typed route reads `FALLOW_COVERAGE` / `FALLOW_COVERAGE_ROOT` from the
+/// process environment; the typed-route tests pass [`Some`] so they stay
+/// deterministic under a shared environment.
+/// `crates/mcp/tests/integration/typed_route_env_coverage.rs` covers the
+/// [`None`] path against the real server process.
+pub(super) fn resolve_typed_coverage_inputs(
+    analysis: &AnalysisOptions,
+    explicit: CoverageInputs,
+    env: Option<CoverageInputs>,
+    explicit_root_context: &str,
+) -> Result<CoverageInputs, ProgrammaticError> {
+    let env = env.unwrap_or_else(env_coverage_inputs);
+    let config_health = if CoverageInputs::needs_config_layer(&explicit, &env) {
+        load_health_config(analysis)?
+    } else {
+        None
+    };
+    resolve_coverage_inputs(explicit, env, config_health.as_ref())
+        .map_err(|err| err.into_programmatic_error(explicit_root_context))
+}
+
+/// `FALLOW_CHANGED_SINCE` over an injectable lookup, so the fallback is testable
+/// without the ambient value of the variable deciding the assertion.
+fn changed_since_from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Option<String> {
+    lookup("FALLOW_CHANGED_SINCE")
+        .and_then(|value| value.into_string().ok())
+        .filter(|value| !value.is_empty())
+}
+
+/// `FALLOW_CHANGED_SINCE` for the typed route. It goes into
+/// `AnalysisOptions::ambient_changed_since`, never `changed_since`: the
+/// variable comes from the environment the server inherited, so a ref that
+/// does not resolve stands down with a `not-applied` outcome, as a bad
+/// `--changed-since` does on the CLI, instead of failing the call. A tool's own
+/// `changed_since` or `since` argument goes into `changed_since` and keeps the
+/// hard error, and it takes precedence over this value.
+pub(super) fn env_changed_since() -> Option<String> {
+    changed_since_from_lookup(|name| std::env::var_os(name))
+}
+
+pub(super) fn non_empty_path(value: Option<&str>) -> Option<PathBuf> {
+    value.and_then(|value| (!value.is_empty()).then(|| PathBuf::from(value)))
+}
+
+pub(super) fn non_empty_string(value: Option<&str>) -> Option<String> {
+    value.and_then(|value| (!value.is_empty()).then(|| value.to_string()))
+}
+
+/// Split a workspace parameter into individual patterns. The schemas document
+/// comma-list syntax with CLI parity, and clap splits `--workspace` on commas,
+/// so the API-backed paths must split the same way.
+pub(super) fn workspace_patterns_from_param(value: Option<&str>) -> Option<Vec<String>> {
+    let patterns: Vec<String> = value?
+        .split(',')
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty())
+        .map(str::to_string)
+        .collect();
+    (!patterns.is_empty()).then_some(patterns)
+}
+
+/// Render one typed-route result.
+///
+/// The verdict members (`gate_outcomes`, `baseline_staleness`,
+/// `workspace_diagnostics`) are envelope data, not process state, so they
+/// reach this route too and are restated here for the same reason the
+/// subprocess route restates them. Annotating at this single exit point is
+/// what keeps a tool from answering differently depending on whether a
+/// parameter happened to force the CLI fallback; it is a no-op on every
+/// envelope that carries none of them.
+pub(super) fn json_success(value: &serde_json::Value) -> CallToolResult {
+    let text = super::gate_verdicts::annotate_value(value).unwrap_or_else(|| value.to_string());
+    CallToolResult::success(vec![ContentBlock::text(text)])
+}
+
+pub(super) fn programmatic_error_body(error: &ProgrammaticError) -> String {
+    serde_json::json!({
+        "error": true,
+        "message": error.message,
+        "exit_code": error.exit_code,
+        "code": error.code,
+        "help": error.help,
+        "context": error.context,
+    })
+    .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn api_timeout_returns_structured_tool_error() {
+        let result = run_api_blocking_with_timeout("analyze", Duration::ZERO, || {
+            std::thread::sleep(Duration::from_millis(25));
+            Ok::<_, ProgrammaticError>(serde_json::json!({ "ok": true }))
+        })
+        .await
+        .expect("timeout should stay a tool result");
+
+        let err = result.expect_err("timeout should be structured error");
+        assert_eq!(err.exit_code, 2);
+        assert_eq!(err.code.as_deref(), Some("FALLOW_MCP_API_TIMEOUT"));
+        assert_eq!(err.context.as_deref(), Some("analyze"));
+    }
+
+    #[test]
+    fn workspace_patterns_split_on_commas_like_the_cli() {
+        assert_eq!(
+            workspace_patterns_from_param(Some("web,admin")),
+            Some(vec!["web".to_string(), "admin".to_string()])
+        );
+        assert_eq!(
+            workspace_patterns_from_param(Some("apps/*, !apps/legacy")),
+            Some(vec!["apps/*".to_string(), "!apps/legacy".to_string()])
+        );
+        assert_eq!(
+            workspace_patterns_from_param(Some("web")),
+            Some(vec!["web".to_string()])
+        );
+        assert_eq!(workspace_patterns_from_param(Some("")), None);
+        assert_eq!(workspace_patterns_from_param(Some(",, ,")), None);
+        assert_eq!(workspace_patterns_from_param(None), None);
+    }
+
+    /// #2368: the adapter maps both coverage variables and ignores empty
+    /// values, as the CLI does. The lookup is injected, so no typed-route
+    /// test in this binary can observe a mutated process environment; that
+    /// the production reader passes the real environment through this mapping
+    /// is covered end to end by
+    /// `crates/mcp/tests/integration/typed_route_env_coverage.rs`.
+    #[test]
+    fn env_coverage_inputs_read_both_variables_and_ignore_empty_values() {
+        let inputs = coverage_inputs_from(|name| match name {
+            "FALLOW_COVERAGE" => Some(OsString::from("")),
+            "FALLOW_COVERAGE_ROOT" => Some(OsString::from("/ci/workspace")),
+            _ => None,
+        });
+        assert_eq!(
+            inputs,
+            CoverageInputs {
+                coverage: None,
+                coverage_root: Some(PathBuf::from("/ci/workspace")),
+            }
+        );
+
+        let inputs = coverage_inputs_from(|name| {
+            (name == "FALLOW_COVERAGE").then(|| OsString::from("artifacts/coverage-final.json"))
+        });
+        assert_eq!(
+            inputs,
+            CoverageInputs {
+                coverage: Some(PathBuf::from("artifacts/coverage-final.json")),
+                coverage_root: None,
+            }
+        );
+    }
+
+    #[test]
+    fn env_changed_since_reads_a_non_empty_value_only() {
+        let env =
+            |name: &str| (name == "FALLOW_CHANGED_SINCE").then(|| OsString::from("origin/release"));
+        assert_eq!(
+            changed_since_from_lookup(env),
+            Some("origin/release".to_string())
+        );
+        assert_eq!(
+            changed_since_from_lookup(|_| Some(OsString::from(""))),
+            None
+        );
+        assert_eq!(changed_since_from_lookup(|_| None), None);
+    }
+}
