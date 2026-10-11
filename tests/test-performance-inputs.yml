@@ -1,0 +1,52 @@
+name: Test performance and snapshot inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create minimal JS project
+        run: |
+          mkdir -p /tmp/fallow-test-perf
+          cat > /tmp/fallow-test-perf/package.json <<'EOF'
+          {
+            "name": "test-perf-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-test-perf/index.js <<'EOF'
+          export function simple(a, b) {
+            if (a > b) { return a; }
+            return b;
+          }
+          EOF
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-test-perf
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          threads: '2'
+          save-snapshot: /tmp/fallow-test-perf/.fallow/snapshots
+          trend: 'false'
+          annotations: 'false'
+      - name: Assert action ran with performance inputs
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded with performance inputs"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

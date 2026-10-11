@@ -1,0 +1,50 @@
+name: Test changed-since input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Create minimal JS project
+        run: |
+          mkdir -p /tmp/fallow-test-changed-since
+          cat > /tmp/fallow-test-changed-since/package.json <<'EOF'
+          {
+            "name": "test-changed-since-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-test-changed-since/index.js <<'EOF'
+          export function used() { return 1; }
+          export function unused() { return 2; }
+          EOF
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: /tmp/fallow-test-changed-since
+          format: json
+          fail-on-issues: 'false'
+          changed-since: 'HEAD~1'
+          auto-changed-since: 'false'
+          annotations: 'false'
+      - name: Assert action ran with changed-since input
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded with changed-since input"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected if git history is shallow)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

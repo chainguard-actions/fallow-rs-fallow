@@ -678,8 +678,7 @@ fi
 # Propagate the effective changed-since value after config safety logic so
 # downstream steps do not reapply stale PR scope.
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
-  _safe_changed_since=$(printf '%s' "${INPUT_CHANGED_SINCE:-}" | tr -d '\n\r')
-  printf '%s\n' "changed_since=${_safe_changed_since}" >> "$GITHUB_OUTPUT"
+  printf '%s\n' "changed_since=${INPUT_CHANGED_SINCE:-}" >> "$GITHUB_OUTPUT"
 fi
 
 # --- Pre-compute unified diff for line-level hot-path scoping ---
@@ -705,8 +704,7 @@ fi
 # need to declare their own FALLOW_DIFF_FILE env (which would override
 # the analyze-step propagation otherwise). User-supplied path wins.
 if [ -n "${FALLOW_DIFF_FILE:-}" ] && [ -n "${GITHUB_ENV:-}" ]; then
-  _safe_diff_file=$(printf '%s' "${FALLOW_DIFF_FILE}" | tr -d '\n\r')
-  printf '%s\n' "FALLOW_DIFF_FILE=${_safe_diff_file}" >> "$GITHUB_ENV"
+  printf '%s\n' "FALLOW_DIFF_FILE=${FALLOW_DIFF_FILE}" >> "$GITHUB_ENV"
 fi
 
 if [ -n "${INPUT_CHANGED_SINCE:-}" ] && [ -z "${FALLOW_DIFF_FILE:-}" ]; then
@@ -804,10 +802,10 @@ if [ -n "${GITHUB_ENV:-}" ]; then
   # Preserve exact argv for pinned-CLI compatibility as inert runner-owned
   # data. Later steps parse this JSON instead of executing a workspace file.
   ANALYSIS_ARGS_JSON=$(jq -cn --args '$ARGS.positional' -- "${ARGS[@]}" "${EXTRA_ARGS[@]}")
-  _safe_render_path_prefix=$(printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r')
+  safe_render_path_prefix="$(printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r')"
   printf '%s\n' \
     "FALLOW_RENDER_PATH_PREFIX_SET=${FALLOW_RENDER_PATH_PREFIX_SET}" \
-    "FALLOW_RENDER_PATH_PREFIX=${_safe_render_path_prefix}" \
+    "FALLOW_RENDER_PATH_PREFIX=${safe_render_path_prefix}" \
     "FALLOW_ANALYSIS_ARGS_JSON=${ANALYSIS_ARGS_JSON}" >> "$GITHUB_ENV"
 fi
 
