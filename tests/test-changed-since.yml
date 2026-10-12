@@ -16,10 +16,10 @@ jobs:
           root: .
           format: json
           fail-on-issues: 'false'
-          auto-changed-since: 'false'
           changed-since: 'HEAD~1'
-          changed-workspaces: ''
           workspace: ''
+          changed-workspaces: ''
+          auto-changed-since: 'false'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}

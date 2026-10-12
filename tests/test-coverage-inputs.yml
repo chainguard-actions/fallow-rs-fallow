@@ -1,4 +1,4 @@
-name: Test runtime coverage inputs
+name: Test coverage inputs
 on:
   workflow_dispatch:
 jobs:
@@ -14,10 +14,10 @@ jobs:
           root: .
           format: json
           fail-on-issues: 'false'
+          coverage: ''
+          coverage-root: ''
+          runtime-coverage: ''
           auto-changed-since: 'false'
-          min-invocations-hot: '100'
-          min-observation-volume: '1000'
-          low-traffic-threshold: '0.01'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}

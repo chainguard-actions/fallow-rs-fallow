@@ -1,4 +1,4 @@
-name: Test dupes advanced inputs
+name: Test performance and runtime inputs
 on:
   workflow_dispatch:
 jobs:
@@ -10,14 +10,15 @@ jobs:
         uses: .
         continue-on-error: true
         with:
-          command: dupes
+          command: health
           root: .
           format: json
           fail-on-issues: 'false'
+          threads: '2'
+          low-traffic-threshold: '0.01'
+          min-invocations-hot: '100'
+          min-observation-volume: '1000'
           auto-changed-since: 'false'
-          min-tokens: '50'
-          min-lines: '5'
-          threshold: '0'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}

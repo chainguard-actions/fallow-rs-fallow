@@ -14,11 +14,11 @@ jobs:
           root: .
           format: json
           fail-on-issues: 'false'
-          auto-changed-since: 'false'
           config: ''
           issue-types: 'unused-exports,unused-files'
-          only: ''
-          skip: 'health,dupes'
+          only: 'dead-code'
+          skip: ''
+          auto-changed-since: 'false'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}

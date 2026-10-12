@@ -14,7 +14,6 @@ jobs:
           root: .
           format: json
           fail-on-issues: 'false'
-          auto-changed-since: 'false'
           baseline: ''
           save-baseline: ''
           dead-code-baseline: ''
@@ -22,6 +21,7 @@ jobs:
           dupes-baseline: ''
           regression-baseline: ''
           save-regression-baseline: ''
+          auto-changed-since: 'false'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}
