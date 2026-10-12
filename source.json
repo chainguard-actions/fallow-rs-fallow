@@ -1,6 +1,11 @@
 {
   "owner": "fallow-rs",
   "repo": "fallow",
-  "version": "",
-  "url": "https://github.com/fallow-rs/fallow"
+  "version": "v3.31.0",
+  "commit_sha": "71369f80d099e25726ad04382f15aef14a251abc",
+  "url": "https://github.com/fallow-rs/fallow",
+  "policy_sha": "d636be7e43ef829af6e853da6b3c7566db9f72fe",
+  "test_policy_sha": "843adf9e4b8f85d0c08b27b9d0b09dd094b54702",
+  "test_agent_version": "2",
+  "harden_agent_version": "2"
 }

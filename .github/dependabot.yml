@@ -1,0 +1,150 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      oxc:
+        patterns: ["oxc_*"]
+      crypto-rng:
+        patterns: ["ed25519-dalek", "rand", "rand_core"]
+    open-pull-requests-limit: 10
+    ignore:
+      # lightningcss types its public `Parse` trait against cssparser without
+      # re-exporting it, so the direct pin has to equal the version lightningcss
+      # resolves. A newer cssparser only adds a second copy to the graph and
+      # `CssColor::parse` stops compiling. Move both pins together when
+      # lightningcss releases on a newer cssparser.
+      - dependency-name: cssparser
+
+  - package-ecosystem: cargo
+    directory: /fuzz
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    allow:
+      # The fuzz workspace has one direct registry dependency. Its lockfile also
+      # contains the root workspace graph through the fallow-core path dependency.
+      - dependency-name: libfuzzer-sys
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: cargo
+    directory: /editors/zed
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /editors/vscode
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    ignore:
+      # Pinned so engines.vscode floor stays low and Cursor/Windsurf forks can install.
+      # Bump deliberately when raising the engine floor.
+      - dependency-name: "@types/vscode"
+      # Mocha 12 is ESM-only and its CommonJS implementation file requires ESM
+      # siblings, so it needs Node ^20.19 || >=22.12. The integration suites run
+      # in-process inside the VS Code 1.96 extension host, which ships Node
+      # 20.18.1, so the major cannot load there at all. Raise this together with
+      # the engine floor.
+      - dependency-name: mocha
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: npm
+    directory: /npm/fallow
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /benchmarks
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /crates/napi
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /apps/review-electron
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      # electron-vite 5 supports Vite through version 7, while plugin-react 6
+      # requires Vite 8. Remove both guards when electron-vite supports Vite 8.
+      - dependency-name: vite
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
+      # Electron 43 embeds Node 24. Keep the type surface aligned with the
+      # runtime and raise this together with Electron.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /tests/coverage-producer-corpus/producers
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    # The pinned coverage producers this repository records geometry from. A
+    # bump here is expected to move the committed maps. Recording reads whatever
+    # is installed under the producers prefix, not the lockfile, so install
+    # first:
+    #   npm ci --prefix tests/coverage-producer-corpus/producers --no-audit --no-fund --ignore-scripts
+    #   npm run check:coverage-producer-drift
+    #   npm run refresh:coverage-producers
+    # then land the map diff when the behavioral census is unchanged.
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /viz-frontend
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

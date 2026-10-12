@@ -1,0 +1,754 @@
+# Detection internals
+
+Use this reference to locate a false positive, false negative, or new analyzer
+in the current pipeline.
+
+## Pipeline ownership
+
+```text
+config -> discovery -> extraction -> resolution -> graph -> detection -> output
+```
+
+- `crates/config/` resolves configuration, workspaces, rules, and external
+  plugins.
+- `crates/engine/src/discover.rs` owns the public discovery path; the shared
+  walk lives in `crates/core/src/discover/walk.rs` behind the core backend
+  adapter.
+- `crates/extract/` parses source and produces syntax facts.
+- `crates/graph/` resolves imports and builds reachability and re-export state.
+- `crates/core/src/analyze/` detects dead-code and structural issue families.
+- `crates/engine/` combines discovery, graph, core analysis, duplication,
+  health, security, and cross-reference results.
+- `crates/output/` and `crates/api/` turn typed results into public contracts.
+- `crates/api/src/type_aware/` owns semantic requests, reconciliation,
+  provenance, and sidecar transport.
+
+Fix the earliest incorrect stage. Do not compensate for an extraction or graph
+error by suppressing a downstream detector.
+
+## Analyzer families
+
+- Dead code and dependency findings:
+  `crates/core/src/analyze/unused_deps.rs`,
+  `crates/core/src/analyze/members/`, and related modules under
+  `crates/core/src/analyze/`.
+- Boundaries and architectural policy:
+  `crates/core/src/analyze/boundary.rs`,
+  `crates/core/src/analyze/boundary_calls/`, and
+  `crates/core/src/analyze/policy/`.
+  Import rules, `boundaries.calls.forbidden`, and
+  `boundaries.coverage.requireAllFiles` check every analyzed file.
+  Reachability does not gate them: a file that only a task runner executes is
+  still real code. Such a file can get an `unused-files` finding and a
+  boundary finding in the same run (issue #2937).
+  Import rules follow re-export chains. A named or default import through a
+  barrel is judged against the zone of the module that declares the symbol,
+  and `to_path` is that origin module. The optional `via_path` field names the
+  barrel. The pass reports one finding per importer and origin module. A
+  direct import of the origin wins over a barrel import. When a hop in the
+  chain breaks the rules of the zone that owns the re-exporting file, only
+  that hop gets a finding. Namespace and side-effect imports stay judged by
+  the direct target (issue #2939).
+- Framework and component intelligence:
+  `crates/core/src/analyze/react_intel.rs`, route and render analyzers, and
+  `crates/core/src/plugins/`.
+- Duplication: `crates/engine/src/duplicates.rs` and
+  `crates/engine/src/duplication_detector/`.
+- Health, hotspots, ownership, targets, coverage gaps, and styling:
+  `crates/engine/src/health/`.
+- Security candidates: `crates/core/src/analyze/security/` with matcher data
+  owned by `crates/security/`.
+- Feature flags: extraction facts in `crates/extract/src/flags.rs`, project
+  analysis in `crates/engine/src/flags.rs`, and extraction helpers exposed by
+  `crates/engine/src/feature_flags.rs`. A read such as `useFlag(FLAGS.X)`
+  resolves in the extractor when `FLAGS` is a module-level `as const` object
+  or a string enum. When `FLAGS` is imported, the extractor keeps the read in
+  `ModuleInfo::flag_registry_facts`, and `crates/engine/src/flag_registry.rs`
+  resolves the key from the exporting module. The extractor has no
+  semantic scopes, so it records each parameter and nested binding with a
+  registry name as a shadow for its function or block. The engine does not
+  resolve an import from a declared dependency that is not a workspace
+  package. The user patterns of the
+  `flags` config section apply during the parse, so one parse gives every
+  flag. `cache_config_hash` folds those patterns into the parse cache key,
+  and every parse that writes the cache must pass
+  `ResolvedConfig::flags.patterns()`.
+- Flag retirement (`fallow flags --retirement`): the extractor stores guard
+  facts (`FlagSiteFacts`: identical branches, a guard with no code in any branch, a
+  Vercel `flag()` definition) on each `FlagUse`, and literal `const` flags
+  and definition bindings in `flag_registry_facts`. These facts stay out of
+  the per-site `feature_flags[]` array.
+  `flags::analyze_feature_flags_for_retirement` returns the same flags as
+  the plain scan plus `flag_retirement::RetirementFacts`, and it keeps the
+  dead-code results of the pass the scan already runs.
+  `flag_retirement::aggregate_flags` groups sites by kind, SDK, name and
+  workspace. It takes every site of the project and a scope predicate,
+  because the read reasons count reads outside the scope.
+  `crates/engine/src/flag_age.rs` reads age from `git blame` (default) or
+  `git log -S`, counts days against `AnalysisClock`, and caches results in
+  `flag-age.json` for the current HEAD. `crates/engine/src/flag_vendor.rs`
+  reads the `--flag-state` export (schema version 1, capped at 16 MiB,
+  unknown fields rejected) and adds the four vendor reasons. Only SDK rows
+  match the export, and only the rows of the SDK that the export `source`
+  names when the project has that SDK. `vendor-only` rows need a
+  whole-project run. `crates/engine/src/flag_report.rs` is the one entry
+  point that the CLI and the API call, so both surfaces build the same
+  block. The regression gate lives in `crates/cli/src/regression/flags.rs`
+  and works only with `--retirement`. Every retirement action is
+  `auto_fixable: false`.
+
+## Accuracy invariants
+
+- Fallow's default analysis is syntactic and has no TypeScript compiler
+  dependency. Type-aware refinement is explicit opt-in through the
+  version-matched sidecar and may only refine Fallow-owned project questions.
+- Type-aware public API traversal follows checker symbols that resolve to
+  project-local declarations. Parameter names and generic type parameters are
+  not reusable private types.
+- Complete semantic confirmation may remove unmatched syntactic private-leak
+  guesses. Partial or unavailable evidence retains the original finding.
+- Overlapping TypeScript projects deduplicate API entries and coupling edges by
+  stable semantic identity.
+- Prefer conservative advisory output over noisy speculation.
+- Preserve entry points, re-export chains, workspace edges, type-only usage,
+  framework conventions, and suppression behavior through the full pipeline.
+- Class instances stored in object literals retain their property-path identity
+  through lexical aliases, static computed access, and nested or defaulted
+  static destructuring.
+  Dynamic keys credit every proven target below the receiver, which can hide a
+  finding but cannot invent one. Namespace-qualified constructors require a
+  real namespace import and emit a typed access fact. Exported containers emit
+  a separate typed property fact that the member pass joins through named and
+  re-exported imports; ordinary dotted member accesses are not treated as
+  namespace constructors.
+- Keep issue identity and ordering deterministic. Baselines, audits, editor
+  diagnostics, and review comments depend on stable keys.
+- A name supplied by two different `export *` sources is not exported by the
+  barrel at all (ECMA-262 ResolveExport returns `ambiguous`). The contributing
+  declarations are therefore unknown rather than dead. Unused exports, member
+  findings, unrendered components, and unprovided injects abstain instead of
+  attributing the barrel mistake to a source file. `export type *` collides the
+  same way: it drops the value namespace, so two value declarations behind it
+  collide in type space alone and type-space abstention applies there too.
+  `ModuleGraph::ambiguous_star_exports` exposes collisions for reporting, while
+  `ModuleGraph::ambiguity_participants` identifies their canonical declarations
+  for detector gates.
+- `default` is one importable name that either side may spell two ways, and
+  reference attachment matches on the name, not on the spelling (issue #2374).
+  An export declares it as `export default x` or as `export { x as default }`;
+  an import names it as `import x from './impl'`, as
+  `import { default as x } from './impl'`, or as the ambient
+  `declare module '<specifier>' { export { default } from './impl' }` form,
+  which records one named type-space import per specifier. A CommonJS
+  `exports.default = x` declares the same binding and is recorded under the
+  same written name. Every pairing credits the target's default export, and a
+  `export { default } from` chain carries that credit hop by hop. A plain
+  `export *` still never forwards `default`, so the shape that reaches a
+  default through a star is the namespace object, not the star surface.
+- That name collapse is scoped to modules whose `default` really is a default
+  export. A CSS Module exports one `ExportName::Named` per class and never an
+  `ExportName::Default`, so a class spelled `.default` stays an ordinary name:
+  a plain `import styles from './x.module.css'` binds the whole class map and
+  names no single class, and `narrow_css_module_references` remains the only
+  thing that credits classes, from the member accesses the consumer writes.
+  `NamedDefaultSpelling::for_target` decides that from the target path with
+  `is_css_module_stylesheet`, which tracks the extractor's own CSS Module set
+  (`.module.css`, `.module.scss`, `.module.sass`, `.module.less`). The
+  narrowing gate uses that same resolved-target set, so extensionless and
+  path-aliased imports receive identical member and whole-object handling.
+- `import X = require('./x')` is the TypeScript spelling of a CommonJS require
+  binding, so the extractor records the same non-destructured require call a
+  `const X = require('./x')` declaration records (issue #2365): one CommonJS
+  namespace import with the local binding, which makes `X.member` narrow the
+  target's exports and a whole-object use of `X` seed the exposed namespace
+  closure below. The binding is classified for type and value usage the same
+  way an `import * as X` binding is, so `X.SomeType` in a type annotation
+  narrows the target's type exports rather than leaving them uncredited, and it
+  is registered as a namespace-import local, so a bare reference that hands the
+  module object on records a whole-object use exactly as it does for
+  `import * as X` (issue #2377). A binding nothing references is reported as an
+  unused import binding, the same verdict an unreferenced `import * as X` gets:
+  TypeScript elides the declaration, so it must not credit the target's
+  exports, while the edge itself keeps the target reachable.
+  `import type X = require('./x')` is the one spelling TypeScript erases
+  completely, so the require call carries `is_type_only` and dependency
+  classification treats it exactly as it treats `import type * as X from
+  './x'` rather than claiming the package is imported at runtime.
+  `export import X = require('./x')` at file level earns a whole-object use of
+  the binding: the module object reaches consumers the graph cannot enumerate,
+  so every export of the target is credited the way `export { X }` credits a
+  namespace import, which is what keeps an entry point that only re-exports the
+  binding from reporting the target's whole surface (issue #2373). It is also
+  exempt from the unused-import-binding verdict above, since it has no local
+  reference by construction. The credit is unconditional, matching the twin,
+  which has no condition either: `narrow_namespace_references` matches
+  `whole_object_uses` against the local name of an import edge of the same
+  file, and a file-level `import X = require(...)` owns that name outright,
+  because a second root binding of it is a duplicate-identifier error. A
+  same-named require in a nested scope (`const X = require('./other')` inside a
+  function) can still collect the mark, which over-credits `./other`; that
+  direction loses a finding and never invents one, whereas withholding the
+  credit reported every export of the real target as unused. The credit inside
+  a namespace body is defensive leniency only: TypeScript
+  rejects `namespace N { export import X = require('./x') }` with TS1147.
+  What the exported form does not record is an export row for the binding
+  itself, so unlike `export { X }` it never surfaces as an unused export; the
+  target credit is identical either way, and the missing row is a deliberate
+  miss rather than an invented one.
+  `import X = Some.Namespace` is an entity-name reference that aliases a
+  binding declared in the same file, not a module, so it records nothing.
+- An ambient-module star re-export (`export *` or `export * as ns` inside a
+  `declare module '...'` body, recorded as a type-only namespace import
+  without a local binding) credits the full ES star surface of its target:
+  every named export in both the type and the value namespace, never the
+  target's `default`, and, through the exposed namespace closure below, the
+  same surface of every module the target reaches through its own `export *`
+  chain plus every export (`default` included) of each `export * as sub`
+  source along that chain, recursively. `export * as ns` adds a type-only
+  default import for `ns.default`. Every other type-only import credits type
+  space only: a bound `import type { x }`, the ambient named re-export
+  (#2349), explicitly type-only ambient re-exports, and `import()` type
+  references in TypeScript and JSDoc, so the value half of a same-name type
+  and value pair reached only that way still reports.
+- The `export type *` and `export type * as ns` spellings of that star
+  (issue #2375) carry the same shape with the import's type-only-star flag
+  set. They forward the same names with every value meaning erased, so they
+  credit the star surface in the type namespace alone: the type half of a
+  same-name pair is credited while its value half keeps reporting, and a
+  value-only export is credited through the type-space fallback lane, the
+  same credit the ambient `export type { x }` form gives. The value-meaning
+  erasure reaches the target's own export surface only: they seed the exposed
+  namespace closure like the plain star, which carries no lane, so every name
+  the target re-exports through its own `export *` or `export * as sub` chain
+  keeps both meanings. A same-name type and value pair one hop behind the
+  target therefore has its value half credited and stops reporting, where the
+  same pair on the target itself keeps reporting. Splitting that closure per
+  namespace is tracked as a follow-up.
+- The exposed namespace closure
+  (`ModuleGraph::collect_exposed_namespace_targets`, issues #2357, #2372,
+  #2373) is seed-agnostic. Its seeds are every target whose whole namespace
+  object a consumer observes in Phase 2 (an ambient-module star, a
+  dynamic-import pattern match through `import()`, `import.meta.glob`, or
+  `require.context`, a bare side-effect `require('./barrel')` with no binding,
+  and a namespace import the graph cannot narrow: a whole-object use, a
+  binding handed on without member access, or a binding exported under its own
+  name from any module, entry point included) plus every `export * as ns`
+  source whose name reaches a consumer the graph cannot enumerate.
+- A name reaches such a consumer three ways, and the closure applies the same
+  test to all three: it arrives on an entry point's own export surface (the
+  public API, `default` included), on a module already in the closure (which
+  exposes what its own exposure allows), or at a name some importer uses as a
+  whole object (`import { sub } from './barrel'` plus `Object.values(sub)`).
+  The search runs outward from each namespace edge along named and plain-star
+  re-exports, so its cost scales with the number of `export * as` edges rather
+  than with the number of names an entry point re-exports. Every hop must
+  uniquely forward the binding, the same rule the Phase 2c walk applies, so a
+  barrel that declares its own `ns`, or that receives `ns` from two stars at
+  once, exports a different binding under that name and the chain stops
+  there. That rule is not restated: `ModuleGraph::forwards_binding` picks the
+  namespace and then calls Phase 2c's own `uniquely_forwards_binding`, so the
+  closure and the phase it pre-computes for cannot drift apart on what a hop
+  forwards. Sitting on an entry point's plain-`export *` closure is not on its
+  own proof that a name survives to the entry, so no hop is skipped for it.
+  The forwarding check reads the value namespace whenever the source exports
+  the name there and the type namespace otherwise, so
+  `export type { ns } from './barrel'` on an entry point does not put the
+  value namespace object on the surface. Plain-star hops and the closure's own
+  chain walk stay namespace-agnostic, like the pre-existing entry-star
+  closure.
+- The closure follows `export *` and `export * as` chains from each member,
+  and carries how much of each member is exposed. A member whose whole
+  namespace object is observed exposes every export; a member reached through
+  a plain `export *` exposes every export except `default`, which no plain
+  `export *` forwards. Star propagation treats a member like an entry barrel
+  for its `export *` sources (named exports in both namespaces, never
+  `default`) and namespace re-export propagation credits every export of its
+  `export * as` sources (`default` included) whenever the member exposes the
+  name that `export * as` uses. `export * as default` therefore only carries a
+  namespace object onward from an entry point itself or from a member whose
+  whole namespace object is observed.
+- The namespace-edge seeds and the chain walk run to a fixpoint against each
+  other: a target that joins the closure can itself expose the name a further
+  `export * as ns` edge forwards to it, and that edge only qualifies once the
+  target is a member. Each round widens the closure or stops, so the walk
+  terminates, and the closure Phase 2c reads already contains every target
+  Phase 2c would credit in full instead of stopping one namespace level short
+  of it. The reachability prune the search uses only grows, so a round extends
+  it from the members the previous round added instead of rebuilding it, and
+  each re-export edge is walked at most once across all rounds. The rest of a
+  round is a rescan of the namespace edges still pending, which a chain shaped
+  to resolve exactly one edge per round can drive up; real barrel trees settle
+  whole subtrees per round and stay in the single digits.
+- A member-narrowed namespace import (`ns.one()`) never seeds the closure, a
+  binding placed in an exported object literal (`export const API = { ns }`)
+  seeds it only when it is also used as a whole object or exported under its
+  own name (the namespace-object alias phase follows `API.ns.<member>`
+  precisely while the direct-export mark-all stays as before), and a namespace
+  re-export on a barrel off the entry surface with no consumer exposes nothing.
+  The seed's own credit keeps its shape: a runtime whole-module edge credits
+  the namespace object, `default` included; the ambient star form credits the
+  star surface without `default`.
+- Reachability gates the seeds issues #2372 and #2373 add, and nothing else.
+  A target no entry point reaches, observed only by a consumer in this graph,
+  is not seeded: that consumer is unreachable too, the report already calls
+  the target an unused file, and crediting its chain would only stack
+  unused-export rows underneath the unused-file rows. The same holds for an
+  `export * as ns` source no entry point reaches. The test applies to the
+  seed, not to the observer, so a whole-object use inside an unreachable file
+  still suppresses the reachable target's whole chain, the same way the
+  pre-existing mark-all already suppresses the target's direct exports from
+  such a file; deleting the unused file the report names brings the chain back
+  as unused exports on the next run.
+- The ambient seeds are not gated, and neither is the chain walk. A
+  `declare module 'pkg'` body states the shape of an external module id: its
+  observers are importers of that id, outside this graph, so where the shim
+  and its target sit inside the graph says nothing about who looks. The chain
+  behind an unreachable shim routinely re-enters a module an entry point
+  imports directly, and gating it reported exports on files the report calls
+  reachable. A re-export edge makes its source reachable whenever the barrel
+  is, so only an ambient chain can ever walk out of an unreachable member in
+  the first place; a hop that lands on an unreachable module credits it
+  through a re-export reference the unused-export detector already discounts
+  when nothing reachable reads it. The mark-all sites that feed the closure
+  keep crediting the target's own direct exports as before, reachable or not.
+- Two seed properties are deliberate and visible in reports. The seed is
+  namespace-agnostic, so `export type { ns }` seeds it exactly like
+  `export { ns }` and the chain is credited in the value namespace as well:
+  `typeof ns.member` keeps a value declaration reachable through a type-only
+  re-export. And the seed does not ask whether the re-export itself has a
+  consumer, so a namespace binding exported under its own name credits the
+  chain behind it even when the report calls that very export unused, the same
+  self-inconsistency the unreachable-observer case has.
+- The exposed namespace closure is computed once per graph build, in
+  `ModuleGraph::build`, and threaded into both phases that read it (Phase 2c
+  namespace re-export propagation and the Phase 4 entry-star seed). It depends
+  only on `ModuleNode::re_exports`, the entry-point flags, the consumers'
+  whole-object uses, and entry-point reachability, none of which any phase
+  after Phase 2 mutates. Reachability reads the edge list alone, so the build
+  computes it once, before the closure, and hands the same bitset to
+  `mark_reachable`.
+- Styling and CSS-in-JS extraction must preserve source line mapping.
+- Duplication token or normalization changes require the duplication cache
+  version to move with the changed semantics.
+- Exact duplication uses the configured strict, mild, weak, or semantic token
+  normalization. The opt-in `duplicates.near` pass is orthogonal: it compares
+  function-like spans with semantic shingles while retaining exact results from
+  the configured mode. Candidate generation is deterministically bounded and
+  reports skipped comparisons instead of hiding incomplete work.
+- Near groups carry a required similarity inside the engine and convert to the
+  shared output type only at the detector boundary. `CloneGroup::kind()` is the
+  canonical way to distinguish exact and near groups after that conversion.
+- Extracted-fragment language selection is centralized in the duplication
+  tokenizer. Fingerprints preserve extension-specific tokenization, while
+  function fragments use the closest JavaScript parser mode for their source.
+- Clone-group spread is the exact maximum of same-file interval distance and
+  lexical parent-directory tree distance. Its implementation must remain
+  equivalent to the pairwise definition without doing pairwise path work.
+- Clone fingerprints are based on normalized token sequences, not raw source
+  text. Formatting, comments, and line endings therefore preserve identity.
+  Reviewed clone keys append the surviving instance count so token changes and
+  added or removed copies trigger review again.
+- Extraction changes that alter `ModuleInfo` semantics require the parse cache
+  version to move with the changed semantics.
+- Security findings are verification candidates until an agent or human
+  confirms the evidence.
+- The load kind of an edge (`ImportLoadKind`) is the one model for when and
+  whether the edge runs its target. `PathReference` (`require.resolve`) and
+  `AssetReference` (a webpack asset loader request) keep the target in use,
+  but `loads_target()` is false. Cycles, the entry load closure, the startup
+  weight, the boundary detector and the security cone read that predicate,
+  through `ModuleGraph::outgoing_edge_summaries` where they walk edges. Only
+  `runs_target_code()` separates the two: reachability continues through a
+  path reference, because the consumer of the path can run the file, and
+  stops at an asset reference. A new consumer that walks edges must pick one
+  of these predicates instead of reading the variants.
+
+## Mock-aware test reachability
+
+Test-reachability masking (issues #2031, #2068, #2082) removes a mocked module
+from a test root's coverage credit only when the mock provably replaces the
+original module without ever loading it. Every idiom is proven through
+span-provenance (`crates/extract` `compute_semantic_usage` mock-API reference
+spans) plus the abstain-by-default closed-factory proof; anything unproven
+keeps coverage credit. Per-idiom semantics decisions:
+
+- `vi.mock` / `jest.mock` with a statically closed factory masks. Proven
+  receivers are the literal `vi` / `jest` globals, aliased named imports from
+  `vitest` / `@jest/globals`, and `ns.vi` through a `vitest` namespace import.
+- Automock (`vi.mock` / `jest.mock` without a factory) never masks, by
+  decision. Vitest derives the auto-mocked shape by importing the original
+  module, so its top-level code executes at collection time; file-level
+  masking cannot express "module evaluated, exports stubbed". When a
+  `__mocks__` sibling exists the original may not load, but the manual mock
+  itself may load the original (`importActual`), and proving it does not would
+  need a cross-file factory proof. The target and the speculative `__mocks__`
+  sibling still receive dynamic-import credit edges.
+- `vi.doMock` / `jest.doMock` never masks, by decision. The call is not
+  hoisted, affects only module requests evaluated after it runs, and usually
+  sits inside a test callback whose execution and ordering relative to the
+  file's dynamic imports is runtime scheduling. It contributes credit edges
+  only (target plus speculative `__mocks__` sibling), gated behind the same
+  provenance proof for aliased and namespace receivers, so a manual mock
+  referenced only through `doMock` does not surface as an unused file.
+- `vi.unmock` / `jest.unmock` clears an earlier mask (fail-open).
+  `doUnmock` is ignored entirely: it only affects later dynamic imports, so it
+  must not clear a sound hoisted mask.
+- Unresolved bare `vi` (Vitest `globals: true`) stays unproven for masking;
+  without reading the Vitest config the safe direction is abstention. Its
+  credit edges are still pushed eagerly.
+
+Credit edges have their own abstentions, separate from masking. The mock
+target must be a static string (string literal, expressionless template
+literal, or `import('...')` with a string-literal source); a templated
+``vi.doMock(`./adapters/${name}`)`` credits nothing. The speculative `__mocks__`
+sibling is synthesized only for path-shaped specifiers containing a `/`
+(`./services/api` credits `./services/__mocks__/api`); a sibling that stays in
+package space after alias substitution is dropped so it cannot fabricate a
+phantom `@scope/__mocks__` package (issue #2213). A bare package specifier
+(`vi.mock('axios')`, `jest.mock('@scope/pkg')`) additionally synthesizes a
+root-level `__mocks__/<specifier>` candidate; the resolver probes ancestor
+`__mocks__` directories of the test file up to the analysis root and credits
+the manual mock file when it exists, so root-level node-module mocks do not
+surface as unused files (issue #2225). A root mock with no matching
+factory-less mock call keeps surfacing under Vitest, which applies manual
+mocks only through `vi.mock`; under Jest the plugin's `__mocks__` entry
+patterns keep every manual mock used, matching Jest's automatic node-module
+mocking. "Anything unproven keeps coverage credit" describes masking
+abstention only; it does not imply a credit edge exists.
+
+## Script indirection crediting
+
+`crates/core/src/scripts/` credits dependencies, config files, and entry files
+from package.json scripts and from CI workflow commands. A package-manager
+invocation of a declared script (`npm run lint -- --format gha`,
+`yarn lint --fix`) is resolved to that script's body with the call-site
+arguments appended, so binaries and flag values behind the indirection are
+credited. The indirection is only followed when the call site adds arguments,
+because a plain `npm run build` reaches a body that is already analyzed on its
+own. npm 7 and later forward the positional arguments after the script name
+without `--`, and parse the `-`-prefixed arguments before `--` as npm config.
+So `npm run lint --fix src/a.ts` forwards only `src/a.ts`. The npm config flags
+that take a value also consume the next argument. The list in
+`crates/core/src/scripts/mod.rs` follows the npm config definitions: every
+definition whose type does not accept a boolean, such as `-w`, `--prefix`,
+`--tag`, `--otp`, and `--node-options`. Dockerfile flag values
+(`--input=src/a.ts`) go through the same resolution, so `ignoreCommandEntries`
+applies to the command of the script body.
+
+A package-manager command can run in other workspace packages. The parser
+records where the command runs as a `RunLocation` in
+`crates/core/src/scripts/mod.rs`:
+
+- A package selection (`yarn workspace web`, `npm -w web`, `pnpm --filter
+  web`, `pnpm -r`) keeps the selectors. `crates/core/src/scripts/workspace_selection.rs`
+  matches them against the workspace packages that `ScriptCatalog::with_workspaces`
+  attaches: a pnpm name, name glob, `./dir` glob, `{dir}` glob, or `!`
+  exclusion, an npm name or directory (resolved against the calling
+  package, as npm does), and an exact yarn name. The file and
+  config arguments resolve against the directory of each selected package,
+  relative to the calling package. A call of a script
+  (`npm run -w web gen -- scripts/a.ts`) expands the body of that script in
+  each selected package, with the catalog of that package. The pnpm
+  dependency and changed-package filters (`web...`, `[origin/main]`) and a
+  name that matches no package select nothing.
+- A selection of every package is the `All` selector: `pnpm -r`,
+  `yarn workspaces foreach -A`, and the yarn classic `yarn workspaces run`.
+  Another including selector narrows it (`pnpm -r --filter web`,
+  `foreach -A --include web`), and an excluding selector removes packages.
+  `npm --workspaces` is the npm directory selector `.` from the calling
+  package, because npm sets the package that contains the working directory
+  as the default workspace. A package where the file does not exist adds no
+  entry: the entry-point passes only keep files that exist.
+- The workspace map also holds the root package (`WorkspacePackages::add_root`,
+  directory `""`). The `All` selector leaves it out. The `IncludeRoot`
+  selector adds it when no other including selector exists:
+  `yarn workspaces foreach -A` (yarn berry lists the root as a workspace),
+  and `pnpm --include-workspace-root` with `-r` or with a filter that only
+  excludes packages (`--filter '!web'`). An including filter keeps the root
+  out (`--filter web --include-workspace-root` runs only in `web`). The
+  `Root` selector selects the root: `pnpm -w`, and npm
+  `--include-workspace-root` (`-iwr`), which adds the root to every npm
+  workspace selection (`-w web`, `--workspaces`). A pnpm filter, a yarn
+  name, and a directory can match the root. An npm workspace name or
+  directory does not match it. The yarn `foreach` globs match
+  the workspace name or its directory relative to the project root, where
+  `.` is the root. The other `yarn workspaces foreach` selections (`--since`,
+  `--recursive`, `--from`, `--worktree`, `--no-private`) need facts that the
+  map does not hold, so they make no entry points. The binary still counts as
+  used.
+- A directory flag (`pnpm -C <dir>`, `npm --prefix <dir>`, `yarn --cwd <dir>`)
+  joins the file arguments of a binary to that directory. A script call in a
+  directory that holds a workspace package selects that package
+  (`ScriptCatalog::script_call_location`), so the call forwards its arguments
+  to the script of that package.
+
+`yarn node <file>` is the yarn command that runs Node.js, so the file is a
+runner argument, also after a directory flag or a package selection. The
+monorepo task runners `turbo`, `nx`, and `lerna` forward their arguments to the
+task scripts of other packages, so none of their arguments is an entry point.
+Package scripts get the workspace packages in `lib.rs`, and so do CI files and
+Dockerfile, Procfile, and `fly.toml` commands. The entry-point passes in
+`discover/entry_points.rs` get the same map through `ScriptWorkspaces`, so the
+root package and each workspace package resolve a selection in the same way,
+and a `start` script that selects a package makes a runtime entry point. A
+file reference outside the calling package (`../web/scripts/a.ts`) resolves
+from the project root. `workspace_runtime_script_seeds` follows each runtime
+script through `referenced_workspace_scripts`, which uses the same run
+parser, so every selection form (`pnpm -r run serve`,
+`pnpm -C packages/web run serve`, `yarn --cwd`, `npm --prefix`) marks the
+called script of each selected package as runtime. The public
+`discover_entry_points(config, files, workspaces)` builds the same map and
+seeds, so the type-aware entry points (`list_inventory::collect_entry_points`)
+match the package entry points of the analysis.
+
+A declared script name wins over a binary with the same name, as it does in
+the package manager. When the body is unknown (several packages declare the
+name with different bodies), `yarn eslint src/a.ts` keeps `src/a.ts` as a file
+reference, like `npm run eslint -- src/a.ts`, instead of dropping it as an
+`eslint` target.
+
+The script catalog separates names from bodies. Names are always the full set of
+declared scripts, because a package manager resolves `pnpm <name>` to the script
+and never to a same-named binary. Bodies are only the scripts the current run
+analyzes, so a production run cannot enter a body that script filtering skipped.
+A name declared with different bodies in several workspace packages keeps its
+name but permanently loses its body.
+
+Script-referenced files are support roots by default: they stay reachable for
+dead-code analysis without contributing production reachability to dependency,
+health, or security analysis. The npm `start`, `prestart`, and `poststart`
+lifecycle is the narrow runtime exception, including declared scripts reached
+through package-manager indirection. Projects deployed through a custom script
+name should declare the deployed file in `entry` when no manifest, framework,
+or infrastructure entry already identifies it as runtime code.
+
+### CLI flag-value crediting
+
+Some CLIs load an npm package because a flag value names it: `eslint --format
+gha` loads `eslint-formatter-gha`, `mocha --reporter mochawesome` loads
+`mochawesome`, `node -r dotenv/config` loads `dotenv`. Fallow credits these
+packages from a closed convention table of `(binary, flag)` pairs;
+`crates/core/data/cli_flag_credits.toml` is the authoritative list of covered
+binaries, flags, resolution rules, and tool built-ins. This is why a package
+used only through such a flag (mochawesome, dotenv, a SARIF formatter in CI) is
+not reported as an unused dependency.
+
+Two invariants matter to users:
+
+- A credit can only remove an unused-dependency finding for a dependency the
+  project already declares.
+- The table is never consulted by unlisted-dependency detection, so a
+  synthesized name can never invent a finding.
+
+Values that name files rather than packages abstain: relative and absolute
+paths, and any unscoped value whose final path segment ends in a script
+extension (`mocha --require test/setup.js` credits nothing, because tools
+resolve an existing relative file before treating the value as a module).
+Built-in values listed per tool (`mocha --reporter spec`, `jest --reporters
+default`) also credit nothing.
+
+Expansion is bounded twice. `MAX_SCRIPT_INDIRECTION_DEPTH` caps the depth of a
+single chain, and `MAX_SCRIPT_EXPANSIONS` caps the total number of bodies
+expanded for one command, because the cycle guard only rejects names on the
+current path and mutually calling scripts otherwise fan out per path. Both
+bounds are deliberate ceilings: a project that exceeds them loses crediting for
+the deepest calls rather than degrading analysis time.
+
+## Discovery and resolver fallback boundaries
+
+The discovery backend uses `ALLOWED_HIDDEN_DIRS` in
+`crates/core/src/discover/mod.rs` together with explicit script/plugin scopes;
+a blanket hidden-directory exclusion would lose tool configuration and assets.
+The default `**/build/**` exclusion matches a `build` path segment at any
+depth, so per-package output in a monorepo is skipped the same way `**/dist/**`
+and `**/coverage/**` are, and the same way `is_skip_listed_dir` in
+`crates/config/src/workspace/diagnostics.rs` already treats the name. Keep
+discovery ignore behavior separate from workspace-package candidate filtering.
+
+A `!` entry in `ignorePatterns` is an exception, not a glob of the union
+(issues #2940 and #2452). `IgnorePatternSet` in
+`crates/config/src/config/ignore_patterns.rs` applies the order: built-in
+defaults, then the project's own patterns, then the `!` exceptions. A path that
+an exception matches is not ignored, so a hand-written source directory named
+`build` or `coverage` comes back with `!src/policy/coverage/**`. These rules
+apply:
+
+- Paths under `node_modules` or `.git` are never lifted. A `!` entry that names
+  one of these segments fails config load with exit 2.
+- An exception can open a hidden directory. The walk opens a hidden directory
+  when the literal start of an exception names it or a directory inside it, or
+  when the exception names it after a leading glob (`!**/.config/**`). In a
+  hidden directory that only an exception opened, the walk keeps only the
+  files that an exception matches.
+- The exceptions are not part of the index layout below.
+  `user_ignore_pattern_count` counts only the positive project patterns.
+
+Because the exclusion is silent by construction, the walk counts it. Every
+candidate source file a built-in pattern drops is attributed to that pattern,
+and one `excluded-by-default-ignore` workspace diagnostic per pattern reaches
+`workspace_diagnostics[]` carrying the pattern text, an exact `file_count`, a
+`directory_count`, and a `path` anchored at the matched directory that lost the
+most files. One entry per pattern is what keeps the array bounded on a project
+of any size; per-file or per-directory entries would scale with the tree. `path`
+names the largest group and not a majority, which is why `directory_count`
+travels with it: ten packages each losing one file to `**/dist/**` make every
+one of them "the largest". `directory_count` counts matched scopes, not the
+directories the files sat in, so one excluded subtree counts once however deep
+it nests.
+
+The anchor is the DEEPEST segment the pattern matched, not the first. The glob
+is tested against the path relative to the run root, so on
+`build/tools/build/a.ts` an anchor at the outer `build` would name a root under
+which `**/build/**` matches again and the `--root` remedy would recover
+nothing.
+
+Four properties of that count are load-bearing:
+
+- Attribution reads the index layout of the compiled union. User
+  `ignorePatterns` occupy `0..user_ignore_pattern_count` and
+  `DEFAULT_IGNORE_PATTERNS` follows in order, so a file whose lowest match
+  falls in the user range was an explicit project choice and is attributed to
+  nothing. Reordering either half changes an output contract.
+- Gitignored trees count zero. The walker sets `git_ignore`, `git_global`, and
+  `git_exclude`, so a repository that already hides its own `dist/` prunes it
+  before the visitor runs. The honest population is "candidate source files git
+  did not already hide and a built-in pattern then dropped".
+- Only excluded files pay for attribution. The kept-file path still runs a
+  single `GlobSet::is_match`; `matches_into` runs on a per-thread reusable
+  buffer and only for paths that match already.
+- `**/node_modules/**` is never reported. Installed dependencies are not the
+  first-party source this diagnostic is about, a project that does not gitignore
+  them would report a five-figure count with no useful remedy, and skipping the
+  attribution on a `node_modules` component keeps the dependency tree off the
+  attribution path entirely. `**/.git/**` cannot fire, since hidden directories
+  are not traversed and no exception can open `.git`.
+
+The diagnostic does not warn on stderr and is not a
+`source_never_analyzed` kind: these exclusions are designed behavior on
+generated output, so caveating findings would fire on most projects and make
+`fallow fix` withhold `delete-file` and `remove-export` project-wide. A human
+run mentions the counts only under `--explain-skipped` on `check`, `dead-code`,
+`audit` and the default run, the same flag that widens the duplication note on
+`dupes` and `audit`. The one exception is a run that discovered no source files
+at all while a built-in pattern excluded some: that run says so on stderr
+without the flag, on the same commands, because it has nothing else to report
+and a green result would be misleading. That line states two measured facts
+("No source files were analyzed. The built-in ignore pattern `<p>` excluded N
+files") and joins them with a period rather than a colon: `--production`
+excludes, a skipped hidden directory, and the size and minification skips can
+each empty the file list on their own and none of them is in this tally, so
+naming the pattern as the cause would be false on exactly those runs.
+
+The remedy depends on the pattern's shape, and the two are not
+interchangeable. A `!<dir>/**` exception in `ignorePatterns` lifts either shape
+in the same run, and every message names it first. A directory-shaped built-in (`**/dist/**`) is matched
+against the path relative to the run root, so re-rooting inside the matched
+directory removes the matched segment and the files become visible: that is the
+`fallow --root <dir>` advice. A file-shaped built-in (`**/*.min.js`,
+`**/*.min.mjs`, `**/*.min.cjs`, `**/*.bundle.js`) matches on the file name and
+keeps matching at every root, so re-rooting re-excludes the same file; those
+entries say so and point at renaming instead.
+
+## The plugin stage as a diagnostic stage
+
+Framework plugins are the fifth stage that writes `workspace_diagnostics[]`,
+beside workspace discovery, source discovery, the analyze stage and the health
+pipeline, and it has its own predicate
+(`WorkspaceDiagnosticKind::is_plugin_stage`) for the same reason the other two
+late stages do. Plugins run in the dead-code prelude, after the config-load
+stash, so `stash_workspace_diagnostics` has to preserve their entries across
+combined mode's per-analysis config re-loads; and they run INSIDE the pass that
+clears the analyze stage on entry, so classifying a plugin kind as
+analysis-stage would wipe it mid-run.
+
+Its refresh rule is a single replace rather than a clear plus an append.
+`record_plugin_config_diagnostics` retains every non-plugin entry, extends with
+the deduplicated new set, and emits the stderr lines, under one lock, and it runs
+even with nothing to record, so a config the user fixed drops out on the next
+run. There is exactly one writer, at the end of the plugin run, because that is
+where the root and workspace plugin results have converged; a writer inside a
+workspace run would publish a partial set, and a second writer would be replaced
+by the first.
+
+Plugin config parsing is not cached: every analysis re-reads each config from
+disk and feeds only the plugin config hash, so these entries are identical on a
+warm and a cold cache and need no cache-version bump or mirror field. `fallow
+list` runs plugins on its own inventory path and records nothing, so
+`fallow list --workspaces` carries no plugin-stage entry.
+
+The stderr dedupe keys on the rendered message, not on the kind id plus the
+path. One config file can hold two unreadable keys, which is two entries under
+one kind on one path, and an id-and-path key printed only the first.
+
+The ignore filter in `crates/core/src/discover/walk.rs` runs before the walker
+splits a path into the source set and the config-candidate channel, so an
+excluded path reaches neither. A framework config under an ignored segment,
+such as `app/build/webpack.config.js`, is therefore invisible to Phase 3a in
+`crates/core/src/plugins/registry/helpers.rs`, which deliberately leaves
+source-extension root patterns to the discovered source set, and the path
+aliases that config declares are lost. Widening a default ignore pattern
+widens that loss, so weigh the config-candidate channel alongside the source
+set when changing the defaults.
+
+Resolver fallbacks in `crates/graph/src/resolve/` preserve tracked source
+identity when package exports point to ignored output, pnpm virtual-store paths
+or workspace self-references. Keep dependency-usage metadata when an npm
+specifier resolves back to workspace source. Package `imports` aliases are
+owned by the nearest package manifest; do not turn unmatched hash specifiers
+into global aliases. Per-file tsconfig failure may degrade to ordinary relative
+or package resolution, with diagnostics, without inventing missing path aliases.
+Web-root-relative asset resolution must preserve the importer/workspace context
+before considering the analysis root.
+
+Style resolution is distinct from JavaScript resolution. Preserve scoped npm
+specifier identity, SCSS partial and directory-index lookup, configured include
+paths and installed-package fallback. The `from_style` fact on SFC imports is
+part of that routing contract. React Native platform variants must remain
+reachable alongside standard source extensions.
+
+## Framework and analysis regression boundaries
+
+Framework activation needs explicit project evidence. Plugin entries and
+`used_exports` rules are separate: a generated-binding entry can require export
+credit even under entry-export checking. SvelteKit remote functions and layout
+reset routes, Electron renderer inputs, browser-extension manifest entries and
+WXT entrypoint helpers have deliberately different scopes. Their source tests
+must retain unrelated-file controls. Vite preprocessor data and Cypress config
+paths must pass through shared path/config parsing instead of local copies.
+See the [plugin reference](plugin-internals.md) for ownership and validation.
+
+Keep decorated/lifecycle member credit distinct from enum-member usage, and
+preserve typed instance/inheritance propagation without inventing unresolved
+types. Visibility markers and same-file export references have different
+semantics: local value use does not necessarily make an export surface public.
+An `expected-unused` marker becomes stale when reachable consumers adopt the
+export. Disabled-rule suppressions must not become stale merely because their
+detector did not run.
+
+Dependency credit must distinguish source, scripts, configuration, required
+installed peers, optional peers and runtime-provided built-ins. Dependency
+ignores suppress findings without fabricating resolution edges. Raw-specifier
+unresolved-import ignores are not filesystem globs. Static test coverage is
+reference reachability, not runtime line coverage; complexity suppression
+controls findings while aggregate metrics continue to describe the source.
+Security and feature-flag analysis retain their own opt-in contracts and cannot
+be silently folded into dead-code totals.
+
+## Verification must observe production behavior
+
+Test adapters may construct inputs or expose observations from the real
+implementation. They must not keep retired normalization, parsing or graph
+algorithms alive solely for their old tests. A differential reference algorithm
+is useful when tests compare its result with production across meaningful
+inputs. A test-only copy that is never compared with production is not such an
+oracle. Performance assertions must observe actual operations, rather than
+infer an operation count from a result enum or other derived label.
+
+## Adding or changing an analyzer
+
+Follow [analyzer authoring](../analyzer-authoring.md). Update the shared issue
+metadata, output actions, schemas, editor surfaces, MCP metadata, suppression
+handling, and fixtures as one contract.
+
+For correctness work, prove the exact syntax with a focused fixture, then run a
+representative public project before the broad repository verification.

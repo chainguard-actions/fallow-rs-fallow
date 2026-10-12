@@ -1,0 +1,861 @@
+import * as path from "node:path";
+// VS Code calls TreeDataProvider members through the registered provider.
+// fallow-ignore-file unused-class-member
+// VS Code injects this module into the extension host at runtime.
+// fallow-ignore-next-line unlisted-dependency
+import * as vscode from "vscode";
+import { countDiagnosticErrorIssues } from "./analysis-utils.js";
+import { middleElidePath, sortCloneGroupsBySize } from "./treeView-utils.js";
+import { resolveWorkspaceFilePath } from "./workspaceRoot.js";
+import { openFileCommand } from "./openFileCommand.js";
+import type {
+  CloneGroupFinding,
+  FallowCheckResult,
+  FallowDupesResult,
+  IssueCategory,
+} from "./types.js";
+import { ISSUE_CATEGORY_LABELS } from "./types.js";
+
+/** Shown on a package cycle whose package group has more cycles than the CLI lists. */
+const PACKAGE_GROUP_TRUNCATED_NOTE = "this package group has more cycles than listed";
+
+/** Icons per issue category. */
+const CATEGORY_ICONS: Record<IssueCategory, string> = {
+  "unused-files": "file-code",
+  "unused-exports": "symbol-method",
+  "unused-types": "symbol-interface",
+  "private-type-leaks": "symbol-interface",
+  "unused-dependencies": "package",
+  "unused-dev-dependencies": "package",
+  "unused-optional-dependencies": "package",
+  "unused-enum-members": "symbol-enum-member",
+  "unused-class-members": "symbol-field",
+  "unused-store-member": "symbol-field",
+  "unused-server-action": "symbol-method",
+  "unused-load-data-keys": "symbol-property",
+  "unused-component-prop": "symbol-property",
+  "unused-component-emit": "symbol-event",
+  "unused-component-input": "symbol-property",
+  "unused-component-output": "symbol-event",
+  "unused-svelte-event": "symbol-event",
+  "unrendered-component": "symbol-misc",
+  "unprovided-inject": "plug",
+  "invalid-client-export": "error",
+  "mixed-client-server-barrel": "files",
+  "misplaced-directive": "warning",
+  "route-collision": "git-merge",
+  "dynamic-segment-name-conflict": "git-merge",
+  "unresolved-imports": "error",
+  "unlisted-dependencies": "package",
+  "duplicate-exports": "files",
+  "type-only-dependencies": "symbol-interface",
+  "test-only-dependencies": "beaker",
+  "dev-dependencies-in-production": "package",
+  "circular-dependencies": "sync",
+  "re-export-cycles": "sync-ignored",
+  "package-cycles": "sync",
+  "boundary-violation": "symbol-namespace",
+  "policy-violations": "symbol-namespace",
+  "stale-suppressions": "trash",
+  "unused-catalog-entries": "package",
+  "empty-catalog-groups": "package",
+  "unresolved-catalog-references": "error",
+  "unused-dependency-overrides": "package",
+  "misconfigured-dependency-overrides": "error",
+  "prop-drilling": "symbol-property",
+  "thin-wrapper": "symbol-misc",
+  "duplicate-prop-shape": "symbol-structure",
+};
+
+/** Icons for individual issue items. Only these categories use a different icon. */
+const ISSUE_ICONS: Record<IssueCategory, string> = {
+  ...CATEGORY_ICONS,
+  "unused-files": "file",
+  "duplicate-exports": "copy",
+  "type-only-dependencies": "package",
+};
+
+const staleSuppressionLabel = (
+  origin: NonNullable<FallowCheckResult["stale_suppressions"]>[number]["origin"],
+): string => {
+  if (origin.type === "jsdoc_tag") {
+    return `@expected-unused ${origin.export_name}`;
+  }
+  if (origin.issue_kind) {
+    return origin.is_file_level ? `file ${origin.issue_kind}` : origin.issue_kind;
+  }
+  return origin.is_file_level ? "file suppression" : "line suppression";
+};
+
+type DeadCodeItem = CategoryItem | IssueItem | CycleItem;
+
+class CategoryItem extends vscode.TreeItem {
+  readonly issues: ReadonlyArray<IssueItem | CycleItem>;
+
+  constructor(
+    readonly category: IssueCategory,
+    issues: ReadonlyArray<IssueItem | CycleItem>,
+  ) {
+    super(
+      `${ISSUE_CATEGORY_LABELS[category]} (${issues.length})`,
+      vscode.TreeItemCollapsibleState.Collapsed,
+    );
+    this.issues = issues;
+    this.contextValue = "category";
+    this.iconPath = new vscode.ThemeIcon(CATEGORY_ICONS[category] ?? "warning");
+  }
+}
+
+class IssueItem extends vscode.TreeItem {
+  constructor(
+    label: string,
+    readonly filePath: string,
+    readonly line: number,
+    readonly col: number,
+    category: IssueCategory,
+  ) {
+    super(label, vscode.TreeItemCollapsibleState.None);
+
+    const { absolute, relative } = resolveWorkspaceFilePath(filePath);
+
+    this.description = `${middleElidePath(relative)}:${line}`;
+    this.tooltip = `${label}\n${absolute}:${line}:${col}`;
+    this.contextValue = "issue";
+
+    this.command = openFileCommand(absolute, line, col);
+
+    this.iconPath = new vscode.ThemeIcon(ISSUE_ICONS[category] ?? "warning");
+  }
+}
+
+/**
+ * A dependency cycle (circular dependency or re-export cycle). Collapsible: the
+ * label summarizes the cycle (`N files`) and the children are every file in the
+ * cycle, each clickable, so the whole loop is visible rather than just the
+ * entry file.
+ */
+class CycleItem extends vscode.TreeItem {
+  readonly fileItems: ReadonlyArray<IssueItem>;
+
+  constructor(label: string, files: ReadonlyArray<string>, category: IssueCategory) {
+    super(
+      label,
+      files.length > 0
+        ? vscode.TreeItemCollapsibleState.Collapsed
+        : vscode.TreeItemCollapsibleState.None,
+    );
+    this.fileItems = files.map((f) => new IssueItem(path.basename(f), f, 1, 0, category));
+    const { relative } = resolveWorkspaceFilePath(files[0] ?? "");
+    this.description = relative ? middleElidePath(relative) : undefined;
+    this.tooltip = files.map((f) => resolveWorkspaceFilePath(f).absolute).join("\n");
+    this.contextValue = "cycle";
+    this.iconPath = new vscode.ThemeIcon(ISSUE_ICONS[category] ?? "warning");
+  }
+}
+
+export class DeadCodeTreeProvider implements vscode.TreeDataProvider<DeadCodeItem> {
+  private result: FallowCheckResult | null = null;
+  private view: vscode.TreeView<DeadCodeItem> | null = null;
+
+  private readonly _onDidChangeTreeData = new vscode.EventEmitter<
+    DeadCodeItem | undefined | null | void
+  >();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  setView(view: vscode.TreeView<DeadCodeItem>): void {
+    this.view = view;
+  }
+
+  update(result: FallowCheckResult | null): void {
+    this.result = result;
+    this._onDidChangeTreeData.fire();
+    this.updateBadge();
+  }
+
+  private updateBadge(): void {
+    if (!this.view) {
+      return;
+    }
+    if (!this.result) {
+      this.view.badge = undefined;
+      return;
+    }
+    const count = countDiagnosticErrorIssues(this.result);
+
+    this.view.badge =
+      count > 0 ? { value: count, tooltip: `${count} error${count === 1 ? "" : "s"}` } : undefined;
+  }
+
+  getTreeItem(element: DeadCodeItem): vscode.TreeItem {
+    return element;
+  }
+
+  getChildren(element?: DeadCodeItem): DeadCodeItem[] {
+    if (element instanceof CategoryItem) {
+      return [...element.issues];
+    }
+
+    if (element instanceof CycleItem) {
+      return [...element.fileItems];
+    }
+
+    if (!this.result) {
+      return [];
+    }
+
+    const categories: DeadCodeItem[] = [];
+
+    const addCategory = (
+      category: IssueCategory,
+      items: ReadonlyArray<IssueItem | CycleItem>,
+    ): void => {
+      if (items.length > 0) {
+        categories.push(new CategoryItem(category, items));
+      }
+    };
+
+    addCategory(
+      "unused-files",
+      this.result.unused_files.map(
+        (f) => new IssueItem(path.basename(f.path), f.path, 1, 0, "unused-files"),
+      ),
+    );
+
+    addCategory(
+      "unused-exports",
+      this.result.unused_exports.map(
+        (e) => new IssueItem(e.export_name, e.path, e.line, e.col, "unused-exports"),
+      ),
+    );
+
+    addCategory(
+      "unused-types",
+      this.result.unused_types.map(
+        (e) => new IssueItem(e.export_name, e.path, e.line, e.col, "unused-types"),
+      ),
+    );
+
+    addCategory(
+      "private-type-leaks",
+      (this.result.private_type_leaks ?? []).map(
+        (l) =>
+          new IssueItem(
+            `${l.export_name} -> ${l.type_name}`,
+            l.path,
+            l.line,
+            l.col,
+            "private-type-leaks",
+          ),
+      ),
+    );
+
+    addCategory(
+      "unused-dependencies",
+      this.result.unused_dependencies.map(
+        (d) => new IssueItem(d.package_name, d.path, d.line, 0, "unused-dependencies"),
+      ),
+    );
+
+    addCategory(
+      "unused-dev-dependencies",
+      this.result.unused_dev_dependencies.map(
+        (d) => new IssueItem(d.package_name, d.path, d.line, 0, "unused-dev-dependencies"),
+      ),
+    );
+
+    if (this.result.unused_optional_dependencies) {
+      addCategory(
+        "unused-optional-dependencies",
+        this.result.unused_optional_dependencies.map(
+          (d) => new IssueItem(d.package_name, d.path, d.line, 0, "unused-optional-dependencies"),
+        ),
+      );
+    }
+
+    addCategory(
+      "unused-enum-members",
+      this.result.unused_enum_members.map(
+        (m) =>
+          new IssueItem(
+            `${m.parent_name}.${m.member_name}`,
+            m.path,
+            m.line,
+            m.col,
+            "unused-enum-members",
+          ),
+      ),
+    );
+
+    addCategory(
+      "unused-class-members",
+      this.result.unused_class_members.map(
+        (m) =>
+          new IssueItem(
+            `${m.parent_name}.${m.member_name}`,
+            m.path,
+            m.line,
+            m.col,
+            "unused-class-members",
+          ),
+      ),
+    );
+
+    if (this.result.unused_store_members) {
+      addCategory(
+        "unused-store-member",
+        this.result.unused_store_members.map(
+          (m) =>
+            new IssueItem(
+              `${m.parent_name}.${m.member_name}`,
+              m.path,
+              m.line,
+              m.col,
+              "unused-store-member",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.unused_server_actions) {
+      addCategory(
+        "unused-server-action",
+        this.result.unused_server_actions.map(
+          (a) => new IssueItem(a.action_name, a.path, a.line, a.col, "unused-server-action"),
+        ),
+      );
+    }
+
+    if (this.result.unused_load_data_keys) {
+      addCategory(
+        "unused-load-data-keys",
+        this.result.unused_load_data_keys.map(
+          (k) => new IssueItem(k.key_name, k.path, k.line, k.col, "unused-load-data-keys"),
+        ),
+      );
+    }
+
+    if (this.result.unused_component_props) {
+      addCategory(
+        "unused-component-prop",
+        this.result.unused_component_props.map(
+          (p) =>
+            new IssueItem(
+              `${p.component_name}.${p.prop_name}`,
+              p.path,
+              p.line,
+              p.col,
+              "unused-component-prop",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.unused_component_emits) {
+      addCategory(
+        "unused-component-emit",
+        this.result.unused_component_emits.map(
+          (e) =>
+            new IssueItem(
+              `${e.component_name}.${e.emit_name}`,
+              e.path,
+              e.line,
+              e.col,
+              "unused-component-emit",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.unused_component_inputs) {
+      addCategory(
+        "unused-component-input",
+        this.result.unused_component_inputs.map(
+          (i) =>
+            new IssueItem(
+              `${i.component_name}.${i.input_name}`,
+              i.path,
+              i.line,
+              i.col,
+              "unused-component-input",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.unused_component_outputs) {
+      addCategory(
+        "unused-component-output",
+        this.result.unused_component_outputs.map(
+          (o) =>
+            new IssueItem(
+              `${o.component_name}.${o.output_name}`,
+              o.path,
+              o.line,
+              o.col,
+              "unused-component-output",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.unused_svelte_events) {
+      addCategory(
+        "unused-svelte-event",
+        this.result.unused_svelte_events.map(
+          (e) =>
+            new IssueItem(
+              `${e.component_name}.${e.event_name}`,
+              e.path,
+              e.line,
+              e.col,
+              "unused-svelte-event",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.unrendered_components) {
+      addCategory(
+        "unrendered-component",
+        this.result.unrendered_components.map(
+          (c) => new IssueItem(c.component_name, c.path, c.line, c.col, "unrendered-component"),
+        ),
+      );
+    }
+
+    if (this.result.unprovided_injects) {
+      addCategory(
+        "unprovided-inject",
+        this.result.unprovided_injects.map(
+          (i) => new IssueItem(i.key_name, i.path, i.line, i.col, "unprovided-inject"),
+        ),
+      );
+    }
+
+    if (this.result.invalid_client_exports) {
+      addCategory(
+        "invalid-client-export",
+        this.result.invalid_client_exports.map(
+          (e) => new IssueItem(e.export_name, e.path, e.line, e.col, "invalid-client-export"),
+        ),
+      );
+    }
+
+    if (this.result.mixed_client_server_barrels) {
+      addCategory(
+        "mixed-client-server-barrel",
+        this.result.mixed_client_server_barrels.map(
+          (b) =>
+            new IssueItem(
+              `${b.client_origin} + ${b.server_origin}`,
+              b.path,
+              b.line,
+              b.col,
+              "mixed-client-server-barrel",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.misplaced_directives) {
+      addCategory(
+        "misplaced-directive",
+        this.result.misplaced_directives.map(
+          (d) => new IssueItem(d.directive, d.path, d.line, d.col, "misplaced-directive"),
+        ),
+      );
+    }
+
+    if (this.result.route_collisions) {
+      addCategory(
+        "route-collision",
+        this.result.route_collisions.map(
+          (r) => new IssueItem(r.url, r.path, r.line, r.col, "route-collision"),
+        ),
+      );
+    }
+
+    if (this.result.dynamic_segment_name_conflicts) {
+      addCategory(
+        "dynamic-segment-name-conflict",
+        this.result.dynamic_segment_name_conflicts.map(
+          (c) =>
+            new IssueItem(
+              `${c.position} (${c.conflicting_segments.join(" vs ")})`,
+              c.path,
+              c.line,
+              c.col,
+              "dynamic-segment-name-conflict",
+            ),
+        ),
+      );
+    }
+
+    addCategory(
+      "unresolved-imports",
+      this.result.unresolved_imports.map(
+        (i) => new IssueItem(i.specifier, i.path, i.line, i.col, "unresolved-imports"),
+      ),
+    );
+
+    addCategory(
+      "unlisted-dependencies",
+      this.result.unlisted_dependencies.flatMap((d) =>
+        d.imported_from.map(
+          (site) =>
+            new IssueItem(d.package_name, site.path, site.line, site.col, "unlisted-dependencies"),
+        ),
+      ),
+    );
+
+    addCategory(
+      "duplicate-exports",
+      this.result.duplicate_exports.flatMap((d) =>
+        d.locations.map(
+          (loc) => new IssueItem(d.export_name, loc.path, loc.line, loc.col, "duplicate-exports"),
+        ),
+      ),
+    );
+
+    if (this.result.type_only_dependencies) {
+      addCategory(
+        "type-only-dependencies",
+        this.result.type_only_dependencies.map(
+          (d) => new IssueItem(d.package_name, d.path, d.line, 0, "type-only-dependencies"),
+        ),
+      );
+    }
+
+    if (this.result.test_only_dependencies) {
+      addCategory(
+        "test-only-dependencies",
+        this.result.test_only_dependencies.map(
+          (d) => new IssueItem(d.package_name, d.path, d.line, 0, "test-only-dependencies"),
+        ),
+      );
+    }
+
+    if (this.result.dev_dependencies_in_production) {
+      addCategory(
+        "dev-dependencies-in-production",
+        this.result.dev_dependencies_in_production.map(
+          (d) => new IssueItem(d.package_name, d.path, d.line, 0, "dev-dependencies-in-production"),
+        ),
+      );
+    }
+
+    if (this.result.circular_dependencies) {
+      addCategory(
+        "circular-dependencies",
+        this.result.circular_dependencies.map(
+          (c) => new CycleItem(`${c.length} files`, c.files, "circular-dependencies"),
+        ),
+      );
+    }
+
+    if (this.result.re_export_cycles) {
+      addCategory(
+        "re-export-cycles",
+        this.result.re_export_cycles.map(
+          (c) =>
+            new CycleItem(
+              c.kind === "self-loop" ? "Self-loop" : `${c.files.length} files`,
+              c.files,
+              "re-export-cycles",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.package_cycles) {
+      addCategory(
+        "package-cycles",
+        this.result.package_cycles.map(
+          (c) =>
+            new CycleItem(
+              [...c.packages, c.packages[0]].join(" -> ") +
+                (c.group_truncated ? ` (${PACKAGE_GROUP_TRUNCATED_NOTE})` : ""),
+              c.edges.map((edge) => edge.path),
+              "package-cycles",
+            ),
+        ),
+      );
+    }
+
+    const boundaryItems = [
+      ...(this.result.boundary_violations?.map(
+        (v) =>
+          new IssueItem(
+            `${v.from_zone} -> ${v.to_zone}`,
+            v.from_path,
+            v.line,
+            v.col,
+            "boundary-violation",
+          ),
+      ) ?? []),
+      ...(this.result.boundary_coverage_violations?.map(
+        (v) =>
+          new IssueItem("Unmatched boundary zone", v.path, v.line, v.col, "boundary-violation"),
+      ) ?? []),
+      ...(this.result.boundary_call_violations?.map(
+        (v) => new IssueItem(`${v.zone}: ${v.callee}`, v.path, v.line, v.col, "boundary-violation"),
+      ) ?? []),
+    ];
+    if (boundaryItems.length > 0) {
+      addCategory("boundary-violation", boundaryItems);
+    }
+
+    if (this.result.policy_violations) {
+      addCategory(
+        "policy-violations",
+        this.result.policy_violations.map(
+          (v) =>
+            new IssueItem(`${v.pack}/${v.rule_id}`, v.path, v.line, v.col, "policy-violations"),
+        ),
+      );
+    }
+
+    if (this.result.stale_suppressions) {
+      addCategory(
+        "stale-suppressions",
+        this.result.stale_suppressions.map(
+          (s) =>
+            new IssueItem(
+              staleSuppressionLabel(s.origin),
+              s.path,
+              s.line,
+              s.col,
+              "stale-suppressions",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.unused_catalog_entries) {
+      addCategory(
+        "unused-catalog-entries",
+        this.result.unused_catalog_entries.map(
+          (entry) =>
+            new IssueItem(
+              entry.catalog_name === "default"
+                ? entry.entry_name
+                : `${entry.entry_name} (${entry.catalog_name})`,
+              entry.path,
+              entry.line,
+              0,
+              "unused-catalog-entries",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.empty_catalog_groups) {
+      addCategory(
+        "empty-catalog-groups",
+        this.result.empty_catalog_groups.map(
+          (group) =>
+            new IssueItem(group.catalog_name, group.path, group.line, 0, "empty-catalog-groups"),
+        ),
+      );
+    }
+
+    if (this.result.unresolved_catalog_references) {
+      addCategory(
+        "unresolved-catalog-references",
+        this.result.unresolved_catalog_references.map(
+          (finding) =>
+            new IssueItem(
+              finding.catalog_name === "default"
+                ? finding.entry_name
+                : `${finding.entry_name} (${finding.catalog_name})`,
+              finding.path,
+              finding.line,
+              0,
+              "unresolved-catalog-references",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.unused_dependency_overrides) {
+      addCategory(
+        "unused-dependency-overrides",
+        this.result.unused_dependency_overrides.map(
+          (finding) =>
+            new IssueItem(
+              `${finding.raw_key} (${finding.source})`,
+              finding.path,
+              finding.line,
+              0,
+              "unused-dependency-overrides",
+            ),
+        ),
+      );
+    }
+
+    if (this.result.misconfigured_dependency_overrides) {
+      addCategory(
+        "misconfigured-dependency-overrides",
+        this.result.misconfigured_dependency_overrides.map(
+          (finding) =>
+            new IssueItem(
+              `${finding.raw_key} (${finding.source})`,
+              finding.path,
+              finding.line,
+              0,
+              "misconfigured-dependency-overrides",
+            ),
+        ),
+      );
+    }
+
+    this.addComponentHealthCategories(addCategory);
+
+    return categories;
+  }
+
+  /**
+   * The opt-in component health signals. Each item sits at the component the
+   * CLI anchors the finding to: the source hop of a prop drilling chain, the
+   * wrapper, or the component with the shared prop shape.
+   */
+  private addComponentHealthCategories(
+    addCategory: (category: IssueCategory, items: ReadonlyArray<IssueItem>) => void,
+  ): void {
+    if (!this.result) {
+      return;
+    }
+    if (this.result.prop_drilling_chains) {
+      addCategory(
+        "prop-drilling",
+        this.result.prop_drilling_chains.flatMap((chain) => {
+          const source = chain.hops[0];
+          if (!source) {
+            return [];
+          }
+          const trail = chain.hops.map((hop) => hop.component).join(" -> ");
+          return [
+            new IssueItem(`${chain.prop}: ${trail}`, source.file, source.line, 0, "prop-drilling"),
+          ];
+        }),
+      );
+    }
+    if (this.result.thin_wrappers) {
+      addCategory(
+        "thin-wrapper",
+        this.result.thin_wrappers.map(
+          (wrapper) =>
+            new IssueItem(
+              `${wrapper.component} -> ${wrapper.child_component}`,
+              wrapper.file,
+              wrapper.line,
+              0,
+              "thin-wrapper",
+            ),
+        ),
+      );
+    }
+    if (this.result.duplicate_prop_shapes) {
+      addCategory(
+        "duplicate-prop-shape",
+        this.result.duplicate_prop_shapes.map(
+          (shape) =>
+            new IssueItem(
+              `${shape.component} {${shape.shape.join(", ")}}`,
+              shape.file,
+              shape.line,
+              0,
+              "duplicate-prop-shape",
+            ),
+        ),
+      );
+    }
+  }
+
+  dispose(): void {
+    this._onDidChangeTreeData.dispose();
+  }
+}
+
+type DuplicateItem = CloneFamilyItem | CloneInstanceItem;
+
+class CloneFamilyItem extends vscode.TreeItem {
+  readonly instances: ReadonlyArray<CloneInstanceItem>;
+
+  constructor(group: CloneGroupFinding) {
+    const instanceItems = group.instances.map(
+      (inst) => new CloneInstanceItem(inst.file, inst.start_line, inst.end_line),
+    );
+    // Name the clone by what it is: fallow's dominant repeated identifier (e.g.
+    // a shared `parseCsv` function), falling back to the first instance's file
+    // basename when the clone has no clear name. The list is already ordered by
+    // impact, so an opaque "Clone #N" ordinal is not needed.
+    const name =
+      group.suggested_name ??
+      (group.instances[0] ? path.basename(group.instances[0].file) : "Duplicated code");
+    const count = group.instances.length;
+    super(name, vscode.TreeItemCollapsibleState.Collapsed);
+    this.description = `${group.line_count} lines · ${count} instance${count === 1 ? "" : "s"}`;
+    this.tooltip = `${name}\n${group.line_count} lines · ${count} instance${count === 1 ? "" : "s"} · ${group.fingerprint}`;
+    this.instances = instanceItems;
+    this.contextValue = "cloneFamily";
+    this.iconPath = new vscode.ThemeIcon("files");
+  }
+}
+
+class CloneInstanceItem extends vscode.TreeItem {
+  constructor(
+    readonly filePath: string,
+    readonly startLine: number,
+    readonly endLine: number,
+  ) {
+    const basename = path.basename(filePath);
+    super(`${basename}:${startLine}-${endLine}`, vscode.TreeItemCollapsibleState.None);
+
+    const { absolute, relative } = resolveWorkspaceFilePath(filePath);
+
+    this.description = middleElidePath(relative);
+    this.tooltip = `${absolute}:${startLine}-${endLine}`;
+    this.contextValue = "cloneInstance";
+
+    this.command = openFileCommand(absolute, startLine, 0, endLine, 0);
+
+    this.iconPath = new vscode.ThemeIcon("copy");
+  }
+}
+
+export class DuplicatesTreeProvider implements vscode.TreeDataProvider<DuplicateItem> {
+  private result: FallowDupesResult | null = null;
+
+  private readonly _onDidChangeTreeData = new vscode.EventEmitter<
+    DuplicateItem | undefined | null | void
+  >();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  update(result: FallowDupesResult | null): void {
+    this.result = result;
+    this._onDidChangeTreeData.fire();
+  }
+
+  getTreeItem(element: DuplicateItem): vscode.TreeItem {
+    return element;
+  }
+
+  getChildren(element?: DuplicateItem): DuplicateItem[] {
+    if (element instanceof CloneFamilyItem) {
+      return [...element.instances];
+    }
+
+    if (!this.result) {
+      return [];
+    }
+
+    return sortCloneGroupsBySize(this.result.clone_groups).map(
+      (group) => new CloneFamilyItem(group),
+    );
+  }
+
+  dispose(): void {
+    this._onDidChangeTreeData.dispose();
+  }
+}

@@ -1,0 +1,44 @@
+---
+paths:
+  - "**/tests/**"
+  - "**/*_test.rs"
+  - "**/tests.rs"
+  - "tests/fixtures/**"
+---
+
+# Testing conventions
+
+## Integration tests
+- Inspect the affected crate's `Cargo.toml` and existing test entrypoints before adding a suite; hubs and standalone integration binaries both exist.
+- `fallow-cli`, `fallow-api`, `fallow-mcp`, `fallow-engine` and `fallow-multicall` build their integration tests as one binary from `crates/<crate>/tests/integration/main.rs`. Add a new suite there as a module. Each file directly in `tests/` is a separate binary that links the crate again.
+- Helper utilities in `common.rs`: `fixture_path(name)` resolves `tests/fixtures/{name}/`, `create_config(root)` builds a minimal `ResolvedConfig`
+- Test fixtures at workspace root `tests/fixtures/` — each fixture is a minimal but complete project with `package.json`, `tsconfig.json`, and source files
+- Exercise the owning production API or CLI and assert on its structured output. Test-only helpers may build inputs, but must not duplicate the implementation under test.
+
+## Snapshot tests (insta)
+- CLI output snapshots in `crates/cli/tests/integration/snapshot_tests.rs` with snapshots stored in `crates/cli/tests/integration/snapshots/*.snap`
+- Redact dynamic values before snapshotting: versions (`env!("CARGO_PKG_VERSION")`), elapsed time, absolute paths
+- Use `insta::assert_snapshot!("descriptive_name", value)` — the name must be unique and descriptive
+- Run `cargo insta review` to accept/reject snapshot changes
+
+## Unit tests
+- Prefer separate `tests.rs` files included via `mod tests;` over inline `#[cfg(test)]` blocks
+- Use focused helper functions (e.g., `tokenize(code)`) to minimize boilerplate
+
+## Cross-platform paths
+- Normalize `\\` to `/` before string comparison (see code-quality.md)
+- Use `Path::ends_with()` / `Path::components()` for separator-agnostic checks
+- Never hardcode OS-specific separators in assertions
+
+## New fixture checklist
+When adding a test fixture:
+1. Create `tests/fixtures/{name}/` with `package.json` (at minimum)
+2. Add `tsconfig.json` if TypeScript resolution is involved
+3. Keep fixtures minimal — only the files needed to reproduce the scenario
+4. Add a test in the relevant crate's integration test module
+
+## Performance tests
+- Criterion benchmarks in `benches/`
+- `bench-real-world.yml` runs against real-world open source projects
+- `bench-cli-instructions.yml` runs the release CLI under CPU simulation on
+  pinned public projects (daily, and on pull requests with the `ci:perf` label)

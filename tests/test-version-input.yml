@@ -1,0 +1,60 @@
+name: Test version input (pin specific fallow version)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a minimal JS project
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/tests/fixtures/version-project/src"
+          cat > "$GITHUB_WORKSPACE/tests/fixtures/version-project/package.json" <<'EOF'
+          {
+            "name": "version-test-project",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": {
+              "start": "node src/index.js"
+            }
+          }
+          EOF
+          cat > "$GITHUB_WORKSPACE/tests/fixtures/version-project/src/index.js" <<'EOF'
+          export function hello() { return 'hello'; }
+          hello();
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/version-project
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+          version: '3.31.0'
+
+      - name: Assert issues output is a number
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: expected issues to be a number, got: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS: issues=$ISSUES"
+
+      - name: Assert fallow version matches pinned version
+        run: |
+          installed=$(fallow --version 2>/dev/null || echo "unknown")
+          echo "installed fallow version: $installed"
+          if ! echo "$installed" | grep -q "3.31.0"; then
+            echo "FAIL: expected fallow 3.31.0 to be installed, got: $installed"
+            exit 1
+          fi
+          echo "PASS: fallow 3.31.0 is installed"

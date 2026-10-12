@@ -1,0 +1,76 @@
+name: Test fix command with dry-run
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a JS project with unused exports for fix command
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/tests/fixtures/fix-project/src"
+          cat > "$GITHUB_WORKSPACE/tests/fixtures/fix-project/package.json" <<'EOF'
+          {
+            "name": "fix-test-project",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": {
+              "start": "node src/index.js"
+            }
+          }
+          EOF
+          cat > "$GITHUB_WORKSPACE/tests/fixtures/fix-project/src/index.js" <<'EOF'
+          export function usedFn() { return 1; }
+          export function unusedFn() { return 2; }
+          usedFn();
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          command: fix
+          root: tests/fixtures/fix-project
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          dry-run: 'true'
+          no-cache: 'true'
+
+      - name: Assert issues output is a number (fix count)
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues (proposed fixes): $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: expected issues to be a number, got: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS: issues=$ISSUES"
+
+      - name: Assert results file exists
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results path: $RESULTS"
+          if [ -z "$RESULTS" ]; then
+            echo "FAIL: results output is empty"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file does not exist at: $RESULTS"
+            exit 1
+          fi
+          echo "PASS: results file exists"
+
+      - name: Assert source file was not modified (dry-run)
+        run: |
+          content=$(cat "$GITHUB_WORKSPACE/tests/fixtures/fix-project/src/index.js")
+          echo "file content: $content"
+          if ! echo "$content" | grep -q "unusedFn"; then
+            echo "FAIL: dry-run should not have removed unusedFn from the source file"
+            exit 1
+          fi
+          echo "PASS: source file unchanged (dry-run respected)"
