@@ -6,60 +6,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Create a minimal JS project
-        run: |
-          mkdir -p /tmp/fallow-audit-gate
-          cat > /tmp/fallow-audit-gate/package.json <<'EOF'
-          {
-            "name": "audit-gate-project",
-            "version": "1.0.0",
-            "main": "index.js"
-          }
-          EOF
-          cat > /tmp/fallow-audit-gate/index.js <<'EOF'
-          export function used() { return 42; }
-          export function unused() { return 0; }
-          EOF
-      - name: Run audit with gate input
-        id: audit-gate
+        with:
+          fetch-depth: 0
+      - id: action-audit
         uses: .
         continue-on-error: true
         with:
           command: audit
-          root: /tmp/fallow-audit-gate
+          root: .
           format: json
           fail-on-issues: 'false'
           gate: 'new-only'
-          auto-changed-since: 'false'
-      - name: Assert audit-gate step ran
+      - name: Assert audit action ran
         env:
-          OUTCOME: ${{ steps.audit-gate.outcome }}
+          OUTCOME: ${{ steps.action-audit.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: audit-gate step ran (outcome=$OUTCOME)"
+            echo "PASS: action ran with gate input"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
           fi
-      - name: Run security with security-gate input
-        id: security-gate
+      - id: action-security
         uses: .
         continue-on-error: true
         with:
           command: security
-          root: /tmp/fallow-audit-gate
+          root: .
           format: json
           fail-on-issues: 'false'
           security-gate: 'new'
-          auto-changed-since: 'false'
-      - name: Assert security-gate step ran
+      - name: Assert security action ran
         env:
-          OUTCOME: ${{ steps.security-gate.outcome }}
+          OUTCOME: ${{ steps.action-security.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: security-gate step ran (outcome=$OUTCOME)"
+            echo "PASS: action ran with security-gate input"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

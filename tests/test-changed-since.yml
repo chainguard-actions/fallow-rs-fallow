@@ -1,4 +1,4 @@
-name: Test changed-since input
+name: Test changed-since and related inputs
 on:
   workflow_dispatch:
 jobs:
@@ -8,47 +8,25 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Create a minimal JS project
-        run: |
-          mkdir -p /tmp/fallow-changed-since
-          cat > /tmp/fallow-changed-since/package.json <<'EOF'
-          {
-            "name": "changed-since-project",
-            "version": "1.0.0",
-            "main": "index.js"
-          }
-          EOF
-          cat > /tmp/fallow-changed-since/index.js <<'EOF'
-          export function used() { return 42; }
-          export function unused() { return 0; }
-          EOF
-      - name: Get a git ref to use as changed-since
-        id: get-ref
-        run: |
-          # Use HEAD~1 if available, otherwise HEAD itself
-          if git rev-parse HEAD~1 >/dev/null 2>&1; then
-            echo "ref=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Run with changed-since
-        id: changed-since
+      - id: action
         uses: .
         continue-on-error: true
         with:
           command: dead-code
-          root: /tmp/fallow-changed-since
+          root: .
           format: json
           fail-on-issues: 'false'
-          changed-since: ${{ steps.get-ref.outputs.ref }}
-          auto-changed-since: 'false'
-      - name: Assert changed-since step ran
+          changed-since: 'HEAD~1'
+          skip: 'dupes,health'
+          threads: '2'
+          config: '.fallowrc.json'
+      - name: Assert action ran
         env:
-          OUTCOME: ${{ steps.changed-since.outcome }}
+          OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: changed-since step ran (outcome=$OUTCOME)"
+            echo "PASS: action ran with changed-since, skip, threads, config inputs"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
