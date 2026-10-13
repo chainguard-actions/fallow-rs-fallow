@@ -1,4 +1,4 @@
-name: Test health threshold inputs
+name: Test health advanced inputs
 on:
   workflow_dispatch:
 jobs:
@@ -14,9 +14,9 @@ jobs:
         with:
           command: health
           root: .
-          format: json
           fail-on-issues: 'false'
-          max-cyclomatic: '30'
+          fail-on-empty-analysis: 'false'
+          max-cyclomatic: '25'
           max-cognitive: '20'
           max-crap: '50'
           min-severity: 'high'
@@ -24,9 +24,17 @@ jobs:
           sort: 'cyclomatic'
           top: '10'
           since: '1y'
-          min-commits: '3'
+          min-commits: '5'
+          coverage: ''
+          coverage-root: ''
+          runtime-coverage: ''
+          min-invocations-hot: '200'
+          min-observation-volume: '100'
+          low-traffic-threshold: '0.01'
           save-snapshot: ''
           trend: ''
+          format: 'json'
+          annotations: 'false'
           auto-changed-since: 'false'
       - name: Assert action ran
         env:
@@ -35,8 +43,10 @@ jobs:
         run: |
           echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran (outcome=$OUTCOME)"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected on this repo)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

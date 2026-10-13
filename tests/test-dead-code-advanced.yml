@@ -1,4 +1,4 @@
-name: Test changed-since and workspace inputs
+name: Test dead-code advanced inputs
 on:
   workflow_dispatch:
 jobs:
@@ -14,11 +14,20 @@ jobs:
         with:
           command: dead-code
           root: .
-          format: json
           fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          issue-types: 'unused-exports,unused-files'
           changed-since: 'HEAD~1'
-          workspace: ''
-          changed-workspaces: ''
+          save-baseline: ''
+          baseline: ''
+          regression-baseline: ''
+          save-regression-baseline: ''
+          threads: '2'
+          config: ''
+          skip: ''
+          only: ''
+          format: 'json'
+          annotations: 'false'
           auto-changed-since: 'false'
       - name: Assert action ran
         env:
@@ -27,8 +36,10 @@ jobs:
         run: |
           echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran (outcome=$OUTCOME)"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected on this repo)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

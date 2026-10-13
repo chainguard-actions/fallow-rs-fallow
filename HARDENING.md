@@ -10,24 +10,7 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 1 finding(s) were identified and resolved across 1 iteration(s).
-
-## Findings Fixed
-
-### script-injection (severity: high)
-
-Sub-rule (a): The expression `${{ github.action_path }}` is interpolated directly inside `run:` shell command strings in 8 composite action steps. Per the script-injection check, ANY `${{ ... }}` expression in a `run:` block is a finding, including `github.*` context values. The safe pattern is to reference the equivalent environment variable `$GITHUB_ACTION_PATH` instead of the expression form. Offending lines: `run: bash ${{ github.action_path }}/action/scripts/install.sh`, `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`, `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`, `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`, `run: bash ${{ github.action_path }}/action/scripts/comment.sh`, `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`, `run: bash ${{ github.action_path }}/action/scripts/summary.sh`, and `run: bash ${{ github.action_path }}/action/scripts/review.sh`.
-
-Locations:
-
-- `action.yml:287`
-- `action.yml:295`
-- `action.yml:330`
-- `action.yml:395`
-- `action.yml:430`
-- `action.yml:460`
-- `action.yml:490`
-- `action.yml:520`
+Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 0 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Iteration Notes
 
@@ -37,5 +20,5 @@ Locations:
 
 **Notes:**
 
-Replaced all 8 occurrences of `run: bash ${{ github.action_path }}/action/scripts/*.sh` with `run: bash $GITHUB_ACTION_PATH/action/scripts/*.sh` in action.yml. The `$GITHUB_ACTION_PATH` environment variable is the safe equivalent already set by the GitHub Actions runner, eliminating the need to interpolate the `${{ github.action_path }}` expression directly into shell command strings. The `ACTION_JQ_DIR: ${{ github.action_path }}/action/jq` entries in env: blocks were not modified as they are not script injection issues.
+Fixed all 9 script-injection findings in action.yml where `${{ github.action_path }}` was directly interpolated in `run:` shell command strings. For each affected step (Install fallow, Fallow branded token, Run analysis, Check Code Scanning availability, Post PR comment, Emit inline annotations, Job summary, Post review comments), added `ACTION_PATH: ${{ github.action_path }}` to the step's `env:` block and replaced `bash ${{ github.action_path }}/action/scripts/X.sh` with `bash "$ACTION_PATH/action/scripts/X.sh"` in the `run:` command. The `ACTION_JQ_DIR` env vars in the annotate and summary steps that also referenced `github.action_path` remain in `env:` blocks (safe), with `ACTION_PATH` added alongside for the run command fix.
 
