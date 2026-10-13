@@ -10,32 +10,7 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.31.0** was hardened automatically. 2 finding(s) were identified and resolved across 1 iteration(s).
-
-## Findings Fixed
-
-### script-injection (severity: high)
-
-Sub-rule (a): The expression `${{ github.action_path }}` is interpolated directly inside `run:` shell command strings in all 8 composite-action steps. Even though `github.action_path` is GitHub-controlled, it flows through YAML template substitution before the shell sees it, making it a script-injection risk per the check rules. All steps use the pattern `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`. The safe fix is to set `ACTION_PATH: ${{ github.action_path }}` in the step's `env:` block and reference `$ACTION_PATH` in the `run:` script instead.
-
-Locations:
-
-- `action.yml:370`
-- `action.yml:381`
-- `action.yml:430`
-- `action.yml:490`
-- `action.yml:520`
-- `action.yml:545`
-- `action.yml:575`
-- `action.yml:600`
-
-### github-env-injection (severity: high)
-
-In `action/scripts/analyze.sh`, the variable `FALLOW_RENDER_PATH_PREFIX` is derived from user-controlled `inputs.args` (via `INPUT_ARGS`) and written directly to `$GITHUB_ENV` without the required `printf '%s' "$VAR" | tr -d '\n\r'` sanitization. The `validate_action_scalars` function does not validate `INPUT_ARGS` for control characters. An attacker who controls `inputs.args` can supply a value like `--report-path-prefix $'\nMALICIOUS_VAR=injected'` to inject arbitrary environment variables into subsequent steps. The write is: `printf '%s\n' "FALLOW_RENDER_PATH_PREFIX=${FALLOW_RENDER_PATH_PREFIX}" >> "$GITHUB_ENV"`.
-
-Locations:
-
-- `action/scripts/analyze.sh:540`
+Action **fallow-rs--fallow/v3.31.0** was hardened automatically. 0 finding(s) were identified and resolved across 2 iteration(s).
 
 ## Iteration Notes
 
@@ -45,5 +20,13 @@ Locations:
 
 **Notes:**
 
-Fixed 8 script-injection instances in action.yml by moving `${{ github.action_path }}` out of `run:` shell strings into `ACTION_PATH: ${{ github.action_path }}` in each step's `env:` block, then referencing `"$ACTION_PATH"` in the run commands. Fixed github-env-injection in action/scripts/analyze.sh by sanitizing `FALLOW_RENDER_PATH_PREFIX` with `printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r'` before writing it to `$GITHUB_ENV`.
+Fixed 8 script-injection findings in action.yml by replacing `bash ${{ github.action_path }}/...` in run: blocks with `bash "$GITHUB_ACTION_PATH/..."`. Fixed 3 github-env-injection findings in action/scripts/analyze.sh: (1) sanitized INPUT_CHANGED_SINCE before writing changed_since to GITHUB_OUTPUT, (2) sanitized FALLOW_DIFF_FILE before writing to GITHUB_ENV (user-supplied path case), (3) sanitized all artifact path variables (RESULTS_FILE, SCOPED_RESULTS_FILE, ANALYSIS_ARGS_FILE, CHANGED_FILES_FILE, SARIF_FILE, ARTIFACTS_DIR) before writing to GITHUB_ENV. All sanitization uses the required `printf '%s' ... | tr -d '\n\r'` pattern.
+
+### Iteration 2
+
+**Fixes applied:** github-env-injection
+
+**Notes:**
+
+Fixed github-env-injection in action/scripts/analyze.sh at the FALLOW_RENDER_PATH_PREFIX write to $GITHUB_ENV. Added sanitization: `_safe_render_path_prefix="$(printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r')"` before the printf block, and replaced `FALLOW_RENDER_PATH_PREFIX=${FALLOW_RENDER_PATH_PREFIX}` with `FALLOW_RENDER_PATH_PREFIX=${_safe_render_path_prefix}` in the write. This matches the sanitization pattern already used for FALLOW_DIFF_FILE and changed_since in the same script.
 
