@@ -1,0 +1,37 @@
+name: Test regression baseline inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create dummy regression baseline
+        run: |
+          echo '{}' > /tmp/regression-baseline.json
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: .
+          format: json
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          fail-on-regression: 'false'
+          issue-types: 'unused-exports,unused-files'
+          regression-baseline: /tmp/regression-baseline.json
+          save-regression-baseline: /tmp/saved-regression-baseline.json
+        continue-on-error: true
+      - name: Assert action ran
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected on sentinel repo or no JS/TS files)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

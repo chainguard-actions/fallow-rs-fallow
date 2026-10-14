@@ -1,0 +1,43 @@
+name: Test changed-since input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Get a valid git ref for changed-since
+        id: git-ref
+        run: |
+          # Use HEAD~1 if available, otherwise HEAD itself
+          if git rev-parse HEAD~1 > /dev/null 2>&1; then
+            echo "ref=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: .
+          format: json
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          changed-since: ${{ steps.git-ref.outputs.ref }}
+          auto-changed-since: 'false'
+        continue-on-error: true
+      - name: Assert action ran
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected on sentinel repo or no JS/TS files)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

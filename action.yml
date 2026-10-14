@@ -597,7 +597,6 @@ runs:
       env:
         FALLOW_COMMAND: ${{ steps.analyze.outputs.command }}
         MAX_ANNOTATIONS: ${{ inputs.max-annotations }}
-        ACTION_PATH: ${{ github.action_path }}
         ACTION_JQ_DIR: ${{ github.action_path }}/action/jq
         CHANGED_SINCE: ${{ steps.analyze.outputs.changed_since }}
         INPUT_ROOT: ${{ inputs.root }}
@@ -605,13 +604,13 @@ runs:
         FALLOW_SCOPED_RESULTS_FILE: ${{ inputs.artifacts-dir }}/fallow-results-scoped.json
         FALLOW_CHANGED_FILES_FILE: ${{ inputs.artifacts-dir }}/fallow-changed-files.json
         FALLOW_PR_DECISION_FILE: ${{ inputs.artifacts-dir }}/fallow-pr-decision.json
+        ACTION_PATH: ${{ github.action_path }}
       run: bash "$ACTION_PATH/action/scripts/annotate.sh"
     - name: Job summary
       if: always() && steps.analyze.outputs.issues != ''
       shell: bash
       env:
         FALLOW_COMMAND: ${{ steps.analyze.outputs.command }}
-        ACTION_PATH: ${{ github.action_path }}
         ACTION_JQ_DIR: ${{ github.action_path }}/action/jq
         CHANGED_SINCE: ${{ steps.analyze.outputs.changed_since }}
         INPUT_ROOT: ${{ inputs.root }}
@@ -631,6 +630,7 @@ runs:
         FALLOW_GATES_SKIPPED: ${{ steps.analyze.outputs.gates_skipped }}
         FALLOW_GATES_PASSED: ${{ steps.analyze.outputs.gates_passed }}
         FALLOW_ANALYSIS_DEGRADED: ${{ steps.analyze.outputs.analysis_degraded }}
+        ACTION_PATH: ${{ github.action_path }}
       run: bash "$ACTION_PATH/action/scripts/summary.sh"
     - name: Post review comments
       id: review
