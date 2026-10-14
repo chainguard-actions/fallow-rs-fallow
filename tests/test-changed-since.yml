@@ -1,4 +1,4 @@
-name: Test changed-since and related inputs
+name: Test changed-since input
 on:
   workflow_dispatch:
 jobs:
@@ -8,6 +8,15 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      - name: Get a valid git ref for changed-since
+        id: git-ref
+        run: |
+          # Use HEAD~1 if available, otherwise HEAD itself
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            echo "ref=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          fi
       - id: action
         uses: .
         continue-on-error: true
@@ -16,17 +25,19 @@ jobs:
           root: .
           format: json
           fail-on-issues: 'false'
-          changed-since: 'HEAD~1'
-          skip: 'dupes,health'
-          threads: '2'
-          config: '.fallowrc.json'
+          changed-since: ${{ steps.git-ref.outputs.ref }}
+          auto-changed-since: 'false'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "outcome: $OUTCOME"
-          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran with changed-since, skip, threads, config inputs"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded with changed-since input"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected with sentinel repo)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

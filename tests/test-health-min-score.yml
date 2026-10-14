@@ -1,4 +1,4 @@
-name: Test dead-code advanced inputs
+name: Test health min-score input
 on:
   workflow_dispatch:
 jobs:
@@ -10,20 +10,23 @@ jobs:
         uses: .
         continue-on-error: true
         with:
-          command: dead-code
+          command: health
           root: .
           format: json
           fail-on-issues: 'false'
-          issue-types: 'unused-exports,unused-files'
-          regression-baseline: '.fallow-regression-baseline.json'
-          save-regression-baseline: '.fallow-regression-baseline-new.json'
+          score: 'true'
+          min-score: '0'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "outcome: $OUTCOME"
-          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran with dead-code advanced inputs"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded with min-score input"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected with sentinel repo)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

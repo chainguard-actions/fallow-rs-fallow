@@ -10,33 +10,34 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.32.0** was hardened automatically. 2 finding(s) were identified and resolved across 2 iteration(s).
+Action **fallow-rs--fallow/v3.32.0** was hardened automatically. 2 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Sub-rule (a): Eight `run:` blocks in action.yml directly interpolate `${{ github.action_path }}` inside the shell command string. Any `${{ ... }}` expression inside a `run:` block is a script-injection finding regardless of which context it reads from. Affected steps: Install fallow, Fallow branded token, Run analysis, Check Code Scanning availability, Post PR comment, Emit inline annotations, Job summary, Post review comments. Example offending line: `run: bash ${{ github.action_path }}/action/scripts/install.sh`
+Eight `run:` blocks in action.yml interpolate `${{ github.action_path }}` directly inside the shell command string (sub-rule a: direct expression interpolation). Per the check rules, ANY `${{ ... }}` expression inside a `run:` shell command — including `github.*` contexts — is a script-injection finding because the value flows through YAML template substitution before the shell sees it. All eight steps use the pattern `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`. The fix is to use the `$GITHUB_ACTION_PATH` environment variable instead (already available in composite action steps), e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
-- `action.yml:360`
-- `action.yml:371`
-- `action.yml:415`
-- `action.yml:425`
-- `action.yml:450`
-- `action.yml:465`
-- `action.yml:480`
-- `action.yml:495`
+- `action.yml:365`
+- `action.yml:374`
+- `action.yml:430`
+- `action.yml:437`
+- `action.yml:462`
+- `action.yml:476`
+- `action.yml:503`
+- `action.yml:530`
 
 ### github-env-injection (severity: high)
 
-In action/scripts/analyze.sh, two user-controlled values are written to GitHub special environment files without the required sanitization step (`printf '%s' ... | tr -d '\n\r'`): (1) `FALLOW_DIFF_FILE=${FALLOW_DIFF_FILE}` is written to `$GITHUB_ENV` — `FALLOW_DIFF_FILE` originates from `inputs.diff-file` (user-controlled). (2) `changed_since=${INPUT_CHANGED_SINCE:-}` is written to `$GITHUB_OUTPUT` — `INPUT_CHANGED_SINCE` originates from `inputs.changed-since` (user-controlled). While both values are validated with `contains_ascii_control` (which exits on control characters), the required sanitization pattern is not applied immediately before the write as mandated by the check.
+In action/scripts/analyze.sh, several user-controlled values are written to $GITHUB_ENV without the required `printf '%s' "$VAR" | tr -d '\n\r'` sanitization immediately before the write. Specifically: (1) `FALLOW_DIFF_FILE` (sourced from `inputs.diff-file`, a caller-controlled input) is written via `printf '%s\n' "FALLOW_DIFF_FILE=${FALLOW_DIFF_FILE}" >> "$GITHUB_ENV"` — the script validates for ASCII control characters with `contains_ascii_control` and exits on failure, but does not apply the required `tr -d '\n\r'` sanitization step. (2) `FALLOW_RENDER_PATH_PREFIX` (derived from `inputs.args`) and the artifact-path variables derived from `INPUT_ARTIFACTS_DIR` (`inputs.artifacts-dir`) are similarly written to $GITHUB_ENV with custom validation rather than the mandated sanitization pipeline. The required pattern before each write is: `safe=$(printf '%s' "$VAR" | tr -d '\n\r')` followed by `echo "KEY=$safe" >> "$GITHUB_ENV"`.
 
 Locations:
 
-- `action/scripts/analyze.sh:620`
-- `action/scripts/analyze.sh:660`
+- `action/scripts/analyze.sh:322`
+- `action/scripts/analyze.sh:460`
+- `action/scripts/analyze.sh:530`
 
 ## Iteration Notes
 
@@ -46,13 +47,5 @@ Locations:
 
 **Notes:**
 
-Fixed 8 script-injection instances in action.yml by replacing `${{ github.action_path }}` in run: shell strings with `$GITHUB_ACTION_PATH` (the runner-set env var). Fixed 2 github-env-injection instances in action/scripts/analyze.sh by adding `printf '%s' ... | tr -d '\n\r'` sanitization immediately before writing FALLOW_DIFF_FILE to $GITHUB_ENV and changed_since to $GITHUB_OUTPUT.
-
-### Iteration 2
-
-**Fixes applied:** github-env-injection
-
-**Notes:**
-
-Fixed github-env-injection in hardened/action/action/scripts/analyze.sh. The FALLOW_RENDER_PATH_PREFIX variable is derived from user-controlled INPUT_ARGS (via --report-path-prefix or --annotations-path-prefix flags) and was written to $GITHUB_ENV without sanitization. Added a sanitization step using `_safe_render_path_prefix="$(printf '%s' "$FALLOW_RENDER_PATH_PREFIX" | tr -d '\n\r')"` before the printf block, and replaced the raw `FALLOW_RENDER_PATH_PREFIX=${FALLOW_RENDER_PATH_PREFIX}` with `FALLOW_RENDER_PATH_PREFIX=${_safe_render_path_prefix}` in the write to $GITHUB_ENV. This prevents newline injection attacks that could inject arbitrary key=value pairs into $GITHUB_ENV.
+Fixed 8 script-injection instances in action.yml by replacing 'bash ${{ github.action_path }}/action/scripts/xxx.sh' with 'bash "$GITHUB_ACTION_PATH/action/scripts/xxx.sh"' in all run: blocks (install.sh, broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh, review.sh). Fixed 3 github-env-injection instances in action/scripts/analyze.sh: (1) sanitized FALLOW_DIFF_FILE (user-supplied inputs.diff-file) before writing to GITHUB_ENV; (2) sanitized FALLOW_RENDER_PATH_PREFIX (derived from inputs.args) before writing to GITHUB_ENV; (3) sanitized all 6 artifact path variables derived from INPUT_ARTIFACTS_DIR (inputs.artifacts-dir) before writing to GITHUB_ENV. All sanitization uses the required 'printf "%s" "$VAR" | tr -d "\n\r"' pattern.
 
