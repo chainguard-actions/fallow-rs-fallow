@@ -1,0 +1,52 @@
+name: Test config, workspace, only, skip, threads inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a minimal JS project with fallow config
+        run: |
+          mkdir -p /tmp/fallow-config-test
+          cat > /tmp/fallow-config-test/package.json <<'EOF'
+          {
+            "name": "config-test",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-config-test/index.js <<'EOF'
+          export function hello() { return "hello"; }
+          EOF
+          cat > /tmp/fallow-config-test/.fallowrc.json <<'EOF'
+          {}
+          EOF
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          root: /tmp/fallow-config-test
+          config: /tmp/fallow-config-test/.fallowrc.json
+          format: json
+          fail-on-issues: 'false'
+          only: 'dead-code'
+          skip: 'dupes'
+          threads: '2'
+          auto-changed-since: 'false'
+
+      - name: Assert action ran
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

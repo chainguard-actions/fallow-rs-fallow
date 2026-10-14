@@ -10,7 +10,32 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.31.0** was hardened automatically. 0 finding(s) were identified and resolved across 2 iteration(s).
+Action **fallow-rs--fallow/v3.31.0** was hardened automatically. 2 finding(s) were identified and resolved across 1 iteration(s).
+
+## Findings Fixed
+
+### script-injection (severity: high)
+
+Sub-rule (a): `${{ github.action_path }}` is interpolated directly inside `run:` shell command strings across all 8 composite action steps. Although `github.action_path` is not attacker-controlled, any `${{ ... }}` expression inside a `run:` block flows through YAML template substitution before the shell processes it, making it a script-injection risk per the check rules. Offending pattern in every step: `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`. The fix is to use the `$GITHUB_ACTION_PATH` environment variable instead (e.g., `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`).
+
+Locations:
+
+- `action.yml:453`
+- `action.yml:462`
+- `action.yml:490`
+- `action.yml:498`
+- `action.yml:549`
+- `action.yml:563`
+- `action.yml:601`
+- `action.yml:635`
+
+### github-env-injection (severity: high)
+
+In `analyze.sh`, the value `FALLOW_RENDER_PATH_PREFIX=${FALLOW_RENDER_PATH_PREFIX}` is written to `$GITHUB_ENV` without sanitization (no `printf '%s' ... | tr -d '\n\r'` step). `FALLOW_RENDER_PATH_PREFIX` is extracted from `INPUT_ARGS` (which maps to the user-controlled `inputs.args` action input) via the `--report-path-prefix` or `--annotations-path-prefix` flag. The `validate_action_scalars` function validates `changed_since`, `diff_file`, and `baseline` for ASCII control characters but does NOT validate `INPUT_ARGS`. An attacker can supply `--report-path-prefix=value$'\nFOO=bar'` in `inputs.args` to inject arbitrary environment variables into `$GITHUB_ENV`, which persist across subsequent composite action steps. The fix is to apply `safe=$(printf '%s' "$FALLOW_RENDER_PATH_PREFIX" | tr -d '\n\r')` before writing to GITHUB_ENV.
+
+Locations:
+
+- `action/scripts/analyze.sh:481`
 
 ## Iteration Notes
 
@@ -20,13 +45,5 @@ Action **fallow-rs--fallow/v3.31.0** was hardened automatically. 0 finding(s) we
 
 **Notes:**
 
-Fixed 8 script-injection findings in action.yml by replacing `bash ${{ github.action_path }}/...` in run: blocks with `bash "$GITHUB_ACTION_PATH/..."`. Fixed 3 github-env-injection findings in action/scripts/analyze.sh: (1) sanitized INPUT_CHANGED_SINCE before writing changed_since to GITHUB_OUTPUT, (2) sanitized FALLOW_DIFF_FILE before writing to GITHUB_ENV (user-supplied path case), (3) sanitized all artifact path variables (RESULTS_FILE, SCOPED_RESULTS_FILE, ANALYSIS_ARGS_FILE, CHANGED_FILES_FILE, SARIF_FILE, ARTIFACTS_DIR) before writing to GITHUB_ENV. All sanitization uses the required `printf '%s' ... | tr -d '\n\r'` pattern.
-
-### Iteration 2
-
-**Fixes applied:** github-env-injection
-
-**Notes:**
-
-Fixed github-env-injection in action/scripts/analyze.sh at the FALLOW_RENDER_PATH_PREFIX write to $GITHUB_ENV. Added sanitization: `_safe_render_path_prefix="$(printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r')"` before the printf block, and replaced `FALLOW_RENDER_PATH_PREFIX=${FALLOW_RENDER_PATH_PREFIX}` with `FALLOW_RENDER_PATH_PREFIX=${_safe_render_path_prefix}` in the write. This matches the sanitization pattern already used for FALLOW_DIFF_FILE and changed_since in the same script.
+1. script-injection (action.yml, 8 locations): Replaced all 8 `run: bash ${{ github.action_path }}/action/scripts/<script>.sh` lines with `run: bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"`. The scripts affected are: install.sh, broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh, and review.sh. Two remaining `${{ github.action_path }}` references in env: blocks (ACTION_JQ_DIR) are not in run: shell strings and are not script-injection risks. 2. github-env-injection (analyze.sh, line 481): Added sanitization of FALLOW_RENDER_PATH_PREFIX before writing to $GITHUB_ENV. The value is now captured via `safe_render_path_prefix="$(printf '%s' "$FALLOW_RENDER_PATH_PREFIX" | tr -d '\n\r')"` and the sanitized variable is written instead of the raw one, preventing newline injection from attacker-controlled inputs.args values.
 

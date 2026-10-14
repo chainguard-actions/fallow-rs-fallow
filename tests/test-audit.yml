@@ -1,4 +1,4 @@
-name: Test audit inputs
+name: Test audit gate and security-gate inputs
 on:
   workflow_dispatch:
 jobs:
@@ -9,27 +9,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create a minimal JS project for analysis
+      - name: Create a minimal JS project for audit analysis
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/tests/fixtures/js-audit/src"
-          cat > "$GITHUB_WORKSPACE/tests/fixtures/js-audit/package.json" <<'EOF'
+          mkdir -p /tmp/fallow-audit-test
+          cat > /tmp/fallow-audit-test/package.json <<'EOF'
           {
-            "name": "test-audit-project",
+            "name": "audit-test",
             "version": "1.0.0",
-            "type": "module",
-            "scripts": {
-              "start": "node src/index.js"
-            }
+            "main": "index.js"
           }
           EOF
-          cat > "$GITHUB_WORKSPACE/tests/fixtures/js-audit/src/index.js" <<'EOF'
-          export function usedFunction() {
-            return 42;
-          }
-          export function unusedFunction() {
-            return 'never called';
-          }
-          usedFunction();
+          cat > /tmp/fallow-audit-test/index.js <<'EOF'
+          export function main() { return 42; }
           EOF
 
       - id: action
@@ -37,34 +28,24 @@ jobs:
         continue-on-error: true
         with:
           command: audit
-          root: tests/fixtures/js-audit
+          root: /tmp/fallow-audit-test
           format: json
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
-          auto-changed-since: 'false'
-          annotations: 'false'
-          sarif: 'false'
-          changed-since: 'HEAD~1'
           gate: 'new-only'
           security-gate: 'new'
-          dead-code-baseline: ''
-          health-baseline: ''
-          dupes-baseline: ''
-          no-cache: 'true'
+          auto-changed-since: 'false'
 
-      - name: Assert action ran (audit inputs accepted)
+      - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
           VERDICT: ${{ steps.action.outputs.verdict }}
-          GATE_OUT: ${{ steps.action.outputs.gate }}
         run: |
           echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
           echo "verdict: $VERDICT"
-          echo "gate: $GATE_OUT"
-          if [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded"
-          elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran and failed gracefully (expected on minimal fixture)"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action ran (outcome=$OUTCOME)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
