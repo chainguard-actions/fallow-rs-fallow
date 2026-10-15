@@ -510,19 +510,13 @@ CHANGED_FILES_FILE=$(artifact_path fallow-changed-files.json)
 AUTO_DIFF_FILE="$PWD/$(artifact_path fallow-pr.diff)"
 
 if [ -n "${GITHUB_ENV:-}" ]; then
-  _safe_results_file=$(printf '%s' "$RESULTS_FILE" | tr -d '\n\r')
-  _safe_scoped_results_file=$(printf '%s' "$SCOPED_RESULTS_FILE" | tr -d '\n\r')
-  _safe_analysis_args_file=$(printf '%s' "$ANALYSIS_ARGS_FILE" | tr -d '\n\r')
-  _safe_changed_files_file=$(printf '%s' "$CHANGED_FILES_FILE" | tr -d '\n\r')
-  _safe_sarif_file=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')
-  _safe_artifacts_dir=$(printf '%s' "$ARTIFACTS_DIR" | tr -d '\n\r')
   printf '%s\n' \
-    "FALLOW_RESULTS_FILE=${_safe_results_file}" \
-    "FALLOW_SCOPED_RESULTS_FILE=${_safe_scoped_results_file}" \
-    "FALLOW_ANALYSIS_ARGS_FILE=${_safe_analysis_args_file}" \
-    "FALLOW_CHANGED_FILES_FILE=${_safe_changed_files_file}" \
-    "FALLOW_SARIF_FILE=${_safe_sarif_file}" \
-    "FALLOW_ARTIFACTS_DIR=${_safe_artifacts_dir}" >> "$GITHUB_ENV"
+    "FALLOW_RESULTS_FILE=${RESULTS_FILE}" \
+    "FALLOW_SCOPED_RESULTS_FILE=${SCOPED_RESULTS_FILE}" \
+    "FALLOW_ANALYSIS_ARGS_FILE=${ANALYSIS_ARGS_FILE}" \
+    "FALLOW_CHANGED_FILES_FILE=${CHANGED_FILES_FILE}" \
+    "FALLOW_SARIF_FILE=${SARIF_FILE}" \
+    "FALLOW_ARTIFACTS_DIR=${ARTIFACTS_DIR}" >> "$GITHUB_ENV"
 fi
 
 # --- Check for --sarif-file support ---
@@ -684,7 +678,8 @@ fi
 # Propagate the effective changed-since value after config safety logic so
 # downstream steps do not reapply stale PR scope.
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
-  printf '%s\n' "changed_since=${INPUT_CHANGED_SINCE:-}" >> "$GITHUB_OUTPUT"
+  _safe_changed_since=$(printf '%s' "${INPUT_CHANGED_SINCE:-}" | tr -d '\n\r')
+  printf '%s\n' "changed_since=${_safe_changed_since}" >> "$GITHUB_OUTPUT"
 fi
 
 # --- Pre-compute unified diff for line-level hot-path scoping ---
@@ -710,7 +705,7 @@ fi
 # need to declare their own FALLOW_DIFF_FILE env (which would override
 # the analyze-step propagation otherwise). User-supplied path wins.
 if [ -n "${FALLOW_DIFF_FILE:-}" ] && [ -n "${GITHUB_ENV:-}" ]; then
-  _safe_diff_file=$(printf '%s' "$FALLOW_DIFF_FILE" | tr -d '\n\r')
+  _safe_diff_file=$(printf '%s' "${FALLOW_DIFF_FILE}" | tr -d '\n\r')
   printf '%s\n' "FALLOW_DIFF_FILE=${_safe_diff_file}" >> "$GITHUB_ENV"
 fi
 
@@ -809,11 +804,12 @@ if [ -n "${GITHUB_ENV:-}" ]; then
   # Preserve exact argv for pinned-CLI compatibility as inert runner-owned
   # data. Later steps parse this JSON instead of executing a workspace file.
   ANALYSIS_ARGS_JSON=$(jq -cn --args '$ARGS.positional' -- "${ARGS[@]}" "${EXTRA_ARGS[@]}")
-  _safe_render_path_prefix=$(printf '%s' "$FALLOW_RENDER_PATH_PREFIX" | tr -d '\n\r')
+  _safe_prefix=$(printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r')
+  _safe_args_json=$(printf '%s' "${ANALYSIS_ARGS_JSON}" | tr -d '\n\r')
   printf '%s\n' \
     "FALLOW_RENDER_PATH_PREFIX_SET=${FALLOW_RENDER_PATH_PREFIX_SET}" \
-    "FALLOW_RENDER_PATH_PREFIX=${_safe_render_path_prefix}" \
-    "FALLOW_ANALYSIS_ARGS_JSON=${ANALYSIS_ARGS_JSON}" >> "$GITHUB_ENV"
+    "FALLOW_RENDER_PATH_PREFIX=${_safe_prefix}" \
+    "FALLOW_ANALYSIS_ARGS_JSON=${_safe_args_json}" >> "$GITHUB_ENV"
 fi
 
 # Run analysis — no --fail-on-issues so subsequent steps always run.
