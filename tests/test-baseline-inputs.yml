@@ -6,27 +6,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-      - name: Create dummy baseline files
-        run: |
-          echo '{}' > /tmp/dead-code-baseline.json
-          echo '{}' > /tmp/health-baseline.json
-          echo '{}' > /tmp/dupes-baseline.json
-          echo '{}' > /tmp/regression-baseline.json
       - id: action
         uses: .
-        continue-on-error: true
         with:
           command: dead-code
+          root: .
+          format: json
           fail-on-issues: 'false'
-          baseline: /tmp/dead-code-baseline.json
-          save-baseline: /tmp/saved-baseline.json
-          dead-code-baseline: /tmp/dead-code-baseline.json
-          health-baseline: /tmp/health-baseline.json
-          dupes-baseline: /tmp/dupes-baseline.json
-          regression-baseline: /tmp/regression-baseline.json
-          save-regression-baseline: /tmp/saved-regression-baseline.json
+          baseline: ''
+          save-baseline: ''
+          dead-code-baseline: ''
+          health-baseline: ''
+          dupes-baseline: ''
+          regression-baseline: ''
+          save-regression-baseline: ''
+          auto-changed-since: 'false'
+        continue-on-error: true
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}

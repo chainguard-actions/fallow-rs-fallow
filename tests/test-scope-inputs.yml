@@ -1,4 +1,4 @@
-name: Test sort, top, and threads inputs
+name: Test scope inputs
 on:
   workflow_dispatch:
 jobs:
@@ -6,15 +6,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: action
         uses: .
-        continue-on-error: true
         with:
-          command: health
+          command: dead-code
+          root: .
+          format: json
           fail-on-issues: 'false'
-          sort: 'cyclomatic'
-          top: '10'
-          threads: '2'
+          changed-since: ''
+          changed-workspaces: ''
+          workspace: ''
+          auto-changed-since: 'false'
+        continue-on-error: true
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}
@@ -23,7 +28,7 @@ jobs:
           echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           if [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded with sort/top/threads inputs"
+            echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then
             echo "PASS: action failed gracefully (expected in harness environment)"
           else

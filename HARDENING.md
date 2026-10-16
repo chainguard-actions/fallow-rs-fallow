@@ -16,17 +16,17 @@ Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 1 finding(s) we
 
 ### script-injection (severity: high)
 
-Sub-rule (a): All 8 `run:` blocks in action.yml directly interpolate `${{ github.action_path }}` inside the shell command string (e.g., `run: bash ${{ github.action_path }}/action/scripts/install.sh`). Per the check rules, ANY `${{ ... }}` expression directly inside a `run:` shell command string is a script-injection finding, including `github.*` contexts. The safe pattern is to use the pre-set environment variable `$GITHUB_ACTION_PATH` instead of the expression, which avoids YAML template substitution before the shell processes the command.
+Sub-rule (a): `${{ github.action_path }}` is interpolated directly inside `run:` shell command strings in 8 composite action steps. Per the check rules, ANY `${{ ... }}` expression directly inside a `run:` block is a script-injection finding, including GitHub-controlled contexts like `github.action_path`, because the YAML template substitution occurs before the shell processes the command. The safe fix is to replace `${{ github.action_path }}` with the `$GITHUB_ACTION_PATH` environment variable, which is already set by the runner without going through YAML interpolation. Affected lines: `run: bash ${{ github.action_path }}/action/scripts/install.sh`, `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`, `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`, `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`, `run: bash ${{ github.action_path }}/action/scripts/comment.sh`, `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`, `run: bash ${{ github.action_path }}/action/scripts/summary.sh`, `run: bash ${{ github.action_path }}/action/scripts/review.sh`.
 
 Locations:
 
-- `action.yml:370`
-- `action.yml:378`
-- `action.yml:415`
-- `action.yml:423`
-- `action.yml:452`
+- `action.yml:365`
+- `action.yml:374`
+- `action.yml:430`
+- `action.yml:449`
 - `action.yml:476`
-- `action.yml:503`
+- `action.yml:490`
+- `action.yml:510`
 - `action.yml:530`
 
 ## Iteration Notes
@@ -37,5 +37,5 @@ Locations:
 
 **Notes:**
 
-Replaced all 8 occurrences of `${{ github.action_path }}` in `run:` shell command strings with the pre-set environment variable `$GITHUB_ACTION_PATH`. The affected scripts were: install.sh, broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh, and review.sh. Two remaining occurrences of `github.action_path` in `env:` blocks (for `ACTION_JQ_DIR`) were left unchanged as they are safe — `${{ ... }}` expressions in `env:` blocks are not directly interpolated into shell commands.
+Replaced all 8 occurrences of `${{ github.action_path }}` in `run:` shell command strings with `$GITHUB_ACTION_PATH` (the runner-provided environment variable). The affected scripts were: install.sh, broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh, and review.sh. Two remaining occurrences of `github.action_path` in `env:` blocks (setting ACTION_JQ_DIR) were left unchanged as they are not script-injection findings.
 
