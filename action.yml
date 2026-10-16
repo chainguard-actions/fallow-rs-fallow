@@ -422,7 +422,7 @@ runs:
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_TYPE_AWARE: ${{ inputs.type-aware }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/install.sh
+      run: bash "$ACTION_PATH/action/scripts/install.sh"
     - name: Fallow branded token
       id: fallow-token
       shell: bash
@@ -430,7 +430,7 @@ runs:
         BRANDED_TOKEN: ${{ inputs.branded-token }}
         BROKER_URL: ${{ inputs.broker-url }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/broker-token.sh
+      run: bash "$ACTION_PATH/action/scripts/broker-token.sh"
     # `restore-keys` are literal string-prefix matches, so `inputs.root` cannot
     # go into the key raw: the restore prefix for `root=packages/app` is
     # `fallow-cache-<os>-packages/app-`, which is a literal prefix of the real
@@ -541,7 +541,7 @@ runs:
         # fetch and reuse the same file.
         FALLOW_DIFF_FILE: ${{ inputs.diff-file }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/analyze.sh
+      run: bash "$ACTION_PATH/action/scripts/analyze.sh"
     - name: Check Code Scanning availability
       id: ghas-check
       if: >-
@@ -551,7 +551,7 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         GH_REPO: ${{ github.repository }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/check-code-scanning.sh
+      run: bash "$ACTION_PATH/action/scripts/check-code-scanning.sh"
     - name: Upload SARIF
       if: >-
         inputs.command != 'fix' && inputs.sarif == 'true' && steps.analyze.outputs.sarif != '' && steps.ghas-check.outputs.available == 'true' && always()
@@ -589,7 +589,7 @@ runs:
         FALLOW_API_RETRIES: ${{ inputs.api-retries }}
         FALLOW_API_RETRY_DELAY: ${{ inputs.api-retry-delay }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/comment.sh
+      run: bash "$ACTION_PATH/action/scripts/comment.sh"
     - name: Emit inline annotations
       if: >-
         always() && inputs.annotations == 'true' && inputs.review-comments != 'true' && inputs.command != 'fix' && inputs.command != 'security' && steps.analyze.outputs.issues != '' && steps.analyze.outputs.issues != '0'
@@ -605,7 +605,7 @@ runs:
         FALLOW_CHANGED_FILES_FILE: ${{ inputs.artifacts-dir }}/fallow-changed-files.json
         FALLOW_PR_DECISION_FILE: ${{ inputs.artifacts-dir }}/fallow-pr-decision.json
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/annotate.sh
+      run: bash "$ACTION_PATH/action/scripts/annotate.sh"
     - name: Job summary
       if: always() && steps.analyze.outputs.issues != ''
       shell: bash
@@ -618,6 +618,7 @@ runs:
         FALLOW_SCOPED_RESULTS_FILE: ${{ inputs.artifacts-dir }}/fallow-results-scoped.json
         FALLOW_CHANGED_FILES_FILE: ${{ inputs.artifacts-dir }}/fallow-changed-files.json
         FALLOW_PR_COMMENT_ENVELOPE_FILE: ${{ inputs.artifacts-dir }}/fallow-pr-comment-envelope.json
+        ACTION_PATH: ${{ github.action_path }}
         FALLOW_BASELINE_ADVISORY: ${{ steps.analyze.outputs.baseline_advisory }}
         FALLOW_BASELINE_STALE_ENTRIES: ${{ steps.analyze.outputs.baseline_stale_entries }}
         FALLOW_BASELINE_ENTRIES: ${{ steps.analyze.outputs.baseline_entries }}
@@ -630,8 +631,7 @@ runs:
         FALLOW_GATES_SKIPPED: ${{ steps.analyze.outputs.gates_skipped }}
         FALLOW_GATES_PASSED: ${{ steps.analyze.outputs.gates_passed }}
         FALLOW_ANALYSIS_DEGRADED: ${{ steps.analyze.outputs.analysis_degraded }}
-        ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/summary.sh
+      run: bash "$ACTION_PATH/action/scripts/summary.sh"
     - name: Post review comments
       id: review
       if: >-
@@ -659,4 +659,4 @@ runs:
         FALLOW_API_RETRIES: ${{ inputs.api-retries }}
         FALLOW_API_RETRY_DELAY: ${{ inputs.api-retry-delay }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/review.sh
+      run: bash "$ACTION_PATH/action/scripts/review.sh"
