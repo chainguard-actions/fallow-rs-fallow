@@ -678,8 +678,7 @@ fi
 # Propagate the effective changed-since value after config safety logic so
 # downstream steps do not reapply stale PR scope.
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
-  _safe_changed_since=$(printf '%s' "${INPUT_CHANGED_SINCE:-}" | tr -d '\n\r')
-  printf '%s\n' "changed_since=${_safe_changed_since}" >> "$GITHUB_OUTPUT"
+  printf '%s\n' "changed_since=${INPUT_CHANGED_SINCE:-}" >> "$GITHUB_OUTPUT"
 fi
 
 # --- Pre-compute unified diff for line-level hot-path scoping ---
@@ -747,7 +746,8 @@ if [ -n "${INPUT_CHANGED_SINCE:-}" ] && [ -z "${FALLOW_DIFF_FILE:-}" ]; then
     # Propagate to the comment / review render steps (separate composite
     # steps see only $GITHUB_ENV, not exported shell variables).
     if [ -n "${GITHUB_ENV:-}" ]; then
-      printf '%s\n' "FALLOW_DIFF_FILE=${_DIFF_PATH}" >> "$GITHUB_ENV"
+      _safe_diff_path=$(printf '%s' "${_DIFF_PATH}" | tr -d '\n\r')
+      printf '%s\n' "FALLOW_DIFF_FILE=${_safe_diff_path}" >> "$GITHUB_ENV"
     fi
   else
     rm -f "$_DIFF_PATH"
@@ -804,12 +804,11 @@ if [ -n "${GITHUB_ENV:-}" ]; then
   # Preserve exact argv for pinned-CLI compatibility as inert runner-owned
   # data. Later steps parse this JSON instead of executing a workspace file.
   ANALYSIS_ARGS_JSON=$(jq -cn --args '$ARGS.positional' -- "${ARGS[@]}" "${EXTRA_ARGS[@]}")
-  _safe_prefix=$(printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r')
-  _safe_args_json=$(printf '%s' "${ANALYSIS_ARGS_JSON}" | tr -d '\n\r')
+  _safe_render_path_prefix=$(printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r')
   printf '%s\n' \
     "FALLOW_RENDER_PATH_PREFIX_SET=${FALLOW_RENDER_PATH_PREFIX_SET}" \
-    "FALLOW_RENDER_PATH_PREFIX=${_safe_prefix}" \
-    "FALLOW_ANALYSIS_ARGS_JSON=${_safe_args_json}" >> "$GITHUB_ENV"
+    "FALLOW_RENDER_PATH_PREFIX=${_safe_render_path_prefix}" \
+    "FALLOW_ANALYSIS_ARGS_JSON=${ANALYSIS_ARGS_JSON}" >> "$GITHUB_ENV"
 fi
 
 # Run analysis — no --fail-on-issues so subsequent steps always run.
