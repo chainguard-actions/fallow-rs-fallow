@@ -1,9 +1,11 @@
 name: 'Fallow - Codebase Intelligence'
 description: 'Codebase intelligence for TypeScript and JavaScript in CI: gate PRs on complexity, duplication, architecture, unused code.'
 author: 'Bart Waardenburg'
+
 branding:
   icon: 'search'
   color: 'orange'
+
 inputs:
   command:
     description: 'Command to run: dead-code (unused code), architecture (import cycles, boundaries and policy rules), dupes (code duplication), health (complexity), audit (changed-file quality gate), security (security candidates), fix (auto-remove unused code). Default runs all analyses. Legacy alias: check = dead-code.'
@@ -321,6 +323,7 @@ inputs:
   skip:
     description: 'Skip these analyses when no command is specified (comma-separated: dead-code,architecture,dupes,health)'
     required: false
+
 outputs:
   results:
     description: 'Path to JSON results file'
@@ -394,6 +397,7 @@ outputs:
   dedup-lookup-failed:
     description: 'true when a dedup lookup failed on the Post PR comment or Post review comments step. Distinct from post-skipped-reason: the summary-only paths post a fresh comment anyway (potential duplicate) when their lookup fails, while the multi-comment review path aborts. Gate on this to detect either degraded state. Resolves to "true" if EITHER step reported a failure, "false" otherwise.'
     value: ${{ (steps.review.outputs.dedup_lookup_failed == 'true' || steps.comment.outputs.dedup_lookup_failed == 'true') && 'true' || 'false' }}
+
 runs:
   using: 'composite'
   steps:
@@ -422,6 +426,7 @@ runs:
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_TYPE_AWARE: ${{ inputs.type-aware }}
       run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"
+
     - name: Fallow branded token
       id: fallow-token
       shell: bash
@@ -429,6 +434,7 @@ runs:
         BRANDED_TOKEN: ${{ inputs.branded-token }}
         BROKER_URL: ${{ inputs.broker-url }}
       run: bash "$GITHUB_ACTION_PATH/action/scripts/broker-token.sh"
+
     # `restore-keys` are literal string-prefix matches, so `inputs.root` cannot
     # go into the key raw: the restore prefix for `root=packages/app` is
     # `fallow-cache-<os>-packages/app-`, which is a literal prefix of the real
@@ -447,6 +453,7 @@ runs:
           digest=$(printf '%s' "${INPUT_ROOT:-.}" | shasum -a 256)
         fi
         printf 'root_digest=%s\n' "${digest:0:16}" >> "$GITHUB_OUTPUT"
+
     - name: Cache analysis results
       uses: chainguard-actions/actions-cache@244dfed44d8c4e917b332280fb2c1063eda3d9be # v5
       with:
@@ -454,6 +461,7 @@ runs:
         key: fallow-cache-${{ runner.os }}-${{ steps.fallow-cache-key.outputs.root_digest }}-${{ hashFiles(format('{0}/**/package.json', inputs.root)) }}
         restore-keys: |
           fallow-cache-${{ runner.os }}-${{ steps.fallow-cache-key.outputs.root_digest }}-
+
     - name: Run analysis
       id: analyze
       shell: bash
@@ -539,27 +547,41 @@ runs:
         # fetch and reuse the same file.
         FALLOW_DIFF_FILE: ${{ inputs.diff-file }}
       run: bash "$GITHUB_ACTION_PATH/action/scripts/analyze.sh"
+
     - name: Check Code Scanning availability
       id: ghas-check
       if: >-
-        inputs.command != 'fix' && inputs.sarif == 'true' && steps.analyze.outputs.sarif != '' && always()
+        inputs.command != 'fix' &&
+        inputs.sarif == 'true' &&
+        steps.analyze.outputs.sarif != '' &&
+        always()
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         GH_REPO: ${{ github.repository }}
       run: bash "$GITHUB_ACTION_PATH/action/scripts/check-code-scanning.sh"
+
     - name: Upload SARIF
       if: >-
-        inputs.command != 'fix' && inputs.sarif == 'true' && steps.analyze.outputs.sarif != '' && steps.ghas-check.outputs.available == 'true' && always()
+        inputs.command != 'fix' &&
+        inputs.sarif == 'true' &&
+        steps.analyze.outputs.sarif != '' &&
+        steps.ghas-check.outputs.available == 'true' &&
+        always()
       uses: chainguard-actions/github-codeql-action/upload-sarif@05a2b18f97905888db8f883471cc925f1a97a01c # v4
       with:
         sarif_file: ${{ steps.analyze.outputs.sarif }}
         category: fallow
         token: ${{ inputs.github-token }}
+
     - name: Post PR comment
       id: comment
       if: >-
-        inputs.comment == 'true' && github.event_name == 'pull_request' && inputs.command != 'security' && always() && steps.analyze.outputs.issues != ''
+        inputs.comment == 'true' &&
+        github.event_name == 'pull_request' &&
+        inputs.command != 'security' &&
+        always() &&
+        steps.analyze.outputs.issues != ''
       shell: bash
       env:
         GH_TOKEN: ${{ steps.fallow-token.outputs.token || inputs.github-token }}
@@ -585,9 +607,16 @@ runs:
         FALLOW_API_RETRIES: ${{ inputs.api-retries }}
         FALLOW_API_RETRY_DELAY: ${{ inputs.api-retry-delay }}
       run: bash "$GITHUB_ACTION_PATH/action/scripts/comment.sh"
+
     - name: Emit inline annotations
       if: >-
-        always() && inputs.annotations == 'true' && inputs.review-comments != 'true' && inputs.command != 'fix' && inputs.command != 'security' && steps.analyze.outputs.issues != '' && steps.analyze.outputs.issues != '0'
+        always() &&
+        inputs.annotations == 'true' &&
+        inputs.review-comments != 'true' &&
+        inputs.command != 'fix' &&
+        inputs.command != 'security' &&
+        steps.analyze.outputs.issues != '' &&
+        steps.analyze.outputs.issues != '0'
       shell: bash
       env:
         FALLOW_COMMAND: ${{ steps.analyze.outputs.command }}
@@ -600,6 +629,7 @@ runs:
         FALLOW_CHANGED_FILES_FILE: ${{ inputs.artifacts-dir }}/fallow-changed-files.json
         FALLOW_PR_DECISION_FILE: ${{ inputs.artifacts-dir }}/fallow-pr-decision.json
       run: bash "$GITHUB_ACTION_PATH/action/scripts/annotate.sh"
+
     - name: Job summary
       if: always() && steps.analyze.outputs.issues != ''
       shell: bash
@@ -625,10 +655,16 @@ runs:
         FALLOW_GATES_PASSED: ${{ steps.analyze.outputs.gates_passed }}
         FALLOW_ANALYSIS_DEGRADED: ${{ steps.analyze.outputs.analysis_degraded }}
       run: bash "$GITHUB_ACTION_PATH/action/scripts/summary.sh"
+
     - name: Post review comments
       id: review
       if: >-
-        inputs.review-comments == 'true' && github.event_name == 'pull_request' && inputs.command != 'fix' && inputs.command != 'security' && always() && steps.analyze.outputs.issues != ''
+        inputs.review-comments == 'true' &&
+        github.event_name == 'pull_request' &&
+        inputs.command != 'fix' &&
+        inputs.command != 'security' &&
+        always() &&
+        steps.analyze.outputs.issues != ''
       shell: bash
       env:
         GH_TOKEN: ${{ steps.fallow-token.outputs.token || inputs.github-token }}

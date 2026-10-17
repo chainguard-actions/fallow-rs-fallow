@@ -1,4 +1,4 @@
-name: Test runtime coverage inputs
+name: Test audit gate inputs
 on:
   workflow_dispatch:
 jobs:
@@ -6,25 +6,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: action
         uses: .
+        continue-on-error: true
         with:
-          command: health
+          command: audit
           root: .
           format: json
           fail-on-issues: 'false'
-          min-invocations-hot: '100'
-          min-observation-volume: ''
-          low-traffic-threshold: ''
           auto-changed-since: 'false'
-        continue-on-error: true
+          gate: 'new-only'
+          security-gate: 'new'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE_OUT: ${{ steps.action.outputs.gate }}
         run: |
           echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE_OUT"
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then

@@ -10,16 +10,18 @@ jobs:
           fetch-depth: 0
       - id: action
         uses: .
+        continue-on-error: true
         with:
           command: dead-code
           root: .
           format: json
           fail-on-issues: 'false'
-          changed-since: ''
-          changed-workspaces: ''
-          workspace: ''
           auto-changed-since: 'false'
-        continue-on-error: true
+          changed-since: 'HEAD~1'
+          workspace: ''
+          changed-workspaces: ''
+          skip: ''
+          only: 'dead-code'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}

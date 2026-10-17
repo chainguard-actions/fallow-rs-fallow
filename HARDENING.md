@@ -16,18 +16,18 @@ Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 1 finding(s) we
 
 ### script-injection (severity: high)
 
-Sub-rule (a): `${{ github.action_path }}` is interpolated directly inside `run:` shell command strings in 8 composite action steps. Per the check rules, ANY `${{ ... }}` expression directly inside a `run:` block is a script-injection finding, including GitHub-controlled contexts like `github.action_path`, because the YAML template substitution occurs before the shell processes the command. The safe fix is to replace `${{ github.action_path }}` with the `$GITHUB_ACTION_PATH` environment variable, which is already set by the runner without going through YAML interpolation. Affected lines: `run: bash ${{ github.action_path }}/action/scripts/install.sh`, `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`, `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`, `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`, `run: bash ${{ github.action_path }}/action/scripts/comment.sh`, `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`, `run: bash ${{ github.action_path }}/action/scripts/summary.sh`, `run: bash ${{ github.action_path }}/action/scripts/review.sh`.
+Sub-rule (a): Eight `run:` steps in action.yml directly interpolate `${{ github.action_path }}` inside the shell command string. Per the check rules, ANY `${{ ... }}` expression interpolated directly inside a `run:` block is a script-injection finding, regardless of which context it reads from. Although `github.action_path` is GitHub-controlled and not attacker-influenced in practice, the YAML template substitution occurs before the shell ever sees the command, making this a structural violation. The affected steps are: 'Install fallow' (`run: bash ${{ github.action_path }}/action/scripts/install.sh`), 'Fallow branded token' (`run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`), 'Run analysis' (`run: bash ${{ github.action_path }}/action/scripts/analyze.sh`), 'Check Code Scanning availability' (`run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`), 'Post PR comment' (`run: bash ${{ github.action_path }}/action/scripts/comment.sh`), 'Emit inline annotations' (`run: bash ${{ github.action_path }}/action/scripts/annotate.sh`), 'Job summary' (`run: bash ${{ github.action_path }}/action/scripts/summary.sh`), and 'Post review comments' (`run: bash ${{ github.action_path }}/action/scripts/review.sh`). The fix is to use the `$GITHUB_ACTION_PATH` environment variable instead: `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
-- `action.yml:365`
-- `action.yml:374`
+- `action.yml:340`
+- `action.yml:348`
+- `action.yml:420`
 - `action.yml:430`
-- `action.yml:449`
-- `action.yml:476`
-- `action.yml:490`
-- `action.yml:510`
-- `action.yml:530`
+- `action.yml:460`
+- `action.yml:480`
+- `action.yml:500`
+- `action.yml:520`
 
 ## Iteration Notes
 
@@ -37,5 +37,5 @@ Locations:
 
 **Notes:**
 
-Replaced all 8 occurrences of `${{ github.action_path }}` in `run:` shell command strings with `$GITHUB_ACTION_PATH` (the runner-provided environment variable). The affected scripts were: install.sh, broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh, and review.sh. Two remaining occurrences of `github.action_path` in `env:` blocks (setting ACTION_JQ_DIR) were left unchanged as they are not script-injection findings.
+Fixed all 8 script-injection findings in action.yml by replacing `bash ${{ github.action_path }}/action/scripts/<script>.sh` with `bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"` in the run: blocks of: 'Install fallow', 'Fallow branded token', 'Run analysis', 'Check Code Scanning availability', 'Post PR comment', 'Emit inline annotations', 'Job summary', and 'Post review comments'. Two remaining `${{ github.action_path }}` references in env: blocks (ACTION_JQ_DIR for annotate and summary steps) are correctly placed and are not findings.
 

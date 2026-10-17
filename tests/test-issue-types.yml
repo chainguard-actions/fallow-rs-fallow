@@ -1,4 +1,4 @@
-name: Test gate inputs
+name: Test issue-types and threads inputs
 on:
   workflow_dispatch:
 jobs:
@@ -8,15 +8,15 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - id: action
         uses: .
+        continue-on-error: true
         with:
-          command: security
+          command: dead-code
           root: .
           format: json
           fail-on-issues: 'false'
-          gate: 'new-only'
-          security-gate: 'new'
           auto-changed-since: 'false'
-        continue-on-error: true
+          issue-types: 'unused-exports,unused-files'
+          threads: '2'
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}

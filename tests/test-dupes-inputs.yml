@@ -1,4 +1,4 @@
-name: Test dupes command inputs
+name: Test dupes-specific inputs
 on:
   workflow_dispatch:
 jobs:
@@ -8,16 +8,16 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - id: action
         uses: .
+        continue-on-error: true
         with:
           command: dupes
           root: .
           format: json
           fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          threshold: '0'
           min-tokens: '50'
           min-lines: '5'
-          threshold: '0'
-          auto-changed-since: 'false'
-        continue-on-error: true
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}

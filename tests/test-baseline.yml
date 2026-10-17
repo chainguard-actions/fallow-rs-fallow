@@ -1,4 +1,4 @@
-name: Test config and filter inputs
+name: Test baseline inputs
 on:
   workflow_dispatch:
 jobs:
@@ -8,17 +8,20 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - id: action
         uses: .
+        continue-on-error: true
         with:
           command: dead-code
           root: .
           format: json
           fail-on-issues: 'false'
-          config: ''
-          issue-types: 'unused-exports,unused-files'
-          only: ''
-          skip: 'architecture'
           auto-changed-since: 'false'
-        continue-on-error: true
+          baseline: ''
+          save-baseline: ''
+          dead-code-baseline: ''
+          health-baseline: ''
+          dupes-baseline: ''
+          regression-baseline: ''
+          save-regression-baseline: ''
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}
