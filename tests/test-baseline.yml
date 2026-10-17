@@ -6,16 +6,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
       - name: Create a minimal JS file for analysis
         run: |
           mkdir -p /tmp/fallow-test-project
           cat > /tmp/fallow-test-project/index.js << 'EOF'
           export function hello() { return 'hello'; }
+          export function unused() { return 'unused'; }
           EOF
           cat > /tmp/fallow-test-project/package.json << 'EOF'
-          { "name": "test-project", "version": "1.0.0" }
+          { "name": "test-project", "version": "1.0.0", "type": "module" }
           EOF
-      - id: action
+
+      - name: Create a baseline file path (will be written by save-baseline)
+        run: |
+          mkdir -p /tmp/fallow-baselines
+
+      - id: action-save-baseline
         uses: .
         continue-on-error: true
         with:
@@ -23,16 +30,17 @@ jobs:
           root: /tmp/fallow-test-project
           format: json
           fail-on-issues: 'false'
+          save-baseline: /tmp/fallow-baselines/dead-code-baseline.json
+          baseline: ''
+          dead-code-baseline: ''
+          health-baseline: ''
+          dupes-baseline: ''
           annotations: 'false'
           auto-changed-since: 'false'
-          save-baseline: /tmp/fallow-baseline.json
-          baseline: /tmp/fallow-baseline.json
-          dead-code-baseline: /tmp/fallow-baseline.json
-          health-baseline: /tmp/fallow-baseline.json
-          dupes-baseline: /tmp/fallow-baseline.json
-      - name: Assert action ran
+
+      - name: Assert save-baseline step ran
         env:
-          OUTCOME: ${{ steps.action.outcome }}
+          OUTCOME: ${{ steps.action-save-baseline.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
