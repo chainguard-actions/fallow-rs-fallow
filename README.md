@@ -12,6 +12,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 | v3.32.0 | [`v3.32.0`](https://github.com/chainguard-actions/fallow-rs-fallow/tree/v3.32.0) | [`aaaec79`](https://github.com/fallow-rs/fallow/commit/aaaec796f5449810b9ecf82ed7e62b775d4d1ef3) |
 | v3.33.0 | [`v3.33.0`](https://github.com/chainguard-actions/fallow-rs-fallow/tree/v3.33.0) | [`278dbc6`](https://github.com/fallow-rs/fallow/commit/278dbc6c34ab13fe844589c34971f8e84cb7989f) |
 | v3.33.1 | [`v3.33.1`](https://github.com/chainguard-actions/fallow-rs-fallow/tree/v3.33.1) | [`fccff88`](https://github.com/fallow-rs/fallow/commit/fccff887da0d83db1711379e0a3696dfc2460fdd) |
+| v3.34.0 | [`v3.34.0`](https://github.com/chainguard-actions/fallow-rs-fallow/tree/v3.34.0) | [`2823b65`](https://github.com/fallow-rs/fallow/commit/2823b6588b26e582124977135b9998efeb6959ad) |
 
 ## Privacy
 
