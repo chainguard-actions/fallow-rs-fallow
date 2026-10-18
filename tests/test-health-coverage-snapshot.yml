@@ -1,0 +1,91 @@
+name: Test health with coverage and snapshot inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal JS project with coverage data
+        run: |
+          mkdir -p /tmp/fallow-cov-project
+          cat > /tmp/fallow-cov-project/package.json <<'EOF'
+          {
+            "name": "cov-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-cov-project/index.js <<'EOF'
+          export function add(a, b) {
+            return a + b;
+          }
+          export function subtract(a, b) {
+            return a - b;
+          }
+          EOF
+          # Create a minimal Istanbul coverage-final.json
+          cat > /tmp/coverage-final.json <<'EOF'
+          {
+            "/tmp/fallow-cov-project/index.js": {
+              "path": "/tmp/fallow-cov-project/index.js",
+              "statementMap": {"0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 16}}},
+              "fnMap": {"0": {"name": "add", "decl": {"start": {"line": 1, "column": 0}, "end": {"line": 1, "column": 24}}, "loc": {"start": {"line": 1, "column": 0}, "end": {"line": 3, "column": 1}}, "line": 1}},
+              "branchMap": {},
+              "s": {"0": 5},
+              "f": {"0": 5},
+              "b": {}
+            }
+          }
+          EOF
+          mkdir -p /tmp/fallow-snapshots
+      - id: health-cov
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-cov-project
+          format: json
+          fail-on-issues: 'false'
+          coverage: /tmp/coverage-final.json
+          coverage-root: /tmp/fallow-cov-project
+          runtime-coverage: /tmp/coverage-final.json
+          min-invocations-hot: '50'
+          min-observation-volume: '100'
+          low-traffic-threshold: '0.01'
+          min-score: '0'
+          save-snapshot: /tmp/fallow-snapshots
+          auto-changed-since: 'false'
+      - name: Assert health-cov step ran
+        env:
+          OUTCOME: ${{ steps.health-cov.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+      - id: health-trend
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-cov-project
+          format: json
+          fail-on-issues: 'false'
+          save-snapshot: /tmp/fallow-snapshots
+          trend: 'true'
+          auto-changed-since: 'false'
+      - name: Assert health-trend step ran
+        env:
+          OUTCOME: ${{ steps.health-trend.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

@@ -16,26 +16,36 @@ Action **fallow-rs--fallow/v3.32.0** was hardened automatically. 2 finding(s) we
 
 ### script-injection (severity: high)
 
-Sub-rule (a): Eight `run:` blocks in action.yml directly interpolate `${{ github.action_path }}` inside the shell command string (e.g., `run: bash ${{ github.action_path }}/action/scripts/install.sh`). Any `${{ ... }}` expression directly inside a `run:` shell command string is a script-injection finding regardless of which context it reads from. The safe pattern is to reference the pre-set environment variable `$GITHUB_ACTION_PATH` instead.
+Sub-rule (a): All 8 `run:` blocks in action.yml interpolate `${{ github.action_path }}` directly inside the shell command string (e.g., `run: bash ${{ github.action_path }}/action/scripts/install.sh`). Any `${{ ... }}` expression directly in a `run:` block is a script-injection risk regardless of which context it reads from. The fix is to use the `$GITHUB_ACTION_PATH` environment variable instead, which is already available in composite action steps.
 
 Locations:
 
-- `action.yml:270`
-- `action.yml:278`
-- `action.yml:380`
-- `action.yml:388`
-- `action.yml:430`
-- `action.yml:450`
-- `action.yml:480`
-- `action.yml:500`
+- `action.yml:340`
+- `action.yml:349`
+- `action.yml:374`
+- `action.yml:416`
+- `action.yml:437`
+- `action.yml:462`
+- `action.yml:479`
+- `action.yml:499`
 
 ### github-env-injection (severity: high)
 
-In action/scripts/analyze.sh, the variable `FALLOW_RENDER_PATH_PREFIX` — derived from `inputs.args` (a user-controlled composite-action input) via argument parsing — is written to `$GITHUB_ENV` without sanitization: `printf '%s\n' "FALLOW_RENDER_PATH_PREFIX=${FALLOW_RENDER_PATH_PREFIX}" ... >> "$GITHUB_ENV"`. An attacker can embed a newline in the `args` input to inject arbitrary environment variable definitions into subsequent steps. The required sanitization step (`safe=$(printf '%s' "$FALLOW_RENDER_PATH_PREFIX" | tr -d '\n\r')`) is absent before the write.
+In action/scripts/analyze.sh, three unsanitized writes of user-controlled values occur to GitHub special environment files:
+
+1. `inputs.changed-since` (via `$INPUT_CHANGED_SINCE`) is written directly to `$GITHUB_OUTPUT` without sanitization: `printf '%s\n' "changed_since=${INPUT_CHANGED_SINCE:-}" >> "$GITHUB_OUTPUT"`. A newline in the value could inject arbitrary output variables.
+
+2. `inputs.diff-file` (via `$FALLOW_DIFF_FILE`) is written directly to `$GITHUB_ENV` without sanitization: `printf '%s\n' "FALLOW_DIFF_FILE=${FALLOW_DIFF_FILE}" >> "$GITHUB_ENV"`. A newline in the value could inject arbitrary environment variables.
+
+3. `inputs.args` (parsed into `$FALLOW_RENDER_PATH_PREFIX`) is written directly to `$GITHUB_ENV` without sanitization: `FALLOW_RENDER_PATH_PREFIX=${FALLOW_RENDER_PATH_PREFIX}` written via printf to `$GITHUB_ENV`. A newline in the value could inject arbitrary environment variables.
+
+The required fix is to apply `printf '%s' "$VAR" | tr -d '\n\r'` before each write.
 
 Locations:
 
-- `action/scripts/analyze.sh:700`
+- `action/scripts/analyze.sh:701`
+- `action/scripts/analyze.sh:740`
+- `action/scripts/analyze.sh:830`
 
 ## Iteration Notes
 
@@ -45,5 +55,5 @@ Locations:
 
 **Notes:**
 
-Fixed 8 script-injection occurrences in action.yml by replacing `${{ github.action_path }}` with `$GITHUB_ACTION_PATH` in all `run:` blocks (install.sh, broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh, review.sh). The two remaining `${{ github.action_path }}` uses in `env:` blocks (ACTION_JQ_DIR) are not script-injection findings. Fixed github-env-injection in action/scripts/analyze.sh by sanitizing `FALLOW_RENDER_PATH_PREFIX` with `tr -d '\n\r'` before writing it to `$GITHUB_ENV`, preventing newline injection from user-controlled `args` input.
+Fixed 8 script-injection occurrences in action.yml by replacing `${{ github.action_path }}` in all `run:` lines with `$GITHUB_ACTION_PATH` (the pre-set environment variable). Fixed 3 github-env-injection issues in action/scripts/analyze.sh: (1) sanitized `INPUT_CHANGED_SINCE` before writing to GITHUB_OUTPUT, (2) sanitized `FALLOW_DIFF_FILE` before writing to GITHUB_ENV, (3) sanitized `FALLOW_RENDER_PATH_PREFIX` before writing to GITHUB_ENV. All sanitizations use `printf '%s' "$VAR" | tr -d '\n\r'` with a separate capture variable to avoid masking command failures under errexit.
 
