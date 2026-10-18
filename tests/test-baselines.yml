@@ -6,30 +6,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      # Create a minimal baseline file to pass as input
-      - name: Create baseline files
+      - name: Create a minimal JS file to analyze
         run: |
-          mkdir -p /tmp/fallow-baselines
-          echo '{}' > /tmp/fallow-baselines/dead-code-baseline.json
-          echo '{}' > /tmp/fallow-baselines/health-baseline.json
-          echo '{}' > /tmp/fallow-baselines/dupes-baseline.json
-
+          mkdir -p /tmp/fallow-test-project
+          cat > /tmp/fallow-test-project/index.js << 'EOF'
+          export function hello() { return 'hello'; }
+          EOF
+          cat > /tmp/fallow-test-project/package.json << 'EOF'
+          { "name": "test-project", "version": "1.0.0", "type": "module" }
+          EOF
+      - name: Create empty baseline files
+        run: |
+          echo '{}' > /tmp/fallow-baseline.json
+          echo '{}' > /tmp/fallow-health-baseline.json
+          echo '{}' > /tmp/fallow-dupes-baseline.json
+          echo '{}' > /tmp/fallow-dead-code-baseline.json
       - id: action
         uses: .
         continue-on-error: true
         with:
           command: dead-code
-          root: .
+          root: /tmp/fallow-test-project
           format: json
           fail-on-issues: 'false'
-          baseline: /tmp/fallow-baselines/dead-code-baseline.json
-          save-baseline: /tmp/fallow-baselines/saved-baseline.json
-          dead-code-baseline: /tmp/fallow-baselines/dead-code-baseline.json
-          health-baseline: /tmp/fallow-baselines/health-baseline.json
-          dupes-baseline: /tmp/fallow-baselines/dupes-baseline.json
           auto-changed-since: 'false'
-
+          baseline: /tmp/fallow-baseline.json
+          save-baseline: /tmp/fallow-saved-baseline.json
+          health-baseline: /tmp/fallow-health-baseline.json
+          dupes-baseline: /tmp/fallow-dupes-baseline.json
+          dead-code-baseline: /tmp/fallow-dead-code-baseline.json
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}
