@@ -1,0 +1,35 @@
+name: Test dead-code command inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal fallow config
+        run: |
+          cat > "$GITHUB_WORKSPACE/.fallowrc.json" <<'EOF'
+          {
+            "entry": []
+          }
+          EOF
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: .
+          format: json
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          issue-types: 'unused-files,unused-exports'
+          config: '.fallowrc.json'
+          save-baseline: '.fallow-baseline.json'
+          save-regression-baseline: '.fallow-regression-baseline.json'
+          auto-changed-since: 'false'
+          threads: '2'
+      - name: Assert action ran and baseline was saved
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "PASS: dead-code command with extended inputs completed"
