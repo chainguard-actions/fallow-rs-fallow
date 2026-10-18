@@ -1,0 +1,74 @@
+name: Test fail-on-issues gate
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Run with fail-on-issues: false — should always succeed
+      - id: action-no-fail
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/js-project
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+
+      - name: Assert action succeeded with fail-on-issues false
+        env:
+          OUTCOME: ${{ steps.action-no-fail.outcome }}
+          ISSUES: ${{ steps.action-no-fail.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected action to succeed with fail-on-issues: false, got $OUTCOME"
+            exit 1
+          fi
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a valid number: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS: action succeeded and issues=$ISSUES"
+
+  test-fail-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Run with fail-on-issues: true — may fail if issues are found
+      - id: action-with-fail
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: tests/fixtures/js-project
+          format: json
+          fail-on-issues: 'true'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+
+      - name: Assert action outcome is success or failure (not skipped/cancelled)
+        env:
+          OUTCOME: ${{ steps.action-with-fail.outcome }}
+          ISSUES: ${{ steps.action-with-fail.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" = "success" ]; then
+            # No issues found — that's fine
+            echo "PASS: action succeeded (no issues found)"
+          elif [ "$OUTCOME" = "failure" ]; then
+            # Issues found and fail-on-issues: true caused exit 1
+            echo "PASS: action failed as expected when issues were found with fail-on-issues: true"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

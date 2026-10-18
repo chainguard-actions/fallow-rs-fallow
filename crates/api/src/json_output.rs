@@ -1,0 +1,574 @@
+//! Shared JSON output assembly for CLI and programmatic consumers.
+
+use std::path::Path;
+use std::time::Duration;
+
+use fallow_output::{
+    CHECK_SCHEMA_VERSION, CheckEnvelope, CheckGroupedEntry, CheckGroupedOutput, CheckOutput,
+    CheckOutputInput, DUPES_SCHEMA_VERSION, DupesOutput, DupesOutputInput, GroupByMode,
+    apply_config_fixable_to_duplicate_exports, build_check_output, build_dupes_output,
+    harmonize_multi_kind_suppress_line_actions as harmonize_typed_suppress_line_actions,
+    strip_root_prefix,
+};
+use fallow_types::duplicates::DuplicationReport;
+use fallow_types::envelope::{
+    BaselineDeltas, BaselineMatch, ElapsedMs, Meta, RegressionResult, SchemaVersion, ToolVersion,
+};
+use fallow_types::output::NextStep;
+use fallow_types::results::AnalysisResults;
+use fallow_types::workspace::WorkspaceDiagnostic;
+
+use crate::{DupesReportPayload, DuplicationGroup, DuplicationGrouping, ResultGroup};
+
+/// Inputs for `fallow dead-code --format json` and
+/// `fallow architecture --format json` output assembly.
+pub struct CheckJsonOutputInput<'a> {
+    /// The command family member: sets the root `kind` and `schema_version`.
+    pub envelope: CheckEnvelope,
+    /// Typed dead-code results to serialize.
+    pub results: &'a AnalysisResults,
+    /// Project root; its prefix is stripped from every path in the output.
+    pub root: &'a Path,
+    /// Analysis wall time, emitted as `elapsed_ms`.
+    pub elapsed: Duration,
+    /// Whether duplicate-export findings can be auto-fixed through config;
+    /// propagated onto their fix actions.
+    pub config_fixable: bool,
+    /// Optional explain metadata block for the envelope.
+    pub meta: Option<Meta>,
+    /// Caller-computed baseline and regression sections.
+    pub extras: CheckJsonExtraOutputs,
+    /// Non-fatal per-file diagnostics collected during the workspace walk.
+    pub workspace_diagnostics: Vec<WorkspaceDiagnostic>,
+    /// Suggested follow-up commands for the consumer.
+    pub next_steps: Vec<NextStep>,
+    /// Analysis run id stamped into telemetry metadata when present.
+    pub telemetry_analysis_run_id: Option<&'a str>,
+}
+
+/// Inputs for the dead-code JSON payload without a root envelope.
+pub struct CheckJsonPayloadInput<'a> {
+    /// Typed dead-code results to serialize.
+    pub results: &'a AnalysisResults,
+    /// Project root; its prefix is stripped from every path in the output.
+    pub root: &'a Path,
+    /// Analysis wall time, emitted as `elapsed_ms`.
+    pub elapsed: Duration,
+    /// Whether duplicate-export findings can be auto-fixed through config;
+    /// propagated onto their fix actions.
+    pub config_fixable: bool,
+    /// Caller-computed baseline and regression sections.
+    pub extras: CheckJsonExtraOutputs,
+    /// Non-fatal per-file diagnostics collected during the workspace walk.
+    pub workspace_diagnostics: Vec<WorkspaceDiagnostic>,
+}
+
+/// Optional root sections for dead-code JSON envelopes.
+///
+/// These fields are part of the output contract, but they are computed by
+/// caller-specific workflows such as baseline and regression gates.
+#[derive(Debug, Clone, Default)]
+pub struct CheckJsonExtraOutputs {
+    /// Applied refs for exact workspace package roots.
+    pub package_baselines: Vec<fallow_output::PackageBaselineStatus>,
+    /// Per-category issue count changes against the matched baseline.
+    pub baseline_deltas: Option<BaselineDeltas>,
+    /// Which baseline snapshot the run was compared against.
+    pub baseline: Option<BaselineMatch>,
+    /// This run's view of that baseline: counts, advisory verdict and the
+    /// `--fail-on-stale-baseline` verdict.
+    pub baseline_staleness: Option<fallow_output::BaselineStaleness>,
+    /// Outcome of the regression gate against the baseline.
+    pub regression: Option<RegressionResult>,
+    /// Every gate this run evaluated. The programmatic route runs no CLI-layer
+    /// gate, so a caller that computes none leaves this `None` and the envelope
+    /// key stays absent. An empty set is never emitted: it would assert that
+    /// gates were evaluated and none tripped, which is a different claim.
+    pub gate_outcomes: Option<fallow_output::GateOutcomes>,
+    /// Every narrowing or shaping request this run received, absent when it
+    /// was asked for nothing. The programmatic route resolves no CLI flag and
+    /// leaves this `None`; an entry whose `status` is not `applied` means the
+    /// report is wider than what was asked for.
+    pub request_outcomes: Option<fallow_output::RequestOutcomes>,
+    /// The answer to a finding-id query, present only when the run received
+    /// one or more finding ids. See [`fallow_output::FindingIdQuery`].
+    pub finding_id_query: Option<fallow_output::FindingIdQuery>,
+}
+
+struct CheckJsonEnvelopeInput<'a> {
+    schema_version: u32,
+    results: &'a AnalysisResults,
+    elapsed: Duration,
+    config_fixable: bool,
+    meta: Option<Meta>,
+    extras: CheckJsonExtraOutputs,
+    workspace_diagnostics: Vec<WorkspaceDiagnostic>,
+    next_steps: Vec<NextStep>,
+}
+
+/// Inputs for grouped dead-code and architecture JSON output assembly.
+pub struct GroupedCheckJsonOutputInput<'a> {
+    /// The command family member: sets the root `kind` and `schema_version`.
+    pub envelope: CheckEnvelope,
+    /// Applied refs for exact workspace package roots.
+    pub package_baselines: Vec<fallow_output::PackageBaselineStatus>,
+    /// This run's view of the loaded baseline, for baseline runs.
+    pub baseline_staleness: Option<fallow_output::BaselineStaleness>,
+    /// Every gate this run evaluated. The programmatic route runs no CLI-layer
+    /// gate, so a caller that computes none leaves this `None` and the envelope
+    /// key stays absent. An empty set is never emitted: it would assert that
+    /// gates were evaluated and none tripped, which is a different claim.
+    pub gate_outcomes: Option<fallow_output::GateOutcomes>,
+    /// Every narrowing or shaping request this run received, absent when it
+    /// was asked for nothing. The programmatic route resolves no CLI flag and
+    /// leaves this `None`; an entry whose `status` is not `applied` means the
+    /// report is wider than what was asked for.
+    pub request_outcomes: Option<fallow_output::RequestOutcomes>,
+    /// The answer to a finding-id query, present only when the run received
+    /// one or more finding ids. See [`fallow_output::FindingIdQuery`].
+    pub finding_id_query: Option<fallow_output::FindingIdQuery>,
+
+    /// Results already partitioned into groups, in output order.
+    pub groups: &'a [ResultGroup],
+    /// Ungrouped results, used for the envelope's `total_issues` count.
+    pub original: &'a AnalysisResults,
+    /// Project root; its prefix is stripped from every path in the output.
+    pub root: &'a Path,
+    /// Analysis wall time, emitted as `elapsed_ms`.
+    pub elapsed: Duration,
+    /// Grouping axis recorded as `grouped_by` in the envelope.
+    pub grouped_by: GroupByMode,
+    /// Whether duplicate-export findings can be auto-fixed through config;
+    /// propagated onto their fix actions per group.
+    pub config_fixable: bool,
+    /// Optional explain metadata block for the envelope.
+    pub meta: Option<Meta>,
+    /// Non-fatal per-file diagnostics collected during the workspace walk.
+    pub workspace_diagnostics: Vec<WorkspaceDiagnostic>,
+    /// Suggested follow-up commands for the consumer.
+    pub next_steps: Vec<NextStep>,
+    /// Analysis run id stamped into telemetry metadata when present.
+    pub telemetry_analysis_run_id: Option<&'a str>,
+}
+
+/// Inputs for `fallow dupes --format json` output assembly.
+pub struct DuplicationJsonOutputInput<'a> {
+    /// Applied refs for exact workspace package roots.
+    pub package_baselines: Vec<fallow_output::PackageBaselineStatus>,
+    /// This run's view of the loaded duplication baseline, for baseline runs.
+    pub baseline_staleness: Option<fallow_output::BaselineStaleness>,
+    /// Every gate this run evaluated. The programmatic route runs no CLI-layer
+    /// gate, so a caller that computes none leaves this `None` and the envelope
+    /// key stays absent. An empty set is never emitted: it would assert that
+    /// gates were evaluated and none tripped, which is a different claim.
+    pub gate_outcomes: Option<fallow_output::GateOutcomes>,
+    /// Every narrowing or shaping request this run received, absent when it
+    /// was asked for nothing. The programmatic route resolves no CLI flag and
+    /// leaves this `None`; an entry whose `status` is not `applied` means the
+    /// report is wider than what was asked for.
+    pub request_outcomes: Option<fallow_output::RequestOutcomes>,
+
+    /// Typed duplication report to serialize.
+    pub report: &'a DuplicationReport,
+    /// Project root; its prefix is stripped from every path in the output.
+    pub root: &'a Path,
+    /// Analysis wall time, emitted as `elapsed_ms`.
+    pub elapsed: Duration,
+    /// Whether each clone instance carries its verbatim source text.
+    pub include_fragments: bool,
+    /// Optional explain metadata block for the envelope.
+    pub meta: Option<Meta>,
+    /// Non-fatal per-file diagnostics collected during the workspace walk.
+    pub workspace_diagnostics: Vec<WorkspaceDiagnostic>,
+    /// Suggested follow-up commands for the consumer.
+    pub next_steps: Vec<NextStep>,
+    /// Analysis run id stamped into telemetry metadata when present.
+    pub telemetry_analysis_run_id: Option<&'a str>,
+}
+
+/// Inputs for grouped duplication JSON output assembly.
+pub struct GroupedDuplicationJsonOutputInput<'a> {
+    /// Applied refs for exact workspace package roots.
+    pub package_baselines: Vec<fallow_output::PackageBaselineStatus>,
+    /// This run's view of the loaded duplication baseline, for baseline runs.
+    pub baseline_staleness: Option<fallow_output::BaselineStaleness>,
+    /// Every gate this run evaluated. The programmatic route runs no CLI-layer
+    /// gate, so a caller that computes none leaves this `None` and the envelope
+    /// key stays absent. An empty set is never emitted: it would assert that
+    /// gates were evaluated and none tripped, which is a different claim.
+    pub gate_outcomes: Option<fallow_output::GateOutcomes>,
+    /// Every narrowing or shaping request this run received, absent when it
+    /// was asked for nothing. The programmatic route resolves no CLI flag and
+    /// leaves this `None`; an entry whose `status` is not `applied` means the
+    /// report is wider than what was asked for.
+    pub request_outcomes: Option<fallow_output::RequestOutcomes>,
+
+    /// Typed duplication report to serialize.
+    pub report: &'a DuplicationReport,
+    /// Precomputed grouping whose groups replace the flat `groups` array.
+    pub grouping: &'a DuplicationGrouping,
+    /// Project root; its prefix is stripped from every path in the output.
+    pub root: &'a Path,
+    /// Analysis wall time, emitted as `elapsed_ms`.
+    pub elapsed: Duration,
+    /// Whether each clone instance carries its verbatim source text.
+    pub include_fragments: bool,
+    /// Optional explain metadata block for the envelope.
+    pub meta: Option<Meta>,
+    /// Non-fatal per-file diagnostics collected during the workspace walk.
+    pub workspace_diagnostics: Vec<WorkspaceDiagnostic>,
+    /// Suggested follow-up commands for the consumer.
+    pub next_steps: Vec<NextStep>,
+    /// Analysis run id stamped into telemetry metadata when present.
+    pub telemetry_analysis_run_id: Option<&'a str>,
+}
+
+/// Build and serialize dead-code JSON through the API-owned output boundary.
+///
+/// # Errors
+///
+/// Returns a serde error when the typed envelope cannot be converted to JSON.
+pub fn serialize_check_json(
+    input: CheckJsonOutputInput<'_>,
+) -> Result<serde_json::Value, serde_json::Error> {
+    let envelope = build_check_json_envelope(CheckJsonEnvelopeInput {
+        schema_version: input.envelope.schema_version(),
+        results: input.results,
+        elapsed: input.elapsed,
+        config_fixable: input.config_fixable,
+        meta: input.meta,
+        extras: input.extras,
+        workspace_diagnostics: input.workspace_diagnostics,
+        next_steps: input.next_steps,
+    });
+    let run_id = input.telemetry_analysis_run_id;
+    let mut output = match input.envelope {
+        CheckEnvelope::DeadCode => fallow_output::serialize_check_json_output(envelope, run_id)?,
+        CheckEnvelope::Architecture => {
+            fallow_output::serialize_architecture_json_output(envelope, run_id)?
+        }
+    };
+    strip_json_root_prefix(&mut output, input.root);
+    Ok(output)
+}
+
+/// Build a dead-code JSON payload without adding a root envelope.
+///
+/// # Errors
+///
+/// Returns a serde error when the typed envelope cannot be converted to JSON.
+pub fn serialize_check_json_payload(
+    input: CheckJsonPayloadInput<'_>,
+) -> Result<serde_json::Value, serde_json::Error> {
+    let envelope = build_check_json_envelope(CheckJsonEnvelopeInput {
+        schema_version: CHECK_SCHEMA_VERSION,
+        results: input.results,
+        elapsed: input.elapsed,
+        config_fixable: input.config_fixable,
+        meta: None,
+        extras: input.extras,
+        workspace_diagnostics: input.workspace_diagnostics,
+        next_steps: Vec::new(),
+    });
+    let mut output = serde_json::to_value(envelope)?;
+    strip_json_root_prefix(&mut output, input.root);
+    Ok(output)
+}
+
+/// Build and serialize grouped dead-code JSON through the API output boundary.
+///
+/// # Errors
+///
+/// Returns a serde error when the typed envelope cannot be converted to JSON.
+pub fn serialize_grouped_check_json(
+    input: GroupedCheckJsonOutputInput<'_>,
+) -> Result<serde_json::Value, serde_json::Error> {
+    let entries = input
+        .groups
+        .iter()
+        .map(|group| {
+            let mut results = group.results.clone();
+            apply_config_fixable_to_duplicate_exports(&mut results, input.config_fixable);
+            harmonize_typed_suppress_line_actions(&mut results);
+            CheckGroupedEntry {
+                key: group.key.clone(),
+                owners: group.owners.clone(),
+                total_issues: results.total_issues(),
+                results,
+            }
+        })
+        .collect();
+
+    let envelope = CheckGroupedOutput {
+        package_baselines: input.package_baselines,
+        request_outcomes: input.request_outcomes,
+        schema_version: SchemaVersion(input.envelope.schema_version()),
+        version: ToolVersion(env!("CARGO_PKG_VERSION").to_string()),
+        elapsed_ms: ElapsedMs(input.elapsed.as_millis() as u64),
+        grouped_by: input.grouped_by,
+        total_issues: input.original.total_issues(),
+        groups: entries,
+        unused_load_data_keys_global_abstain: input.original.unused_load_data_keys_global_abstain,
+        cascade_hidden: input.original.cascade_hidden,
+        baseline_staleness: input.baseline_staleness,
+        finding_id_query: input.finding_id_query,
+        gate_outcomes: input.gate_outcomes,
+        meta: input.meta,
+        workspace_diagnostics: input.workspace_diagnostics,
+        next_steps: input.next_steps,
+    };
+
+    let run_id = input.telemetry_analysis_run_id;
+    let mut output = match input.envelope {
+        CheckEnvelope::DeadCode => {
+            fallow_output::serialize_check_grouped_json_output(envelope, run_id)?
+        }
+        CheckEnvelope::Architecture => {
+            fallow_output::serialize_architecture_grouped_json_output(envelope, run_id)?
+        }
+    };
+    strip_json_root_prefix(&mut output, input.root);
+    Ok(output)
+}
+
+/// Build and serialize duplication JSON through the API-owned output boundary.
+///
+/// # Errors
+///
+/// Returns a serde error when the typed envelope cannot be converted to JSON.
+pub fn serialize_duplication_json(
+    input: DuplicationJsonOutputInput<'_>,
+) -> Result<serde_json::Value, serde_json::Error> {
+    let payload =
+        DupesReportPayload::from_report_with_fragments(input.report, input.include_fragments);
+    let mut envelope: DupesOutput<DupesReportPayload, DuplicationGroup> =
+        build_dupes_output(DupesOutputInput {
+            gate_outcomes: input.gate_outcomes,
+            request_outcomes: input.request_outcomes,
+            schema_version: DUPES_SCHEMA_VERSION,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            elapsed: input.elapsed,
+            report: payload,
+            clone_groups_shown: input.report.clone_groups_shown(),
+            clone_groups_omitted: input.report.clone_groups_omitted(),
+            clone_families_shown: input.report.clone_families_shown(),
+            clone_families_omitted: input.report.clone_families_omitted(),
+            grouped_by: None,
+            total_issues: None,
+            groups: None,
+            baseline_staleness: input.baseline_staleness,
+            meta: input.meta,
+            workspace_diagnostics: input.workspace_diagnostics,
+            next_steps: input.next_steps,
+        });
+    envelope.package_baselines = input.package_baselines;
+    let mut output =
+        fallow_output::serialize_dupes_json_output(envelope, input.telemetry_analysis_run_id)?;
+    let root_prefix = format!("{}/", input.root.display());
+    strip_root_prefix(&mut output, &root_prefix);
+    Ok(output)
+}
+
+/// Build and serialize grouped duplication JSON through the API output boundary.
+///
+/// # Errors
+///
+/// Returns a serde error when the typed envelope cannot be converted to JSON.
+pub fn serialize_grouped_duplication_json(
+    input: GroupedDuplicationJsonOutputInput<'_>,
+) -> Result<serde_json::Value, serde_json::Error> {
+    let root_prefix = format!("{}/", input.root.display());
+    let payload =
+        DupesReportPayload::from_report_with_fragments(input.report, input.include_fragments);
+    let mut envelope: DupesOutput<DupesReportPayload, DuplicationGroup> =
+        build_dupes_output(DupesOutputInput {
+            gate_outcomes: input.gate_outcomes,
+            request_outcomes: input.request_outcomes,
+            schema_version: DUPES_SCHEMA_VERSION,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            elapsed: input.elapsed,
+            report: payload,
+            clone_groups_shown: input.report.clone_groups_shown(),
+            clone_groups_omitted: input.report.clone_groups_omitted(),
+            clone_families_shown: input.report.clone_families_shown(),
+            clone_families_omitted: input.report.clone_families_omitted(),
+            grouped_by: Some(group_by_mode_from_label(input.grouping.mode)),
+            total_issues: Some(input.report.clone_groups.len()),
+            groups: None,
+            baseline_staleness: input.baseline_staleness,
+            meta: input.meta,
+            workspace_diagnostics: input.workspace_diagnostics,
+            next_steps: input.next_steps,
+        });
+    envelope.package_baselines = input.package_baselines;
+    let mut output =
+        fallow_output::serialize_dupes_json_output(envelope, input.telemetry_analysis_run_id)?;
+    strip_root_prefix(&mut output, &root_prefix);
+
+    let group_values = input
+        .grouping
+        .groups
+        .iter()
+        .map(|group| {
+            let mut value = if input.include_fragments {
+                serde_json::to_value(group)?
+            } else {
+                let mut stripped = group.clone();
+                stripped.strip_fragments();
+                serde_json::to_value(&stripped)?
+            };
+            strip_root_prefix(&mut value, &root_prefix);
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>, serde_json::Error>>()?;
+
+    if let serde_json::Value::Object(ref mut map) = output {
+        map.insert("groups".to_string(), serde_json::Value::Array(group_values));
+    }
+
+    Ok(output)
+}
+
+fn build_check_json_envelope(input: CheckJsonEnvelopeInput<'_>) -> CheckOutput {
+    let mut output = build_check_output(CheckOutputInput {
+        schema_version: input.schema_version,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        elapsed: input.elapsed,
+        results: input.results.clone(),
+        config_fixable: input.config_fixable,
+        meta: input.meta,
+        workspace_diagnostics: input.workspace_diagnostics,
+        next_steps: input.next_steps,
+    });
+    output.baseline_deltas = input.extras.baseline_deltas;
+    output.baseline = input.extras.baseline;
+    output.baseline_staleness = input.extras.baseline_staleness;
+    output.regression = input.extras.regression;
+    output.gate_outcomes = input.extras.gate_outcomes;
+    output.request_outcomes = input.extras.request_outcomes;
+    output.package_baselines = input.extras.package_baselines;
+    output.finding_id_query = input.extras.finding_id_query;
+    output
+}
+
+fn strip_json_root_prefix(output: &mut serde_json::Value, root: &Path) {
+    let root_prefix = format!("{}/", root.display());
+    strip_root_prefix(output, &root_prefix);
+}
+
+fn group_by_mode_from_label(label: &str) -> GroupByMode {
+    match label {
+        "directory" => GroupByMode::Directory,
+        "package" => GroupByMode::Package,
+        "section" => GroupByMode::Section,
+        _ => GroupByMode::Owner,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fallow_types::workspace::WorkspaceDiagnosticKind;
+
+    #[test]
+    fn grouped_check_json_carries_workspace_diagnostics_with_relative_paths() {
+        let root = Path::new("/project");
+        let output = serialize_grouped_check_json(GroupedCheckJsonOutputInput {
+            envelope: CheckEnvelope::DeadCode,
+            package_baselines: Vec::new(),
+            gate_outcomes: None,
+            request_outcomes: None,
+            finding_id_query: None,
+            baseline_staleness: None,
+            groups: &[],
+            original: &AnalysisResults::default(),
+            root,
+            elapsed: Duration::ZERO,
+            grouped_by: GroupByMode::Directory,
+            config_fixable: false,
+            meta: None,
+            workspace_diagnostics: vec![WorkspaceDiagnostic::new(
+                root,
+                root.join("src/unreadable.ts"),
+                WorkspaceDiagnosticKind::SourceReadFailure {
+                    error: "permission denied".to_string(),
+                },
+            )],
+            next_steps: Vec::new(),
+            telemetry_analysis_run_id: None,
+        })
+        .expect("grouped check JSON serializes");
+
+        assert_eq!(
+            output["workspace_diagnostics"][0]["path"],
+            "src/unreadable.ts"
+        );
+        assert_eq!(
+            output["workspace_diagnostics"][0]["kind"],
+            "source-read-failure"
+        );
+        assert_eq!(output["kind"], "dead-code-grouped");
+        assert_eq!(output["schema_version"], CHECK_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn architecture_envelope_sets_kind_and_schema_version() {
+        let root = Path::new("/project");
+        let results = AnalysisResults::default();
+        let flat = serialize_check_json(CheckJsonOutputInput {
+            envelope: CheckEnvelope::Architecture,
+            results: &results,
+            root,
+            elapsed: Duration::ZERO,
+            config_fixable: false,
+            meta: None,
+            extras: CheckJsonExtraOutputs::default(),
+            workspace_diagnostics: Vec::new(),
+            next_steps: Vec::new(),
+            telemetry_analysis_run_id: None,
+        })
+        .expect("architecture JSON serializes");
+        assert_eq!(flat["kind"], "architecture");
+        assert_eq!(
+            flat["schema_version"],
+            fallow_output::ARCHITECTURE_SCHEMA_VERSION
+        );
+
+        let grouped = serialize_grouped_check_json(GroupedCheckJsonOutputInput {
+            envelope: CheckEnvelope::Architecture,
+            package_baselines: Vec::new(),
+            gate_outcomes: None,
+            request_outcomes: None,
+            finding_id_query: None,
+            baseline_staleness: None,
+            groups: &[],
+            original: &results,
+            root,
+            elapsed: Duration::ZERO,
+            grouped_by: GroupByMode::Directory,
+            config_fixable: false,
+            meta: None,
+            workspace_diagnostics: Vec::new(),
+            next_steps: Vec::new(),
+            telemetry_analysis_run_id: None,
+        })
+        .expect("grouped architecture JSON serializes");
+        assert_eq!(grouped["kind"], "architecture-grouped");
+        assert_eq!(
+            grouped["schema_version"],
+            fallow_output::ARCHITECTURE_SCHEMA_VERSION
+        );
+
+        let payload = serialize_check_json_payload(CheckJsonPayloadInput {
+            results: &results,
+            root,
+            elapsed: Duration::ZERO,
+            config_fixable: false,
+            extras: CheckJsonExtraOutputs::default(),
+            workspace_diagnostics: Vec::new(),
+        })
+        .expect("embedded payload serializes");
+        assert_eq!(payload["schema_version"], CHECK_SCHEMA_VERSION);
+        assert!(payload.get("kind").is_none());
+    }
+}

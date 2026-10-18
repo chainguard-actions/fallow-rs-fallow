@@ -1,0 +1,9 @@
+{
+  "name": "fallow-test-project",
+  "version": "1.0.0",
+  "description": "Minimal JS project for fallow CI tests",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  }
+}

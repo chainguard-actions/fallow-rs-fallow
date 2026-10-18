@@ -1,0 +1,50 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "ignorePatterns": [
+    "tests/fixtures/**",
+    "tests/conformance/fixtures/**",
+    "editors/vscode/test/integration/fixtures/**",
+    "apps/review-electron/test/fixtures/**",
+    "benchmarks/knip6/**",
+    "reference/knip/**",
+    "fuzz/corpus/**",
+    "crates/cli/viz-assets/**",
+    "crates/api/src/mutation/companion/**",
+    "tools/mutation-runner/test/fixtures/**",
+    "assets/demo-project/**",
+    "tests/benchmark-corpus/**",
+    "tests/coverage-producer-corpus/**",
+    "tests/semantic-clone-corpus/**"
+  ],
+  "ignoreDependencies": [
+    "@fallow-cli/fallow-node-*",
+    "vitest4",
+    "zod"
+  ],
+  "ignoreExports": [
+    {
+      "file": "tools/mutation-runner/src/adapters/{bun-test,node-test,vitest}.mjs",
+      "exports": ["createAdapter"]
+    }
+  ],
+  "ignoreUnresolvedImports": [
+    "./generated/lsp-initialization-options.js",
+    "../src/generated/lsp-initialization-options.js"
+  ],
+  "health": {
+    "ignore": [
+      "crates/napi/index.js",
+      "npm/fallow/scripts/**",
+      "scripts/check-contract-surfaces.mjs",
+      "scripts/public-smoke-conformance.mjs",
+      "scripts/styling-corpus-smoke.mjs"
+    ]
+  },
+  "duplicates": {
+    "ignore": [
+      "npm/fallow/scripts/**",
+      "editors/vscode/src/generated/output-contract.d.ts",
+      "npm/fallow/types/output-contract.d.ts"
+    ]
+  }
+}

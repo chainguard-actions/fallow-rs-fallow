@@ -1,0 +1,2370 @@
+use crate::tests::eager_dynamic_import_sources;
+use crate::tests::parse_ts as parse_source;
+use crate::{ModuleInfo, ModuleLoadMechanism, SemanticFact, VitestModuleMockAction};
+
+fn replaced_module_targets(info: &ModuleInfo) -> Vec<&str> {
+    info.semantic_facts
+        .iter()
+        .filter_map(|fact| match fact {
+            SemanticFact::VitestModuleMockOperation(operation)
+                if operation.action.replaces_original() =>
+            {
+                Some(operation.source.as_str())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn vitest_mock_actions(info: &ModuleInfo) -> Vec<(&str, VitestModuleMockAction)> {
+    info.semantic_facts
+        .iter()
+        .filter_map(|fact| match fact {
+            SemanticFact::VitestModuleMockOperation(operation) => {
+                Some((operation.source.as_str(), operation.action))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn extracts_template_literal_dynamic_import_pattern() {
+    let info = parse_source("const m = import(`./locales/${lang}.json`);");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./locales/");
+    assert_eq!(
+        info.dynamic_import_patterns[0].suffix,
+        Some(".json".to_string())
+    );
+    assert_eq!(
+        info.dynamic_import_patterns[0].mechanism,
+        ModuleLoadMechanism::EsModule
+    );
+}
+
+#[test]
+fn extracts_concat_dynamic_import_pattern() {
+    let info = parse_source("const m = import('./pages/' + name);");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./pages/");
+    assert!(info.dynamic_import_patterns[0].suffix.is_none());
+    assert_eq!(
+        info.dynamic_import_patterns[0].mechanism,
+        ModuleLoadMechanism::EsModule
+    );
+}
+
+#[test]
+fn extracts_concat_with_suffix() {
+    let info = parse_source("const m = import('./pages/' + name + '.tsx');");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./pages/");
+    assert_eq!(
+        info.dynamic_import_patterns[0].suffix,
+        Some(".tsx".to_string())
+    );
+}
+
+#[test]
+fn no_substitution_template_treated_as_exact() {
+    let info = parse_source("const m = import(`./exact-module`);");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./exact-module");
+    assert!(info.dynamic_import_patterns.is_empty());
+}
+
+#[test]
+fn fully_dynamic_import_still_ignored() {
+    let info = parse_source("const m = import(variable);");
+    assert!(info.dynamic_imports.is_empty());
+    assert!(info.dynamic_import_patterns.is_empty());
+}
+
+#[test]
+fn non_relative_template_ignored() {
+    let info = parse_source("const m = import(`lodash/${fn}`);");
+    assert!(info.dynamic_import_patterns.is_empty());
+}
+
+#[test]
+fn multi_expression_template_uses_globstar() {
+    let info = parse_source("const m = import(`./plugins/${cat}/${name}.js`);");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./plugins/**/");
+    assert_eq!(
+        info.dynamic_import_patterns[0].suffix,
+        Some(".js".to_string())
+    );
+}
+
+#[test]
+fn extracts_import_meta_glob_pattern() {
+    let info = parse_source("const mods = import.meta.glob('./components/*.tsx');");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./components/*.tsx");
+    assert_eq!(
+        info.dynamic_import_patterns[0].mechanism,
+        ModuleLoadMechanism::EsModule
+    );
+}
+
+#[test]
+fn extracts_import_meta_glob_array() {
+    let info = parse_source("const mods = import.meta.glob(['./pages/*.ts', './layouts/*.ts']);");
+    assert_eq!(info.dynamic_import_patterns.len(), 2);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./pages/*.ts");
+    assert_eq!(info.dynamic_import_patterns[1].prefix, "./layouts/*.ts");
+    assert!(
+        info.dynamic_import_patterns
+            .iter()
+            .all(|pattern| pattern.mechanism == ModuleLoadMechanism::EsModule)
+    );
+}
+
+#[test]
+fn extracts_require_context_pattern() {
+    let info = parse_source("const ctx = require.context('./icons', false);");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./icons/");
+    assert_eq!(
+        info.dynamic_import_patterns[0].mechanism,
+        ModuleLoadMechanism::CommonJsRequire
+    );
+}
+
+#[test]
+fn extracts_require_context_recursive() {
+    let info = parse_source("const ctx = require.context('./icons', true);");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./icons/**/");
+    assert_eq!(
+        info.dynamic_import_patterns[0].mechanism,
+        ModuleLoadMechanism::CommonJsRequire
+    );
+}
+
+#[test]
+fn import_meta_glob_negative_entries_become_excludes() {
+    let info = parse_source(
+        "const mods = import.meta.glob(['./pages/*.ts', '!./pages/skip.ts', './layouts/*.ts', '!**/draft.ts', '!lib/x.ts']);",
+    );
+    let patterns: Vec<(&str, Vec<&str>)> = info
+        .dynamic_import_patterns
+        .iter()
+        .map(|pattern| {
+            (
+                pattern.prefix.as_str(),
+                pattern.excludes.iter().map(String::as_str).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        patterns,
+        vec![
+            ("./pages/*.ts", vec!["./pages/skip.ts", "**/draft.ts"]),
+            ("./layouts/*.ts", vec!["./pages/skip.ts", "**/draft.ts"]),
+        ]
+    );
+}
+
+fn glob_excludes(source: &str) -> Vec<String> {
+    let info = parse_source(source);
+    info.dynamic_import_patterns
+        .first()
+        .map(|pattern| pattern.excludes.clone())
+        .unwrap_or_default()
+}
+
+#[test]
+fn import_meta_glob_double_star_exclude_starts_at_the_common_base() {
+    assert_eq!(
+        glob_excludes("import.meta.glob(['./pages/*.js', '!**/pages/skip.js']);"),
+        vec!["./pages/**/pages/skip.js"]
+    );
+    assert_eq!(
+        glob_excludes("import.meta.glob(['./a/b/*.js', './a/c/**/*.js', '!**/x.js']);"),
+        vec!["./a/**/x.js"]
+    );
+    assert_eq!(
+        glob_excludes("import.meta.glob(['./a/b.js', './a/c.js', '!**/x.js']);"),
+        vec!["./a/**/x.js"]
+    );
+    assert_eq!(
+        glob_excludes("import.meta.glob(['../lib/*.js', '!**/x.js']);"),
+        vec!["../lib/**/x.js"]
+    );
+    assert_eq!(
+        glob_excludes("import.meta.glob(['./*.js', '!**/x.js', '!./y.js']);"),
+        vec!["**/x.js", "./y.js"]
+    );
+}
+
+#[test]
+fn import_meta_glob_double_star_exclude_drops_without_a_known_base() {
+    // The common base of `./a` and `../b` depends on the name of the importing
+    // directory, so the exclude has no known start and gives no exclude.
+    assert_eq!(
+        glob_excludes("import.meta.glob(['./a/*.js', '../b/*.js', '!**/x.js', '!./a/y.js']);"),
+        vec!["./a/y.js"]
+    );
+    // Only the resolver of Vite knows the base of an alias entry.
+    assert_eq!(
+        glob_excludes("import.meta.glob(['./a/*.js', '@/b/*.js', '!**/x.js']);"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn template_literal_pattern_escapes_glob_metacharacters() {
+    let info = parse_source("const m = import(`./[id]/${name}[x].js`);");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./[[]id[]]/");
+    assert_eq!(
+        info.dynamic_import_patterns[0].suffix.as_deref(),
+        Some("[[]x[]].js")
+    );
+    assert!(info.dynamic_import_patterns[0].excludes.is_empty());
+}
+
+#[test]
+fn concat_pattern_escapes_glob_metacharacters() {
+    let info = parse_source("const m = import('./{group}/*?/' + name + '.js');");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(
+        info.dynamic_import_patterns[0].prefix,
+        "./[{]group[}]/[*][?]/"
+    );
+    assert_eq!(
+        info.dynamic_import_patterns[0].suffix.as_deref(),
+        Some(".js")
+    );
+}
+
+#[test]
+fn require_context_pattern_escapes_glob_metacharacters() {
+    let info = parse_source(r"const ctx = require.context('./[locale]', true, /\.json$/);");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./[[]locale[]]/**/");
+    assert_eq!(
+        info.dynamic_import_patterns[0].suffix.as_deref(),
+        Some(".json")
+    );
+}
+
+#[test]
+fn vitest_mock_records_target_and_auto_mock_sibling() {
+    let info = parse_source("vi.mock('./services/api');");
+    assert_eq!(info.dynamic_imports.len(), 2);
+    let sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    assert!(
+        sources.contains(&"./services/api"),
+        "target itself must be credited so vi.mock-only consumers do not flag it as unused-file, got {sources:?}"
+    );
+    assert!(
+        sources.contains(&"./services/__mocks__/api"),
+        "auto-mock sibling must still be synthesized when no factory is provided, got {sources:?}"
+    );
+    let target = info
+        .dynamic_imports
+        .iter()
+        .find(|imp| imp.source == "./services/api")
+        .expect("target import should be recorded");
+    assert_eq!(target.local_name, None);
+    let auto_mock = info
+        .dynamic_imports
+        .iter()
+        .find(|imp| imp.source == "./services/__mocks__/api")
+        .expect("auto-mock import should be recorded");
+    assert_eq!(auto_mock.local_name, Some(String::new()));
+    assert!(
+        auto_mock.is_speculative,
+        "auto-mock sibling synthesised by fallow must carry is_speculative=true so the resolver drops it silently when no __mocks__/<file> exists on disk (issue #378)"
+    );
+    assert!(
+        !target.is_speculative,
+        "vi.mock target itself is real user code and must not be marked speculative"
+    );
+}
+
+#[test]
+fn vitest_mock_records_target_and_auto_mock_sibling_from_import_argument() {
+    let info = parse_source("vi.mock(import('./services/api'));");
+    let sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    assert!(
+        sources.contains(&"./services/api"),
+        "target itself must be credited even when wrapped in `import(...)`, got {sources:?}"
+    );
+    assert!(
+        sources.contains(&"./services/__mocks__/api"),
+        "auto-mock sibling must still be synthesized for `vi.mock(import(...))` without a factory, got {sources:?}"
+    );
+    let target = info
+        .dynamic_imports
+        .iter()
+        .find(|imp| imp.source == "./services/api")
+        .expect("target import should be recorded");
+    assert_eq!(target.local_name, None);
+    let auto_mock = info
+        .dynamic_imports
+        .iter()
+        .find(|imp| imp.source == "./services/__mocks__/api")
+        .expect("auto-mock import should be recorded");
+    assert_eq!(auto_mock.local_name, Some(String::new()));
+}
+
+#[test]
+fn vitest_mock_with_factory_credits_target_only() {
+    let info = parse_source("vi.mock('../../bar/foo', () => ({ x: 1 }));");
+    assert_eq!(
+        info.dynamic_imports.len(),
+        1,
+        "factory form should emit one import (the target), not two"
+    );
+    assert_eq!(info.dynamic_imports[0].source, "../../bar/foo");
+    assert_eq!(info.dynamic_imports[0].local_name, None);
+}
+
+#[test]
+fn vitest_mock_with_function_expression_factory_credits_target_only() {
+    let info = parse_source("vi.mock('./pkg', function () { return { x: 1 }; });");
+    let sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    assert_eq!(
+        sources,
+        vec!["./pkg"],
+        "function-expression factory should suppress auto-mock synthesis just like arrow factory, got {sources:?}"
+    );
+    assert_eq!(info.dynamic_imports[0].local_name, None);
+}
+
+#[test]
+fn vitest_mock_with_nested_parenthesized_factory_credits_target_only() {
+    let info = parse_source("vi.mock('./pkg', (((() => ({ x: 1 })))));");
+    let sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    assert_eq!(
+        sources,
+        vec!["./pkg"],
+        "nested parenthesized arrow factory must suppress auto-mock synthesis, got {sources:?}"
+    );
+    assert_eq!(info.dynamic_imports[0].local_name, None);
+}
+
+#[test]
+fn vitest_mock_with_options_object_still_synthesizes_auto_mock() {
+    let info = parse_source("vi.mock('./services/api', { spy: true });");
+    let sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    assert!(
+        sources.contains(&"./services/__mocks__/api"),
+        "auto-mock options form should still synthesize the __mocks__ sibling, got {sources:?}"
+    );
+    let target = info
+        .dynamic_imports
+        .iter()
+        .find(|imp| imp.source == "./services/api")
+        .expect("target import should be recorded");
+    assert_eq!(target.local_name, None);
+    let auto_mock = info
+        .dynamic_imports
+        .iter()
+        .find(|imp| imp.source == "./services/__mocks__/api")
+        .expect("auto-mock import should be recorded");
+    assert_eq!(auto_mock.local_name, Some(String::new()));
+}
+
+#[test]
+fn vitest_replacement_factory_records_typed_target() {
+    let info = parse_source(
+        r#"
+        import { vi } from "vitest";
+        vi.mock("./services/api", () => ({ request: vi.fn() }));
+        "#,
+    );
+
+    assert_eq!(replaced_module_targets(&info), vec!["./services/api"]);
+    assert_eq!(
+        info.dynamic_imports
+            .iter()
+            .map(|import| import.source.as_str())
+            .collect::<Vec<_>>(),
+        vec!["./services/api"],
+        "the ordinary dependency edge remains intact"
+    );
+}
+
+#[test]
+fn vitest_replacement_import_provenance_is_order_independent() {
+    let info = parse_source(
+        r#"
+        vi.mock("./services/api", () => ({ request: vi.fn() }));
+        import { vi } from "vitest";
+        "#,
+    );
+
+    assert_eq!(replaced_module_targets(&info), vec!["./services/api"]);
+}
+
+#[test]
+fn vitest_replacement_shadowed_bindings_abstain() {
+    for source in [
+        r#"
+        import { vi } from "vitest";
+        function register(vi: { mock: Function }) {
+          vi.mock("./parameter", () => ({}));
+        }
+        "#,
+        r#"
+        import { vi } from "vitest";
+        {
+          const vi = localMockApi;
+          vi.mock("./block", () => ({}));
+        }
+        "#,
+        r#"
+        import { vi } from "vitest";
+        function register() {
+          const vi = localMockApi;
+          vi.mock("./local", () => ({}));
+        }
+        "#,
+    ] {
+        let info = parse_source(source);
+        assert!(
+            replaced_module_targets(&info).is_empty(),
+            "a shadowed vi binding must not emit a Vitest replacement: {source}"
+        );
+    }
+}
+
+#[test]
+fn vitest_function_replacement_supports_import_expression_target() {
+    let info = parse_source(
+        r#"
+        import { vi } from "vitest";
+        vi.mock(import("./services/api"), function () {
+          return { request: vi.fn() };
+        });
+        "#,
+    );
+
+    assert_eq!(replaced_module_targets(&info), vec!["./services/api"]);
+}
+
+#[test]
+fn vitest_non_replacement_forms_abstain() {
+    for source in [
+        r#"import { vi } from "vitest"; vi.mock("./auto");"#,
+        r#"import { vi } from "vitest"; vi.mock("./spy", { spy: true });"#,
+        r#"import { vi } from "vitest"; vi.mock("./partial", (importOriginal) => importOriginal());"#,
+        r#"import { vi } from "vitest"; vi.mock("./actual", async () => vi.importActual("./actual"));"#,
+        r#"import { vi } from "vitest"; vi.mock("./computed", async () => vi["importActual"]("./computed"));"#,
+        r#"import { vi } from "vitest"; vi.mock("./alias", async () => { const loadActual = vi.importActual; return loadActual("./alias"); });"#,
+        r#"import { vi } from "vitest"; vi.mock("./destructured", async () => { const { importActual: loadActual } = vi; return loadActual("./destructured"); });"#,
+        r#"import { vi } from "vitest"; vi.mock("./call", async () => vi.importActual.call(vi, "./call"));"#,
+        r#"import { vi } from "vitest"; vi.mock("./reflect", async () => Reflect.apply(vi.importActual, vi, ["./reflect"]));"#,
+        r#"import { vi } from "vitest"; vi.mock("./arguments", function () { return arguments[0](); });"#,
+        r#"import { vi } from "vitest"; const loadOriginal = () => vi.importActual("./helper"); vi.mock("./helper", async () => loadOriginal());"#,
+        r#"import { vi } from "vitest"; import { loadOriginal } from "./loader"; vi.mock("./external-helper", async () => loadOriginal());"#,
+        r#"import { vi } from "vitest"; const actual = await vi.importActual("./preloaded"); vi.mock("./preloaded", () => actual);"#,
+        r#"import { vi } from "vitest"; vi.mock("./dynamic", async () => import("./dynamic"));"#,
+        r#"import { vi } from "vitest"; vi.mock("./constructed", () => new Replacement());"#,
+        r#"import { vi } from "vitest"; const localVi = vi; vi.mock("./local-vi", () => ({ request: localVi.fn() }));"#,
+        r#"const vi = localMockApi; vi.mock("./local", () => ({}));"#,
+        r#"vi.mock("./global", () => ({}));"#,
+    ] {
+        let info = parse_source(source);
+        assert!(
+            replaced_module_targets(&info).is_empty(),
+            "ambiguous or original-loading form should abstain: {source}"
+        );
+    }
+}
+
+#[test]
+fn vitest_mock_operations_preserve_typed_source_order() {
+    let info = parse_source(
+        r#"
+        import { vi } from "vitest";
+        vi.mock("./dep", () => ({ request: vi.fn() }));
+        vi.unmock("./dep.ts");
+        vi.mock("./dep", importOriginal => importOriginal());
+        "#,
+    );
+    assert_eq!(
+        vitest_mock_actions(&info),
+        vec![
+            (
+                "./dep",
+                VitestModuleMockAction::Mock {
+                    factory_replaces_original: true,
+                },
+            ),
+            ("./dep.ts", VitestModuleMockAction::Unmock),
+            (
+                "./dep",
+                VitestModuleMockAction::Mock {
+                    factory_replaces_original: false,
+                },
+            ),
+        ]
+    );
+}
+
+#[test]
+fn shadowed_vitest_operations_do_not_change_imported_vi_state() {
+    let info = parse_source(
+        r#"
+        import { vi } from "vitest";
+        vi.mock("./dep", () => ({}));
+        function configure(vi) {
+          vi.unmock("./dep");
+        }
+        "#,
+    );
+
+    assert_eq!(replaced_module_targets(&info), vec!["./dep"]);
+}
+
+#[test]
+fn aliased_vi_import_replacement_records_typed_target() {
+    let info = parse_source(
+        r#"
+        import { vi as v } from "vitest";
+        v.mock("./services/api", () => ({ request: v.fn() }));
+        "#,
+    );
+    assert_eq!(replaced_module_targets(&info), vec!["./services/api"]);
+    let sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    assert!(
+        sources.contains(&"./services/api"),
+        "aliased mock target must be credited once provenance is proven, got {sources:?}"
+    );
+}
+
+#[test]
+fn aliased_vi_import_without_factory_synthesizes_auto_mock_sibling() {
+    let info = parse_source(
+        r#"
+        import { vi as v } from "vitest";
+        v.mock("./services/api");
+        "#,
+    );
+    let mut sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    sources.sort_unstable();
+    assert_eq!(sources, vec!["./services/__mocks__/api", "./services/api"]);
+    assert_eq!(
+        vitest_mock_actions(&info),
+        vec![(
+            "./services/api",
+            VitestModuleMockAction::Mock {
+                factory_replaces_original: false,
+            },
+        )]
+    );
+}
+
+#[test]
+fn aliased_vi_import_unmock_records_action() {
+    let info = parse_source(
+        r#"
+        import { vi as v } from "vitest";
+        v.mock("./dep", () => ({ request: v.fn() }));
+        v.unmock("./dep");
+        "#,
+    );
+    assert_eq!(
+        vitest_mock_actions(&info),
+        vec![
+            (
+                "./dep",
+                VitestModuleMockAction::Mock {
+                    factory_replaces_original: true,
+                },
+            ),
+            ("./dep", VitestModuleMockAction::Unmock),
+        ]
+    );
+}
+
+#[test]
+fn aliased_vi_shadowed_or_unimported_binding_abstains() {
+    for source in [
+        r#"import { vi as v } from "vitest"; function f(v) { v.mock("./dep", () => ({})); }"#,
+        r#"const v = mockApi; v.mock("./dep", () => ({}));"#,
+        r#"import { v } from "not-vitest"; v.mock("./dep", () => ({}));"#,
+        r#"import type { vi as v } from "vitest"; v.mock("./dep", () => ({}));"#,
+    ] {
+        let info = parse_source(source);
+        assert!(
+            vitest_mock_actions(&info).is_empty(),
+            "unproven alias must not record mock operations: {source}"
+        );
+        assert!(
+            info.dynamic_imports.is_empty(),
+            "unproven alias must not credit files: {source}"
+        );
+    }
+}
+
+#[test]
+fn aliased_vi_factory_depending_on_outer_value_abstains_to_unproven() {
+    let info = parse_source(
+        r#"
+        import { vi as v } from "vitest";
+        const stub = () => 1;
+        v.mock("./dep", () => ({ request: stub }));
+        "#,
+    );
+    assert_eq!(
+        vitest_mock_actions(&info),
+        vec![(
+            "./dep",
+            VitestModuleMockAction::Mock {
+                factory_replaces_original: false,
+            },
+        )]
+    );
+}
+
+#[test]
+fn vitest_namespace_import_replacement_records_typed_target() {
+    let info = parse_source(
+        r#"
+        import * as vitest from "vitest";
+        vitest.vi.mock("./services/api", () => ({ request: vitest.vi.fn() }));
+        "#,
+    );
+    assert_eq!(replaced_module_targets(&info), vec!["./services/api"]);
+}
+
+#[test]
+fn vitest_namespace_unmock_records_action() {
+    let info = parse_source(
+        r#"
+        import * as vitest from "vitest";
+        vitest.vi.unmock("./dep");
+        "#,
+    );
+    assert_eq!(
+        vitest_mock_actions(&info),
+        vec![("./dep", VitestModuleMockAction::Unmock)]
+    );
+}
+
+#[test]
+fn vitest_namespace_abstain_controls() {
+    for source in [
+        // `.mock` directly on the namespace is not the Vitest API.
+        r#"import * as vitest from "vitest"; vitest.mock("./dep", () => ({}));"#,
+        // A namespace of another module must not prove `ns.vi.mock`.
+        r#"import * as other from "not-vitest"; other.vi.mock("./dep", () => ({}));"#,
+        // A local object named like a namespace must not prove.
+        r#"const vitest = { vi: mockApi }; vitest.vi.mock("./dep", () => ({}));"#,
+    ] {
+        let info = parse_source(source);
+        assert!(
+            vitest_mock_actions(&info).is_empty(),
+            "unproven namespace form must not record mock operations: {source}"
+        );
+    }
+}
+
+#[test]
+fn vitest_namespace_factory_using_unproven_bare_vi_abstains_to_unproven() {
+    let info = parse_source(
+        r#"
+        import * as vitest from "vitest";
+        vitest.vi.mock("./dep", () => ({ request: vi.fn() }));
+        "#,
+    );
+    assert_eq!(
+        vitest_mock_actions(&info),
+        vec![(
+            "./dep",
+            VitestModuleMockAction::Mock {
+                factory_replaces_original: false,
+            },
+        )]
+    );
+}
+
+#[test]
+fn jest_global_replacement_records_typed_target() {
+    let info = parse_source(r#"jest.mock("./services/api", () => ({ request: jest.fn() }));"#);
+    assert_eq!(replaced_module_targets(&info), vec!["./services/api"]);
+}
+
+#[test]
+fn jest_global_mock_records_target_and_auto_mock_sibling() {
+    let info = parse_source(r#"jest.mock("./services/api");"#);
+    let mut sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    sources.sort_unstable();
+    assert_eq!(sources, vec!["./services/__mocks__/api", "./services/api"]);
+    assert_eq!(
+        vitest_mock_actions(&info),
+        vec![(
+            "./services/api",
+            VitestModuleMockAction::Mock {
+                factory_replaces_original: false,
+            },
+        )]
+    );
+}
+
+#[test]
+fn jest_globals_import_aliased_replacement_records_typed_target() {
+    let info = parse_source(
+        r#"
+        import { jest as j } from "@jest/globals";
+        j.mock("./services/api", () => ({ request: j.fn() }));
+        "#,
+    );
+    assert_eq!(replaced_module_targets(&info), vec!["./services/api"]);
+}
+
+#[test]
+fn jest_unmock_records_action() {
+    let info = parse_source(r#"jest.unmock("./dep");"#);
+    assert_eq!(
+        vitest_mock_actions(&info),
+        vec![("./dep", VitestModuleMockAction::Unmock)]
+    );
+}
+
+#[test]
+fn jest_abstain_controls() {
+    for source in [
+        // A shadowing local `jest` binding removes global provenance.
+        r#"const jest = fakeApi; jest.mock("./dep", () => ({}));"#,
+        r#"import { jest } from "not-jest"; jest.mock("./dep", () => ({}));"#,
+        // `requireActual` loads the original module, poisoning the proof.
+        r#"jest.mock("./dep", () => jest.requireActual("./dep"));"#,
+        r#"jest.mock("./dep", () => { const { requireActual } = jest; return requireActual("./dep"); });"#,
+    ] {
+        let info = parse_source(source);
+        assert!(
+            replaced_module_targets(&info).is_empty(),
+            "unproven or original-loading jest form must abstain: {source}"
+        );
+    }
+}
+
+fn dynamic_import_sources_sorted(info: &ModuleInfo) -> Vec<&str> {
+    let mut sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|import| import.source.as_str())
+        .collect();
+    sources.sort_unstable();
+    sources
+}
+
+#[test]
+fn vitest_do_mock_credits_target_and_auto_mock_sibling_without_masking() {
+    let info = parse_source(r#"import { vi } from "vitest"; vi.doMock("./services/api");"#);
+    assert_eq!(
+        dynamic_import_sources_sorted(&info),
+        vec!["./services/__mocks__/api", "./services/api"]
+    );
+    assert!(
+        vitest_mock_actions(&info).is_empty(),
+        "doMock is unhoisted and order-sensitive, so it must never enter the mask fact stream (issue #2082)"
+    );
+}
+
+#[test]
+fn vitest_do_mock_with_factory_credits_target_only_and_never_masks() {
+    let info =
+        parse_source(r#"import { vi } from "vitest"; vi.doMock("./dep", () => ({ f: vi.fn() }));"#);
+    assert_eq!(dynamic_import_sources_sorted(&info), vec!["./dep"]);
+    assert!(
+        vitest_mock_actions(&info).is_empty(),
+        "even a provably closed doMock factory must not mask: whether and when the call runs is a runtime scheduling question"
+    );
+}
+
+#[test]
+fn jest_do_mock_credits_target_and_manual_mock_sibling() {
+    let info = parse_source(r#"jest.doMock("./services/api");"#);
+    assert_eq!(
+        dynamic_import_sources_sorted(&info),
+        vec!["./services/__mocks__/api", "./services/api"]
+    );
+    assert!(vitest_mock_actions(&info).is_empty());
+}
+
+#[test]
+fn aliased_vi_do_mock_credits_after_provenance_is_proven() {
+    let info = parse_source(r#"import { vi as v } from "vitest"; v.doMock("./services/api");"#);
+    assert_eq!(
+        dynamic_import_sources_sorted(&info),
+        vec!["./services/__mocks__/api", "./services/api"]
+    );
+    assert!(vitest_mock_actions(&info).is_empty());
+}
+
+#[test]
+fn vitest_namespace_do_mock_credits_after_provenance_is_proven() {
+    let info =
+        parse_source(r#"import * as vitest from "vitest"; vitest.vi.doMock("./services/api");"#);
+    assert_eq!(
+        dynamic_import_sources_sorted(&info),
+        vec!["./services/__mocks__/api", "./services/api"]
+    );
+    assert!(vitest_mock_actions(&info).is_empty());
+}
+
+#[test]
+fn unproven_do_mock_receivers_credit_nothing() {
+    for source in [
+        r#"registry.doMock("./services/api");"#,
+        r#"import { vi as v } from "other-lib"; v.doMock("./services/api");"#,
+        r#"import * as helpers from "./helpers"; helpers.vi.doMock("./services/api");"#,
+    ] {
+        let info = parse_source(source);
+        assert!(
+            info.dynamic_imports.is_empty(),
+            "an unproven doMock receiver must not credit any file: {source}"
+        );
+        assert!(vitest_mock_actions(&info).is_empty());
+    }
+}
+
+#[test]
+fn vitest_do_unmock_is_ignored_and_keeps_hoisted_mask() {
+    let info = parse_source(
+        r#"
+        import { vi } from "vitest";
+        vi.mock("./dep", () => ({ f: vi.fn() }));
+        vi.doUnmock("./dep");
+        "#,
+    );
+    assert_eq!(
+        replaced_module_targets(&info),
+        vec!["./dep"],
+        "doUnmock affects only later dynamic imports, so it must not clear the hoisted vi.mock mask"
+    );
+}
+
+#[test]
+fn vitest_automock_keeps_coverage_credit_by_decision() {
+    // Pinned decision for issue #2082: automock evaluates the original module
+    // for its shape, so the fact stays `factory_replaces_original: false` and
+    // the target keeps coverage credit.
+    let info = parse_source(r#"import { vi } from "vitest"; vi.mock("./auto");"#);
+    assert_eq!(
+        vitest_mock_actions(&info),
+        vec![(
+            "./auto",
+            VitestModuleMockAction::Mock {
+                factory_replaces_original: false,
+            },
+        )]
+    );
+}
+
+#[test]
+fn dynamic_import_await_captures_local_name() {
+    let info = parse_source(
+        "async function f() { const mod = await import('./service'); mod.doStuff(); }",
+    );
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./service");
+    assert_eq!(info.dynamic_imports[0].local_name, Some("mod".to_string()));
+    assert!(info.dynamic_imports[0].destructured_names.is_empty());
+}
+
+#[test]
+fn dynamic_import_without_await_captures_local_name() {
+    let info = parse_source("const mod = import('./service');");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./service");
+    assert_eq!(info.dynamic_imports[0].local_name, Some("mod".to_string()));
+    assert!(!info.whole_object_uses.contains(&"mod".to_string()));
+}
+
+#[test]
+fn member_read_on_unawaited_import_binding_is_whole_use() {
+    for source in [
+        "const mod = import('./service'); mod.then(use);",
+        "let mod; mod = import('./service'); mod.catch(report);",
+    ] {
+        let info = parse_source(source);
+        assert_eq!(info.dynamic_imports[0].local_name, Some("mod".to_string()));
+        assert!(
+            info.whole_object_uses.contains(&"mod".to_string()),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn dynamic_import_destructured_captures_names() {
+    let info =
+        parse_source("async function f() { const { foo, bar } = await import('./module'); }");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./module");
+    assert!(info.dynamic_imports[0].local_name.is_none());
+    assert_eq!(
+        info.dynamic_imports[0].destructured_names,
+        vec!["foo", "bar"]
+    );
+}
+
+#[test]
+fn dynamic_import_destructured_with_rest_is_namespace() {
+    let info =
+        parse_source("async function f() { const { foo, ...rest } = await import('./module'); }");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./module");
+    assert!(info.dynamic_imports[0].local_name.is_none());
+    assert!(info.dynamic_imports[0].destructured_names.is_empty());
+}
+
+#[test]
+fn dynamic_import_side_effect_only() {
+    let info = parse_source("async function f() { await import('./side-effect'); }");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./side-effect");
+    assert!(info.dynamic_imports[0].local_name.is_none());
+    assert!(info.dynamic_imports[0].destructured_names.is_empty());
+}
+
+#[test]
+fn dynamic_import_no_duplicate_entries() {
+    let info = parse_source("async function f() { const mod = await import('./service'); }");
+    assert_eq!(info.dynamic_imports.len(), 1);
+}
+
+#[test]
+fn conditional_dynamic_import_namespace_credits_both_branches() {
+    let info = parse_source(
+        "async function f() { const backend = await import(target === 'mobile' ? './android.mjs' : './web.mjs'); }",
+    );
+    let mut sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    sources.sort_unstable();
+    assert_eq!(sources, vec!["./android.mjs", "./web.mjs"]);
+    assert!(
+        info.dynamic_imports
+            .iter()
+            .all(|imp| imp.local_name.as_deref() == Some("backend")),
+        "both branches should carry the namespace binding, got {:?}",
+        info.dynamic_imports
+    );
+}
+
+#[test]
+fn conditional_dynamic_import_destructure_credits_names_on_both_branches() {
+    let info = parse_source(
+        "async function f() { const { run } = await import(cond ? './x.mjs' : './y.mjs'); }",
+    );
+    assert_eq!(info.dynamic_imports.len(), 2);
+    for imp in &info.dynamic_imports {
+        assert!(imp.local_name.is_none());
+        assert_eq!(imp.destructured_names, vec!["run"]);
+    }
+    let mut sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    sources.sort_unstable();
+    assert_eq!(sources, vec!["./x.mjs", "./y.mjs"]);
+}
+
+#[test]
+fn bare_conditional_dynamic_import_is_side_effect_on_both_branches() {
+    let info = parse_source("async function f() { await import(cond ? './a.mjs' : './b.mjs'); }");
+    assert_eq!(info.dynamic_imports.len(), 2);
+    assert!(
+        info.dynamic_imports
+            .iter()
+            .all(|imp| imp.local_name.is_none() && imp.destructured_names.is_empty()),
+    );
+}
+
+#[test]
+fn logical_fallback_dynamic_import_credits_literal_branch() {
+    let info =
+        parse_source("async function f() { const m = await import(override || './default.mjs'); }");
+    let sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    assert_eq!(sources, vec!["./default.mjs"]);
+    assert_eq!(info.dynamic_imports[0].local_name, Some("m".to_string()));
+}
+
+#[test]
+fn conditional_dynamic_import_with_runtime_branch_credits_only_literal() {
+    let info = parse_source(
+        "async function f() { const m = await import(cond ? './real.mjs' : runtimeVar); }",
+    );
+    let sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    assert_eq!(
+        sources,
+        vec!["./real.mjs"],
+        "the runtime branch is unresolvable and must be skipped, not guessed"
+    );
+}
+
+#[test]
+fn fully_runtime_conditional_dynamic_import_records_nothing() {
+    let info = parse_source("async function f() { const m = await import(cond ? a : b); }");
+    assert!(
+        info.dynamic_imports.is_empty() && info.dynamic_import_patterns.is_empty(),
+        "a conditional of two runtime values stays unresolvable"
+    );
+}
+
+#[test]
+fn conditional_arrow_wrapped_import_credits_default_on_both_branches() {
+    let info = parse_source(
+        "import * as React from 'react'; const C = React.lazy(() => import(flag ? './A.jsx' : './B.jsx'));",
+    );
+    assert_eq!(info.dynamic_imports.len(), 2);
+    for imp in &info.dynamic_imports {
+        assert_eq!(
+            imp.destructured_names,
+            vec!["default"],
+            "a lazy wrapper consumes the default export, which must be credited on every branch"
+        );
+    }
+    let mut sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    sources.sort_unstable();
+    assert_eq!(sources, vec!["./A.jsx", "./B.jsx"]);
+}
+
+#[test]
+fn conditional_then_callback_credits_member_on_both_branches() {
+    let info = parse_source("import(cond ? './a.mjs' : './b.mjs').then(m => m.Widget);");
+    assert_eq!(info.dynamic_imports.len(), 2);
+    for imp in &info.dynamic_imports {
+        assert_eq!(imp.destructured_names, vec!["Widget"]);
+    }
+}
+
+#[test]
+fn conditional_route_property_callback_credits_default_on_both_branches() {
+    let info = parse_source(
+        "const route = { loadComponent: () => import(mobile ? './m.component.mjs' : './w.component.mjs') };",
+    );
+    assert_eq!(info.dynamic_imports.len(), 2);
+    for imp in &info.dynamic_imports {
+        assert_eq!(imp.destructured_names, vec!["default"]);
+    }
+}
+
+#[test]
+fn parenthesized_bare_conditional_dynamic_import_credits_both_branches() {
+    let info = parse_source("async function f() { await import((cond ? './a.mjs' : './b.mjs')); }");
+    let mut sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    sources.sort_unstable();
+    assert_eq!(
+        sources,
+        vec!["./a.mjs", "./b.mjs"],
+        "a paren-wrapped conditional source must trace exactly like the bare form"
+    );
+}
+
+#[test]
+fn repeated_branch_literal_dedupes_to_one_edge() {
+    let info = parse_source(
+        "async function f() { await import(a ? './x.mjs' : b ? './x.mjs' : './y.mjs'); }",
+    );
+    let mut sources: Vec<&str> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| imp.source.as_str())
+        .collect();
+    sources.sort_unstable();
+    assert_eq!(
+        sources,
+        vec!["./x.mjs", "./y.mjs"],
+        "a literal repeated across branches must yield one edge, not duplicates"
+    );
+}
+
+#[test]
+fn require_context_with_json_regex() {
+    let info = parse_source(r"const ctx = require.context('./locale', false, /\.json$/);");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./locale/");
+    assert_eq!(
+        info.dynamic_import_patterns[0].suffix,
+        Some(".json".to_string())
+    );
+}
+
+#[test]
+fn dynamic_import_concat_prefix_only() {
+    let info = parse_source("const m = import('./pages/' + name);");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./pages/");
+    assert!(
+        info.dynamic_import_patterns[0].suffix.is_none(),
+        "Concat with only prefix and variable should have no suffix"
+    );
+}
+
+#[test]
+fn dynamic_import_concat_prefix_and_suffix() {
+    let info = parse_source("const m = import('./views/' + name + '.vue');");
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+    assert_eq!(info.dynamic_import_patterns[0].prefix, "./views/");
+    assert_eq!(
+        info.dynamic_import_patterns[0].suffix,
+        Some(".vue".to_string())
+    );
+}
+
+#[test]
+fn arrow_wrapped_import_expression_body() {
+    let info =
+        parse_source("import React from 'react'; const Foo = React.lazy(() => import('./Foo'));");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./Foo");
+    assert_eq!(info.dynamic_imports[0].destructured_names, vec!["default"]);
+}
+
+#[test]
+fn arrow_wrapped_import_block_body() {
+    let info = parse_source(
+        "import { lazy } from 'react'; const Foo = lazy(() => { return import('./Foo'); });",
+    );
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./Foo");
+    assert_eq!(info.dynamic_imports[0].destructured_names, vec!["default"]);
+}
+
+#[test]
+fn arrow_wrapped_import_function_expression() {
+    let info = parse_source(
+        "import { lazy } from 'react'; const Foo = lazy(function() { return import('./Foo'); });",
+    );
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./Foo");
+    assert_eq!(info.dynamic_imports[0].destructured_names, vec!["default"]);
+}
+
+#[test]
+fn arrow_wrapped_import_vue_define_async() {
+    let info = parse_source(
+        "import { defineAsyncComponent } from 'vue'; const Comp = defineAsyncComponent(() => import('./MyComp'));",
+    );
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./MyComp");
+    assert_eq!(info.dynamic_imports[0].destructured_names, vec!["default"]);
+}
+
+#[test]
+fn arrow_wrapped_import_no_duplicate() {
+    let info = parse_source("import * as React from 'react'; React.lazy(() => import('./Foo'));");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].destructured_names, vec!["default"]);
+}
+
+#[test]
+fn non_import_arrow_not_extracted() {
+    let info = parse_source("const result = someFunc(() => doSomething());");
+    assert_eq!(info.dynamic_imports.len(), 0);
+}
+
+#[test]
+fn arrow_wrapped_import_second_argument() {
+    let info = parse_source("const Foo = createLazy(config, () => import('./Foo'));");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./Foo");
+    assert!(info.dynamic_imports[0].destructured_names.is_empty());
+    assert!(info.dynamic_imports[0].value_escapes);
+}
+
+#[test]
+fn arrow_wrapped_import_async_arrow() {
+    let info = parse_source(
+        "import { lazy } from 'react'; const Foo = lazy(async () => import('./Foo'));",
+    );
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./Foo");
+}
+
+#[test]
+fn arrow_wrapped_import_with_non_import_first_arg() {
+    let info = parse_source("const Foo = wrapper('options', () => import('./Foo'));");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./Foo");
+    assert!(info.dynamic_imports[0].destructured_names.is_empty());
+    assert!(info.dynamic_imports[0].value_escapes);
+}
+
+#[test]
+fn arrow_wrapped_template_literal_source() {
+    let info = parse_source("const Foo = lazy(() => import(`./pages/${name}`));");
+    assert_eq!(info.dynamic_imports.len(), 0);
+    assert_eq!(info.dynamic_import_patterns.len(), 1);
+}
+
+#[test]
+fn then_callback_expression_body_member_access() {
+    let info = parse_source("import('./dashboard').then(m => m.DashboardComponent);");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./dashboard");
+    assert_eq!(
+        info.dynamic_imports[0].destructured_names,
+        vec!["DashboardComponent"]
+    );
+    assert!(info.dynamic_imports[0].local_name.is_none());
+}
+
+#[test]
+fn then_callback_destructured_param() {
+    let info = parse_source("import('./lib').then(({ foo, bar }) => { console.log(foo, bar); });");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./lib");
+    assert_eq!(
+        info.dynamic_imports[0].destructured_names,
+        vec!["foo", "bar"]
+    );
+    assert!(info.dynamic_imports[0].local_name.is_none());
+}
+
+#[test]
+fn then_callback_namespace_block_body() {
+    let info = parse_source("import('./service').then(m => { m.doStuff(); m.doMore(); });");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./service");
+    assert!(info.dynamic_imports[0].destructured_names.is_empty());
+    assert_eq!(info.dynamic_imports[0].local_name, Some("m".to_string()));
+}
+
+#[test]
+fn then_callback_angular_routes_pattern() {
+    let info = parse_source(
+        r"
+        const routes = [
+            {
+                path: 'dashboard',
+                loadComponent: () => import('./dashboard.component').then(m => m.DashboardComponent),
+            },
+            {
+                path: 'settings',
+                loadComponent: () => import('./settings.component').then(m => m.SettingsComponent),
+            },
+        ];
+        ",
+    );
+    assert_eq!(info.dynamic_imports.len(), 2);
+    assert_eq!(info.dynamic_imports[0].source, "./dashboard.component");
+    assert_eq!(
+        info.dynamic_imports[0].destructured_names,
+        vec!["DashboardComponent"]
+    );
+    assert_eq!(info.dynamic_imports[1].source, "./settings.component");
+    assert_eq!(
+        info.dynamic_imports[1].destructured_names,
+        vec!["SettingsComponent"]
+    );
+}
+
+#[test]
+fn then_callback_object_literal_body() {
+    let info = parse_source(
+        "const Comp = React.lazy(() => import('./Foo').then(m => ({ default: m.FooComponent })));",
+    );
+    assert!(
+        info.dynamic_imports
+            .iter()
+            .any(|d| d.source == "./Foo"
+                && d.destructured_names.contains(&"FooComponent".to_string()))
+    );
+}
+
+#[test]
+fn then_callback_no_duplicate_side_effect() {
+    let info = parse_source("import('./lib').then(m => m.foo);");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].destructured_names, vec!["foo"]);
+}
+
+#[test]
+fn then_callback_function_expression() {
+    let info = parse_source("import('./lib').then(function(m) { return m.foo; });");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./lib");
+    assert_eq!(info.dynamic_imports[0].local_name, Some("m".to_string()));
+}
+
+#[test]
+fn then_callback_param_member_access_is_recorded() {
+    for source in [
+        "void import('./lib').then((m) => m.foo({ k: 1 }));",
+        "import('./lib').then((m) => m.foo());",
+        "import('./lib').then((m) => { m.foo(); });",
+        "import('./lib').then(function (m) { m.foo(); });",
+        "if (flag) { void import('./lib').then((m) => m.foo()); }",
+    ] {
+        let info = parse_source(source);
+        assert_eq!(
+            info.dynamic_imports[0].local_name,
+            Some("m".to_string()),
+            "{source}"
+        );
+        assert!(
+            info.member_accesses
+                .iter()
+                .any(|access| access.object == "m" && access.member == "foo"),
+            "{source}: {:?}",
+            info.member_accesses
+        );
+        assert!(
+            !info.whole_object_uses.contains(&"m".to_string()),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn then_callback_param_escape_is_whole_use() {
+    for source in [
+        "import('./lib').then((m) => use(m));",
+        "import('./lib').then((m) => { store = m; });",
+        "import('./lib').then(function (m) { use({ ...m }); });",
+    ] {
+        let info = parse_source(source);
+        assert_eq!(
+            info.dynamic_imports[0].local_name,
+            Some("m".to_string()),
+            "{source}"
+        );
+        assert!(
+            info.whole_object_uses.contains(&"m".to_string()),
+            "{source}: {:?}",
+            info.whole_object_uses
+        );
+    }
+}
+
+#[test]
+fn then_callback_param_shadowed_in_inner_scope_is_not_credited() {
+    let info = parse_source("import('./lib').then((m) => { const f = (m) => m.foo; f(other); });");
+    assert!(
+        !info
+            .member_accesses
+            .iter()
+            .any(|access| access.object == "m" && access.member == "foo"),
+        "{:?}",
+        info.member_accesses
+    );
+}
+
+#[test]
+fn then_callback_destructured_with_rest_is_namespace() {
+    let info = parse_source("import('./lib').then(({ foo, ...rest }) => { });");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert!(info.dynamic_imports[0].destructured_names.is_empty());
+    assert!(info.dynamic_imports[0].local_name.is_none());
+}
+
+#[test]
+fn then_callback_non_import_callee_ignored() {
+    let info = parse_source("fetch('/api').then(r => r.json());");
+    assert!(info.dynamic_imports.is_empty());
+}
+
+fn dynamic_sources(source: &str) -> Vec<String> {
+    parse_source(source)
+        .dynamic_imports
+        .into_iter()
+        .map(|import| import.source)
+        .collect()
+}
+
+#[test]
+fn child_process_fork_named_import_credits_literal_runner() {
+    let sources = dynamic_sources(
+        "import { fork } from 'node:child_process';\n\
+         fork('./direct-runner.js');",
+    );
+
+    assert!(sources.contains(&"./direct-runner.js".to_string()));
+}
+
+#[test]
+fn child_process_fork_inside_local_namespace_credits_literal_runner() {
+    let sources = dynamic_sources(
+        "import { fork } from 'node:child_process';\n\
+         namespace Workers {\n\
+           export function start() { fork('./worker.js'); }\n\
+         }",
+    );
+
+    assert!(sources.contains(&"./worker.js".to_string()));
+}
+
+#[test]
+fn child_process_fork_namespace_import_credits_literal_runner() {
+    let sources = dynamic_sources(
+        "import * as childProcess from 'child_process';\n\
+         childProcess.fork('./direct-runner.js');",
+    );
+
+    assert!(sources.contains(&"./direct-runner.js".to_string()));
+}
+
+#[test]
+fn child_process_fork_destructured_require_credits_literal_runner() {
+    let sources = dynamic_sources(
+        "const { fork } = require('child_process');\n\
+         fork('./direct-runner.js');",
+    );
+
+    assert!(sources.contains(&"./direct-runner.js".to_string()));
+}
+
+#[test]
+fn child_process_fork_namespace_require_credits_literal_runner() {
+    let sources = dynamic_sources(
+        "const childProcess = require('node:child_process');\n\
+         childProcess.fork('./direct-runner.js');",
+    );
+
+    assert!(sources.contains(&"./direct-runner.js".to_string()));
+}
+
+#[test]
+fn child_process_fork_credits_static_path_resolve_runner_binding() {
+    let sources = dynamic_sources(
+        "import path from 'node:path';\n\
+         import { fork } from 'node:child_process';\n\
+         import { fileURLToPath } from 'node:url';\n\
+         const filename = fileURLToPath(import.meta.url);\n\
+         const runner = path.resolve(filename, '../runner.js');\n\
+         fork(runner);",
+    );
+
+    assert!(sources.contains(&"./runner.js".to_string()));
+}
+
+#[test]
+fn child_process_fork_credits_static_runner_inside_top_level_block() {
+    let sources = dynamic_sources(
+        "import path from 'node:path';\n\
+         import { fork } from 'node:child_process';\n\
+         import { fileURLToPath } from 'node:url';\n\
+         const filename = fileURLToPath(import.meta.url);\n\
+         const runner = path.resolve(filename, '../runner.js');\n\
+         for (const branch of requested_branches) {\n\
+           fork(runner, [], { stdio: 'inherit' });\n\
+         }",
+    );
+
+    assert!(sources.contains(&"./runner.js".to_string()));
+}
+
+#[test]
+fn child_process_fork_credits_static_runner_inside_callback() {
+    let sources = dynamic_sources(
+        "import path from 'node:path';\n\
+         import { fork } from 'node:child_process';\n\
+         import { fileURLToPath } from 'node:url';\n\
+         const filename = fileURLToPath(import.meta.url);\n\
+         const runner = path.resolve(filename, '../runner.js');\n\
+         await new Promise((fulfil, reject) => {\n\
+           const child = fork(runner, [], { stdio: 'inherit' });\n\
+           child.on('message', fulfil);\n\
+           child.on('error', reject);\n\
+         });",
+    );
+
+    assert!(sources.contains(&"./runner.js".to_string()));
+}
+
+#[test]
+fn child_process_fork_credits_new_url_runner_binding() {
+    let sources = dynamic_sources(
+        "import { fork } from 'node:child_process';\n\
+         const runner = new URL('./runner.js', import.meta.url);\n\
+         fork(runner);",
+    );
+
+    assert!(sources.contains(&"./runner.js".to_string()));
+}
+
+#[test]
+fn unrelated_fork_call_is_not_credited() {
+    let sources = dynamic_sources(
+        "import { fork } from './process-utils';\n\
+         fork('./runner.js');",
+    );
+
+    assert!(!sources.contains(&"./runner.js".to_string()));
+}
+
+#[test]
+fn shadowed_fork_call_is_not_credited() {
+    let sources = dynamic_sources(
+        "import { fork } from 'node:child_process';\n\
+         function run(fork) { fork('./runner.js'); }",
+    );
+
+    assert!(!sources.contains(&"./runner.js".to_string()));
+}
+
+#[test]
+fn shadowed_runner_binding_is_not_credited() {
+    let sources = dynamic_sources(
+        "import path from 'node:path';\n\
+         import { fork } from 'node:child_process';\n\
+         import { fileURLToPath } from 'node:url';\n\
+         const filename = fileURLToPath(import.meta.url);\n\
+         const runner = path.resolve(filename, '../runner.js');\n\
+         { const runner = './other.js'; fork(runner); }",
+    );
+
+    assert!(!sources.contains(&"./runner.js".to_string()));
+    assert!(!sources.contains(&"./other.js".to_string()));
+}
+
+#[test]
+fn shadowed_fork_callback_runner_parameter_is_not_credited() {
+    let sources = dynamic_sources(
+        "import path from 'node:path';\n\
+         import { fork } from 'node:child_process';\n\
+         import { fileURLToPath } from 'node:url';\n\
+         const filename = fileURLToPath(import.meta.url);\n\
+         const runner = path.resolve(filename, '../runner.js');\n\
+         function run(runner) { fork(runner); }",
+    );
+
+    assert!(!sources.contains(&"./runner.js".to_string()));
+}
+
+#[test]
+fn unresolved_or_computed_fork_targets_are_not_credited() {
+    let sources = dynamic_sources(
+        "import { fork } from 'node:child_process';\n\
+         fork(runner);\n\
+         fork(`./${name}.js`);\n\
+         fork('worker');",
+    );
+
+    assert!(sources.is_empty());
+}
+
+#[test]
+fn node_module_register_named_import_credits_loader() {
+    let info = parse_source(
+        "import { register } from 'node:module';\n\
+         import { pathToFileURL } from 'node:url';\n\
+         register('@swc-node/register/esm', pathToFileURL('./'));",
+    );
+    let loader = info
+        .dynamic_imports
+        .iter()
+        .find(|imp| imp.source == "@swc-node/register/esm")
+        .expect("register('@swc-node/register/esm') should record a dynamic import");
+    assert!(loader.local_name.is_none());
+    assert!(loader.destructured_names.is_empty());
+}
+
+#[test]
+fn node_module_register_aliased_named_import_credits_loader() {
+    let info = parse_source(
+        "import { register as registerLoader } from 'node:module';\n\
+         registerLoader('tsx/esm', import.meta.url);",
+    );
+    assert!(
+        info.dynamic_imports
+            .iter()
+            .any(|imp| imp.source == "tsx/esm"),
+        "alias `register as registerLoader` should still credit the loader"
+    );
+}
+
+#[test]
+fn node_module_register_namespace_import_credits_loader() {
+    let info = parse_source(
+        "import * as Module from 'node:module';\n\
+         Module.register('@swc-node/register/esm', import.meta.url);",
+    );
+    assert!(
+        info.dynamic_imports
+            .iter()
+            .any(|imp| imp.source == "@swc-node/register/esm"),
+        "`Module.register(...)` via namespace import should credit the loader"
+    );
+}
+
+#[test]
+fn node_module_register_unprefixed_module_specifier_supported() {
+    let info = parse_source(
+        "import { register } from 'module';\n\
+         register('tsx/esm', import.meta.url);",
+    );
+    assert!(
+        info.dynamic_imports
+            .iter()
+            .any(|imp| imp.source == "tsx/esm")
+    );
+}
+
+#[test]
+fn unrelated_register_call_not_credited() {
+    let info = parse_source(
+        "import { register } from './service-locator';\n\
+         register('not-a-loader', config);",
+    );
+    assert!(
+        info.dynamic_imports.is_empty(),
+        "register() from a non-`node:module` import should not record a dynamic import"
+    );
+}
+
+#[test]
+fn node_module_register_non_string_first_argument_ignored() {
+    let info = parse_source(
+        "import { register } from 'node:module';\n\
+         register(loaderUrl, import.meta.url);",
+    );
+    assert!(info.dynamic_imports.is_empty());
+}
+
+#[test]
+fn node_module_register_new_url_binding_credits_loader_hook_exports() {
+    let info = parse_source(
+        "import { register } from 'node:module';\n\
+         const url = new URL('./hooks/json-loader.ts', import.meta.url);\n\
+         register(url);",
+    );
+    let loader = info
+        .dynamic_imports
+        .iter()
+        .find(|imp| {
+            imp.source == "./hooks/json-loader.ts"
+                && imp.destructured_names.iter().any(|name| name == "load")
+        })
+        .expect("register(url) should credit loader hook exports");
+
+    assert!(loader.destructured_names.contains(&"resolve".to_string()));
+    assert!(
+        loader
+            .destructured_names
+            .contains(&"initialize".to_string())
+    );
+}
+
+#[test]
+fn node_module_register_relative_string_credits_loader_hook_exports() {
+    let info = parse_source(
+        "import { register } from 'node:module';\n\
+         register('./hooks/json-loader.ts', import.meta.url);",
+    );
+
+    assert!(
+        info.dynamic_imports.iter().any(|imp| {
+            imp.source == "./hooks/json-loader.ts"
+                && ["initialize", "resolve", "load", "globalPreload"]
+                    .iter()
+                    .all(|name| imp.destructured_names.contains(&(*name).to_string()))
+        }),
+        "relative module.register specifiers should credit Node loader hooks"
+    );
+}
+
+#[test]
+fn node_module_register_conditional_url_binding_credits_both_loader_targets() {
+    let info = parse_source(
+        "import { register } from 'node:module';\n\
+         const srcUrl = new URL('./hooks/src-loader.ts', import.meta.url);\n\
+         const distUrl = new URL('./hooks/dist-loader.ts', import.meta.url);\n\
+         const url = process.env.SRC ? srcUrl : distUrl;\n\
+         register(url);",
+    );
+
+    for expected in ["./hooks/src-loader.ts", "./hooks/dist-loader.ts"] {
+        assert!(
+            info.dynamic_imports.iter().any(|imp| {
+                imp.source == expected && imp.destructured_names.contains(&"load".to_string())
+            }),
+            "{expected} should be credited as a registered Node loader target"
+        );
+    }
+}
+
+#[test]
+fn node_module_register_url_bindings_accumulate_across_shadowing() {
+    let info = parse_source(
+        "import { register } from 'node:module';\n\
+         const url = new URL('./hooks/top-loader.ts', import.meta.url);\n\
+         if (enabled) {\n\
+           const url = new URL('./hooks/block-loader.ts', import.meta.url);\n\
+           register(url);\n\
+         }\n\
+         register(url);",
+    );
+
+    for expected in ["./hooks/top-loader.ts", "./hooks/block-loader.ts"] {
+        assert!(
+            info.dynamic_imports.iter().any(|imp| {
+                imp.source == expected && imp.destructured_names.contains(&"load".to_string())
+            }),
+            "{expected} should be credited with loader hook exports"
+        );
+    }
+}
+
+#[test]
+fn node_module_register_credits_legacy_loader_hook_exports() {
+    let info = parse_source(
+        "import { register } from 'node:module';\n\
+         register('./hooks/json-loader.ts', import.meta.url);",
+    );
+    let loader = info
+        .dynamic_imports
+        .iter()
+        .find(|imp| imp.source == "./hooks/json-loader.ts" && !imp.destructured_names.is_empty())
+        .expect("relative module.register specifier should credit loader hook exports");
+
+    for legacy in ["getFormat", "getSource", "transformSource"] {
+        assert!(
+            loader.destructured_names.contains(&legacy.to_string()),
+            "{legacy} legacy hook should be credited so loader files that still \
+             export it survive `unused-export` detection. destructured_names={:?}",
+            loader.destructured_names
+        );
+    }
+
+    assert!(
+        !loader
+            .destructured_names
+            .contains(&"getGlobalPreload".to_string()),
+        "getGlobalPreload is not a hook name; do not credit it"
+    );
+}
+
+#[test]
+fn node_module_register_template_literal_specifier_supported() {
+    let info = parse_source(
+        "import { register } from 'node:module';\n\
+         register(`tsx/esm`, import.meta.url);",
+    );
+    assert!(
+        info.dynamic_imports
+            .iter()
+            .any(|imp| imp.source == "tsx/esm")
+    );
+}
+
+// Issue #840: new URL("./dir", import.meta.url) for a directory target must not
+// produce an unresolved-import finding. Directory-pointing specifiers (no file
+// extension) are marked speculative so the resolver drops them silently when no
+// module can be found. File-pointing specifiers (with an extension) keep
+// is_speculative = false so genuinely missing files are still reported.
+
+#[test]
+fn new_url_extensionless_specifier_is_speculative() {
+    let info = parse_source("const dir = new URL('./services', import.meta.url);");
+    let imp = info
+        .dynamic_imports
+        .iter()
+        .find(|i| i.source == "./services")
+        .expect("new URL('./services', ...) should emit a dynamic import");
+    assert!(
+        imp.is_speculative,
+        "extensionless new URL specifier must be marked speculative so a \
+         directory target is silently dropped rather than reported unresolved"
+    );
+}
+
+#[test]
+fn new_url_extensioned_specifier_is_not_speculative() {
+    let info = parse_source("const w = new URL('./worker.js', import.meta.url);");
+    let imp = info
+        .dynamic_imports
+        .iter()
+        .find(|i| i.source == "./worker.js")
+        .expect("new URL('./worker.js', ...) should emit a dynamic import");
+    assert!(
+        !imp.is_speculative,
+        "file-extension new URL specifier must NOT be marked speculative so \
+         a genuinely missing file is still reported as unresolved-import"
+    );
+}
+
+#[test]
+fn new_url_parent_relative_extensionless_specifier_is_speculative() {
+    let info = parse_source("const dir = new URL('../bin', import.meta.url);");
+    let imp = info
+        .dynamic_imports
+        .iter()
+        .find(|i| i.source == "../bin")
+        .expect("new URL('../bin', ...) should emit a dynamic import");
+    assert!(
+        imp.is_speculative,
+        "parent-relative extensionless new URL specifier must be marked speculative"
+    );
+}
+
+// A `new URL(path, import.meta.url)` passed directly to a filesystem call or to
+// `fileURLToPath` names a path on disk, not a module the code loads. The file
+// can be an output that does not exist yet, or a probe for an optional file.
+// The reference is speculative: it credits the target when it resolves and is
+// dropped silently when it does not.
+
+fn new_url_import<'a>(info: &'a ModuleInfo, source: &str) -> &'a crate::DynamicImportInfo {
+    info.dynamic_imports
+        .iter()
+        .find(|i| i.source == source)
+        .unwrap_or_else(|| panic!("new URL('{source}', ...) should emit a dynamic import"))
+}
+
+#[test]
+fn new_url_passed_to_fs_call_is_speculative() {
+    let info = parse_source(
+        r#"
+import { writeFileSync, existsSync } from "node:fs";
+import * as fsp from "node:fs/promises";
+writeFileSync(new URL("../out/data.json", import.meta.url), "{}");
+export const gone = existsSync(new URL("./removed.ts", import.meta.url));
+export const text = fsp.readFile(new URL("./notes.md", import.meta.url), "utf8");
+"#,
+    );
+    for source in ["../out/data.json", "./removed.ts", "./notes.md"] {
+        assert!(
+            new_url_import(&info, source).is_speculative,
+            "new URL('{source}', ...) passed to a filesystem call must be speculative"
+        );
+    }
+}
+
+#[test]
+fn new_url_passed_to_file_url_to_path_is_speculative() {
+    let info = parse_source(
+        r#"
+import { fileURLToPath } from "node:url";
+import url from "node:url";
+export const entry = fileURLToPath(new URL("./runner.mjs", import.meta.url));
+export const other = url.fileURLToPath(new URL("./other.mjs", import.meta.url));
+"#,
+    );
+    for source in ["./runner.mjs", "./other.mjs"] {
+        assert!(
+            new_url_import(&info, source).is_speculative,
+            "new URL('{source}', ...) passed to fileURLToPath must be speculative"
+        );
+    }
+}
+
+#[test]
+fn new_url_passed_to_worker_is_not_speculative() {
+    let info = parse_source(
+        r#"
+export const w = new Worker(new URL("./worker.js", import.meta.url));
+export const s = someLoader(new URL("./loaded.js", import.meta.url));
+"#,
+    );
+    for source in ["./worker.js", "./loaded.js"] {
+        assert!(
+            !new_url_import(&info, source).is_speculative,
+            "new URL('{source}', ...) outside a filesystem call must not be speculative"
+        );
+    }
+}
+
+#[test]
+fn top_level_await_import_is_eager() {
+    let info = parse_source(
+        r#"
+const { a } = await import("./a");
+const b = (await import("./b")).default;
+await (import("./c"));
+export async function later() {
+  return await import("./lazy-fn");
+}
+export const arrow = async () => (await import("./lazy-arrow")).x;
+const lazy = import("./lazy-no-await");
+"#,
+    );
+    let mut eager = eager_dynamic_import_sources(&info);
+    eager.sort_unstable();
+    assert_eq!(eager, ["./a", "./b", "./c"]);
+}
+
+#[test]
+fn awaited_dynamic_import_member_call_credits_member() {
+    let info = parse_source("async function f() { await (await import('./a')).usedA(); }");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./a");
+    assert!(info.dynamic_imports[0].local_name.is_none());
+    assert_eq!(info.dynamic_imports[0].destructured_names, vec!["usedA"]);
+}
+
+#[test]
+fn awaited_dynamic_import_member_new_credits_member() {
+    let info = parse_source("async function f() { return new (await import('./b')).KB(); }");
+    assert_eq!(info.dynamic_imports.len(), 1);
+    assert_eq!(info.dynamic_imports[0].source, "./b");
+    assert_eq!(info.dynamic_imports[0].destructured_names, vec!["KB"]);
+}
+
+#[test]
+fn awaited_dynamic_import_string_key_and_default_credit_member() {
+    let info = parse_source(
+        "async function f() { (await import('./a'))['usedA'](); (await import('./b')).default(); }",
+    );
+    assert_eq!(info.dynamic_imports.len(), 2);
+    assert_eq!(info.dynamic_imports[0].source, "./a");
+    assert_eq!(info.dynamic_imports[0].destructured_names, vec!["usedA"]);
+    assert_eq!(info.dynamic_imports[1].source, "./b");
+    assert_eq!(info.dynamic_imports[1].destructured_names, vec!["default"]);
+}
+
+#[test]
+fn awaited_conditional_dynamic_import_member_credits_both_branches() {
+    let info = parse_source("async function f() { (await import(cond ? './x' : './y')).run(); }");
+    assert_eq!(info.dynamic_imports.len(), 2);
+    for imp in &info.dynamic_imports {
+        assert_eq!(imp.destructured_names, vec!["run"]);
+        assert!(imp.local_name.is_none());
+    }
+}
+
+fn dynamic_import_shapes(info: &ModuleInfo) -> Vec<(&str, Vec<&str>, Option<&str>)> {
+    info.dynamic_imports
+        .iter()
+        .map(|imp| {
+            (
+                imp.source.as_str(),
+                imp.destructured_names.iter().map(String::as_str).collect(),
+                imp.local_name.as_deref(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn local_loader_passed_as_argument_credits_default() {
+    let info = parse_source(
+        r"
+import { lazy } from 'react';
+const loadView = () => import('./view');
+export const View = lazy(loadView);
+",
+    );
+    assert_eq!(
+        dynamic_import_shapes(&info),
+        [("./view", vec!["default"], None)]
+    );
+}
+
+#[test]
+fn awaited_local_loader_call_binds_like_awaited_import() {
+    let info = parse_source(
+        r"
+export async function run() {
+  const helpers = await loadHelpers();
+  helpers.used();
+  const { tool } = await loadTools();
+}
+async function loadHelpers() {
+  return await import('./helpers');
+}
+function loadTools() {
+  return import('./tools');
+}
+",
+    );
+    assert_eq!(
+        dynamic_import_shapes(&info),
+        [
+            ("./helpers", vec![], Some("helpers")),
+            ("./tools", vec!["tool"], None),
+        ]
+    );
+}
+
+#[test]
+fn local_loader_with_other_use_credits_whole_module() {
+    let info = parse_source(
+        r"
+import { lazy } from 'react';
+const loadPanel = () => import('./panel');
+lazy(loadPanel);
+export const ready = loadPanel().then((panel) => panel);
+",
+    );
+    assert_eq!(
+        dynamic_import_shapes(&info),
+        [
+            ("./panel", vec!["default"], None),
+            ("./panel", vec![], Some("loadPanel")),
+        ]
+    );
+    assert!(
+        info.whole_object_uses
+            .iter()
+            .any(|name| name == "loadPanel")
+    );
+}
+
+#[test]
+fn exported_local_loader_credits_whole_module() {
+    let info = parse_source(
+        r"
+const loadA = () => import('./a');
+export function loadB() {
+  return import('./b');
+}
+export { loadA };
+",
+    );
+    assert_eq!(
+        dynamic_import_shapes(&info),
+        [
+            ("./a", vec![], Some("loadA")),
+            ("./b", vec![], Some("loadB")),
+        ]
+    );
+}
+
+#[test]
+fn reassignable_loader_binding_keeps_bare_import_edge() {
+    let info = parse_source(
+        r"
+let loadView = () => import('./view');
+lazy(loadView);
+",
+    );
+    assert_eq!(dynamic_import_shapes(&info), [("./view", vec![], None)]);
+}
+
+#[test]
+fn unreferenced_local_loader_keeps_bare_import_edge() {
+    let info = parse_source(
+        r"
+const loadPanel = () => import('./panel');
+",
+    );
+    assert_eq!(dynamic_import_shapes(&info), [("./panel", vec![], None)]);
+    assert!(
+        !info
+            .whole_object_uses
+            .iter()
+            .any(|name| name == "loadPanel")
+    );
+}
+
+fn dynamic_import_bindings(info: &ModuleInfo) -> Vec<(&str, Vec<&str>, Option<&str>)> {
+    info.dynamic_imports
+        .iter()
+        .map(|imp| {
+            (
+                imp.source.as_str(),
+                imp.destructured_names.iter().map(String::as_str).collect(),
+                imp.local_name.as_deref(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn ssr_load_module_with_literal_path_is_a_dynamic_import() {
+    let info = parse_source(
+        r"
+const server = await createServer();
+const mod = await server.ssrLoadModule('/src/a.ts');
+const { used, other } = await server.ssrLoadModule(`/src/b.ts`);
+await server.ssrLoadModule('/src/c.ts');
+mod.used;
+",
+    );
+    assert_eq!(
+        dynamic_import_bindings(&info),
+        [
+            ("/src/a.ts", vec![], Some("mod")),
+            ("/src/b.ts", vec!["used", "other"], None),
+            ("/src/c.ts", vec![], None),
+        ]
+    );
+}
+
+#[test]
+fn ssr_load_module_with_computed_path_is_not_an_edge() {
+    let info = parse_source(
+        r"
+const server = await createServer();
+const computed = await server.ssrLoadModule(path);
+const templated = await server.ssrLoadModule(`/src/${name}.ts`);
+const literal = await server.ssrLoadModule('/src/known.ts');
+",
+    );
+    assert_eq!(
+        dynamic_import_bindings(&info),
+        [("/src/known.ts", vec![], Some("literal"))]
+    );
+    assert!(info.dynamic_import_patterns.is_empty());
+}
+
+#[test]
+fn ssr_load_module_type_wrappers_preserve_namespace_bindings() {
+    let info = parse_source(
+        r"
+const server = await createServer();
+const asserted = (await server.ssrLoadModule('/src/a.ts')) as Module;
+const satisfied = (await server.ssrLoadModule(`./src/b.ts`)) satisfies Module;
+const nonnull = (await server.ssrLoadModule('/src/c.ts'))!;
+const angle = <Module>(await server.ssrLoadModule('/src/d.ts'));
+const unrelated = (await server.loadModule('/src/unused.ts')) as Module;
+",
+    );
+    assert_eq!(
+        dynamic_import_bindings(&info),
+        [
+            ("/src/a.ts", vec![], Some("asserted")),
+            ("/src/b.ts", vec![], Some("satisfied")),
+            ("/src/c.ts", vec![], Some("nonnull")),
+            ("/src/d.ts", vec![], Some("angle")),
+        ]
+    );
+}
+
+fn unbound_import_escapes(source: &str) -> Vec<(String, bool)> {
+    parse_source(source)
+        .dynamic_imports
+        .iter()
+        .filter(|imp| imp.local_name.is_none() && imp.destructured_names.is_empty())
+        .map(|imp| (imp.source.clone(), imp.value_escapes))
+        .collect()
+}
+
+#[test]
+fn discarded_dynamic_import_statements_do_not_escape() {
+    for source in [
+        "import('./x');",
+        "await import('./x');",
+        "void import('./x');",
+        "(import('./x'));",
+        "import('./x').catch(() => {});",
+        "await import('./x').finally(done);",
+        "const [, a] = await Promise.all([import('./x'), import('./a')]);",
+        "const [a] = await Promise.all([import('./a'), import('./x')]);",
+        "import('./x').then(() => boot());",
+        "import('./x').then(() => {}).catch(report);",
+        "const ready = import('./x').then(() => true);",
+        "await Promise.all([import('./x')]);",
+        "enabled && import('./x');",
+        "enabled ? import('./x') : null;",
+        "import('./x'), boot();",
+    ] {
+        assert_eq!(
+            unbound_import_escapes(source),
+            vec![("./x".to_string(), false)],
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn dynamic_import_values_that_leave_the_expression_escape() {
+    for source in [
+        "register(import('./x'));",
+        "globalThis.list = [import('./x')];",
+        "globalThis.map = { x: import('./x') };",
+        "import('./x').then(use);",
+        "import('./x').then(function () { use(arguments[0]); });",
+        "import('./x').then(null, report).then(use);",
+        "const all = Promise.all([import('./x')]);",
+        "console.log(await import('./x'));",
+        "function f(n) { return n ? import('./x') : null; }",
+        "const f = () => { for (const n of list) { return use(import('./x')); } };",
+    ] {
+        assert_eq!(
+            unbound_import_escapes(source),
+            vec![("./x".to_string(), true)],
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn local_loader_binds_nested_returned_imports() {
+    let info = parse_source(
+        "const load = async (name) => {
+           switch (name) {
+             case 'a': return import('./a');
+             default: { if (name) { return await import('./b'); } throw new Error(name); }
+           }
+         };
+         export const run = async () => { const m = await load('a'); m.create(); };",
+    );
+    let mut bound: Vec<(&str, Option<&str>, bool)> = info
+        .dynamic_imports
+        .iter()
+        .map(|imp| {
+            (
+                imp.source.as_str(),
+                imp.local_name.as_deref(),
+                imp.value_escapes,
+            )
+        })
+        .collect();
+    bound.sort_unstable();
+    assert_eq!(
+        bound,
+        vec![("./a", Some("m"), false), ("./b", Some("m"), false)]
+    );
+    assert!(
+        info.member_accesses
+            .iter()
+            .any(|access| access.object == "m" && access.member == "create")
+    );
+}
+
+#[test]
+fn unknown_higher_order_loader_keeps_escaping_namespace() {
+    let info = parse_source(
+        r"
+async function run() {
+    const { used } = await awaitPreservingAbortReason(async () => await import('./provider'));
+    used();
+}
+const View = component(() => import('./view'));
+import { lazy as component } from 'react';
+",
+    );
+    assert_eq!(info.dynamic_imports.len(), 2);
+    let provider = info
+        .dynamic_imports
+        .iter()
+        .find(|edge| edge.source == "./provider")
+        .unwrap();
+    assert!(
+        provider.value_escapes,
+        "an unknown caller can consume named exports"
+    );
+    assert!(provider.destructured_names.is_empty());
+    let view = info
+        .dynamic_imports
+        .iter()
+        .find(|edge| edge.source == "./view")
+        .unwrap();
+    assert_eq!(view.destructured_names, ["default"]);
+    assert!(!view.value_escapes);
+}
+
+#[test]
+fn unknown_named_loader_argument_keeps_whole_namespace() {
+    let info = parse_source(
+        "const load = async () => await import('./provider'); const result = awaitPreservingAbortReason(load);",
+    );
+    assert_eq!(
+        dynamic_import_shapes(&info),
+        [("./provider", vec![], Some("load"))]
+    );
+    assert!(info.whole_object_uses.iter().any(|name| name == "load"));
+}
+
+#[test]
+fn component_loader_contract_requires_unshadowed_import_provenance() {
+    for source in [
+        "import { lazy as component } from 'react'; component(() => import('./target'));",
+        "import React from 'react'; React.lazy(() => import('./target'));",
+        "import * as React from 'react'; React.lazy(() => import('./target'));",
+        "import { defineAsyncComponent as component } from 'vue'; component(() => import('./target'));",
+        "import * as Vue from 'vue'; Vue.defineAsyncComponent(() => import('./target'));",
+        "component(() => import('./target')); import component from 'next/dynamic';",
+    ] {
+        let info = parse_source(source);
+        assert_eq!(
+            dynamic_import_shapes(&info),
+            [("./target", vec!["default"], None)],
+            "{source}"
+        );
+        assert!(!info.dynamic_imports[0].value_escapes, "{source}");
+    }
+    for source in [
+        "const lazy = load => load(); lazy(() => import('./target'));",
+        "import { lazy } from 'react'; function run(lazy) { return lazy(() => import('./target')); }",
+        "import * as React from 'react'; function run(React) { return React.lazy(() => import('./target')); }",
+        "import loadable from '@loadable/component'; loadable(() => import('./target'), { resolveComponent: mod => mod.named });",
+        "import { lazy } from './local-wrapper'; lazy(() => import('./target'));",
+        "import type { lazy } from 'react'; lazy(() => import('./target'));",
+        "import { type lazy } from 'react'; lazy(() => import('./target'));",
+        "import type * as React from 'react'; React.lazy(() => import('./target'));",
+        "import { lazy } from 'react'; lazy(null, () => import('./target'));",
+    ] {
+        let info = parse_source(source);
+        assert_eq!(info.dynamic_imports.len(), 1, "{source}");
+        assert!(info.dynamic_imports[0].value_escapes, "{source}");
+        assert!(
+            info.dynamic_imports[0].destructured_names.is_empty(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn component_loader_contract_abstains_in_incomplete_namespace_and_catch_scopes() {
+    for source in [
+        "import { lazy } from 'react'; namespace N { const lazy = load => load(); export const result = lazy(() => import('./target')); }",
+        "import { lazy } from 'react'; export namespace N { const lazy = load => load(); export const result = lazy(() => import('./target')); }",
+        "import { lazy } from 'react'; try {} catch (lazy) { lazy(() => import('./target')); }",
+        "import * as React from 'react'; try {} catch (React) { React.lazy(() => import('./target')); }",
+    ] {
+        let info = parse_source(source);
+        assert_eq!(info.dynamic_imports.len(), 1, "{source}");
+        assert!(info.dynamic_imports[0].value_escapes, "{source}");
+        assert!(
+            info.dynamic_imports[0].destructured_names.is_empty(),
+            "{source}"
+        );
+    }
+}

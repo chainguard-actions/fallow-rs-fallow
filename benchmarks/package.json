@@ -1,0 +1,27 @@
+{
+  "name": "fallow-benchmarks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "node generate-fixtures.mjs",
+    "generate:dupes": "node generate-dupes-fixtures.mjs",
+    "download-fixtures": "node download-fixtures.mjs",
+    "bench": "node bench.mjs",
+    "bench:synthetic": "node bench.mjs --synthetic",
+    "bench:real-world": "node bench.mjs --real-world",
+    "bench:dupes": "node bench-dupes.mjs",
+    "bench:dupes:synthetic": "node bench-dupes.mjs --synthetic",
+    "bench:dupes:real-world": "node bench-dupes.mjs --real-world",
+    "bench:dupes:rolling": "node compare-dupes-rolling.mjs",
+    "generate:circular": "node generate-circular-fixtures.mjs",
+    "bench:circular": "node bench-circular.mjs",
+    "bench:circular:synthetic": "node bench-circular.mjs --synthetic",
+    "bench:circular:real-world": "node bench-circular.mjs --real-world"
+  },
+  "dependencies": {
+    "dpdm": "^4.3.0",
+    "jscpd": "^5.4.0",
+    "knip": "^6.40.0",
+    "madge": "^8.0.0"
+  }
+}
