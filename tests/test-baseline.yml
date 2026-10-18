@@ -6,6 +6,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a temporary baseline file
+        run: |
+          echo '{}' > /tmp/fallow-baseline.json
+          echo '{}' > /tmp/fallow-health-baseline.json
+          echo '{}' > /tmp/fallow-dupes-baseline.json
+          echo '{}' > /tmp/fallow-dead-code-baseline.json
       - id: action
         uses: .
         continue-on-error: true
@@ -15,13 +21,11 @@ jobs:
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
-          baseline: ''
-          save-baseline: ''
-          dead-code-baseline: ''
-          health-baseline: ''
-          dupes-baseline: ''
-          regression-baseline: ''
-          save-regression-baseline: ''
+          baseline: /tmp/fallow-baseline.json
+          save-baseline: /tmp/fallow-saved-baseline.json
+          health-baseline: /tmp/fallow-health-baseline.json
+          dupes-baseline: /tmp/fallow-dupes-baseline.json
+          dead-code-baseline: /tmp/fallow-dead-code-baseline.json
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}

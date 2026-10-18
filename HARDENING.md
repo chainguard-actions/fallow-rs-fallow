@@ -16,18 +16,28 @@ Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 1 finding(s) we
 
 ### script-injection (severity: high)
 
-Sub-rule (a): Eight `run:` steps in action.yml directly interpolate `${{ github.action_path }}` inside the shell command string. Per the check rules, ANY `${{ ... }}` expression interpolated directly inside a `run:` block is a script-injection finding, regardless of which context it reads from. Although `github.action_path` is GitHub-controlled and not attacker-influenced in practice, the YAML template substitution occurs before the shell ever sees the command, making this a structural violation. The affected steps are: 'Install fallow' (`run: bash ${{ github.action_path }}/action/scripts/install.sh`), 'Fallow branded token' (`run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`), 'Run analysis' (`run: bash ${{ github.action_path }}/action/scripts/analyze.sh`), 'Check Code Scanning availability' (`run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`), 'Post PR comment' (`run: bash ${{ github.action_path }}/action/scripts/comment.sh`), 'Emit inline annotations' (`run: bash ${{ github.action_path }}/action/scripts/annotate.sh`), 'Job summary' (`run: bash ${{ github.action_path }}/action/scripts/summary.sh`), and 'Post review comments' (`run: bash ${{ github.action_path }}/action/scripts/review.sh`). The fix is to use the `$GITHUB_ACTION_PATH` environment variable instead: `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
+All 8 `run:` blocks in action.yml interpolate `${{ github.action_path }}` directly inside the shell command string (sub-rule a). Per the check rules, ANY `${{ ... }}` expression inside a `run:` script is a script-injection finding regardless of which context it reads from. The safe pattern is to move the value into an `env:` variable (e.g., `ACTION_PATH: ${{ github.action_path }}`) and reference `$ACTION_PATH` in the `run:` script instead.
+
+Affected steps and their `run:` lines:
+- Install fallow: `run: bash ${{ github.action_path }}/action/scripts/install.sh`
+- Fallow branded token: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`
+- Run analysis: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`
+- Check Code Scanning availability: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`
+- Post PR comment: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`
+- Emit inline annotations: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`
+- Job summary: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`
+- Post review comments: `run: bash ${{ github.action_path }}/action/scripts/review.sh`
 
 Locations:
 
-- `action.yml:340`
-- `action.yml:348`
-- `action.yml:420`
-- `action.yml:430`
-- `action.yml:460`
-- `action.yml:480`
-- `action.yml:500`
-- `action.yml:520`
+- `action.yml:541`
+- `action.yml:551`
+- `action.yml:617`
+- `action.yml:625`
+- `action.yml:651`
+- `action.yml:668`
+- `action.yml:695`
+- `action.yml:726`
 
 ## Iteration Notes
 
@@ -37,5 +47,5 @@ Locations:
 
 **Notes:**
 
-Fixed all 8 script-injection findings in action.yml by replacing `bash ${{ github.action_path }}/action/scripts/<script>.sh` with `bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"` in the run: blocks of: 'Install fallow', 'Fallow branded token', 'Run analysis', 'Check Code Scanning availability', 'Post PR comment', 'Emit inline annotations', 'Job summary', and 'Post review comments'. Two remaining `${{ github.action_path }}` references in env: blocks (ACTION_JQ_DIR for annotate and summary steps) are correctly placed and are not findings.
+Fixed all 8 script-injection findings in action.yml. For each affected step (Install fallow, Fallow branded token, Run analysis, Check Code Scanning availability, Post PR comment, Emit inline annotations, Job summary, Post review comments), added `ACTION_PATH: ${{ github.action_path }}` to the step's `env:` block and replaced `bash ${{ github.action_path }}/action/scripts/<name>.sh` with `bash "$ACTION_PATH/action/scripts/<name>.sh"` in the `run:` line. No ${{ }} expressions remain in any run: shell command strings.
 
