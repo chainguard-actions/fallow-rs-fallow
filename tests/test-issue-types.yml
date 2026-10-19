@@ -6,27 +6,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create minimal JS project
+        run: |
+          mkdir -p /tmp/fallow-test-issue-types
+          cat > /tmp/fallow-test-issue-types/package.json <<'EOF'
+          {
+            "name": "test-issue-types",
+            "version": "1.0.0",
+            "scripts": { "start": "node index.js" }
+          }
+          EOF
+          cat > /tmp/fallow-test-issue-types/index.js <<'EOF'
+          function hello() { return 'hello'; }
+          module.exports = { hello };
+          EOF
       - id: action
         uses: .
         continue-on-error: true
         with:
           command: dead-code
-          root: .
-          format: json
+          root: /tmp/fallow-test-issue-types
+          issue-types: 'unused-exports,unused-files'
           fail-on-issues: 'false'
+          format: json
           auto-changed-since: 'false'
-          issue-types: unused-exports,unused-files
       - name: Assert action ran
         env:
           OUTCOME: ${{ steps.action.outcome }}
-          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "outcome: $OUTCOME"
-          echo "issues: $ISSUES"
-          if [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded with issue-types"
-          elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected in harness environment)"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action ran (outcome=$OUTCOME)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
