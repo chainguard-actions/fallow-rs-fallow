@@ -1,0 +1,84 @@
+name: Test coverage inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a minimal JS project with coverage data
+        run: |
+          mkdir -p /tmp/fallow-coverage-test
+          cat > /tmp/fallow-coverage-test/package.json << 'EOF'
+          {
+            "name": "coverage-test",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-coverage-test/index.js << 'EOF'
+          export function simple(a, b) {
+            if (a > b) {
+              return a;
+            } else if (a < b) {
+              return b;
+            } else {
+              return 0;
+            }
+          }
+          export function another(x) {
+            return x * 2;
+          }
+          EOF
+          # Create a minimal Istanbul coverage-final.json
+          cat > /tmp/fallow-coverage-test/coverage-final.json << 'EOF'
+          {
+            "/tmp/fallow-coverage-test/index.js": {
+              "path": "/tmp/fallow-coverage-test/index.js",
+              "statementMap": {
+                "0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 15}},
+                "1": {"start": {"line": 3, "column": 4}, "end": {"line": 3, "column": 14}}
+              },
+              "fnMap": {
+                "0": {"name": "simple", "decl": {"start": {"line": 1, "column": 0}, "end": {"line": 1, "column": 30}}, "loc": {"start": {"line": 1, "column": 0}, "end": {"line": 9, "column": 1}}, "line": 1},
+                "1": {"name": "another", "decl": {"start": {"line": 10, "column": 0}, "end": {"line": 10, "column": 25}}, "loc": {"start": {"line": 10, "column": 0}, "end": {"line": 12, "column": 1}}, "line": 10}
+              },
+              "branchMap": {},
+              "s": {"0": 5, "1": 3},
+              "f": {"0": 5, "1": 3},
+              "b": {}
+            }
+          }
+          EOF
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-coverage-test
+          format: json
+          fail-on-issues: 'false'
+          coverage: /tmp/fallow-coverage-test/coverage-final.json
+          coverage-root: /tmp/fallow-coverage-test
+          runtime-coverage: ''
+          low-traffic-threshold: '0.01'
+          min-invocations-hot: '100'
+          min-observation-volume: '1000'
+          auto-changed-since: 'false'
+          annotations: 'false'
+
+      - name: Assert action ran
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

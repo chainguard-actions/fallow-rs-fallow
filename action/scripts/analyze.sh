@@ -705,7 +705,7 @@ fi
 # the analyze-step propagation otherwise). User-supplied path wins.
 if [ -n "${FALLOW_DIFF_FILE:-}" ] && [ -n "${GITHUB_ENV:-}" ]; then
   _safe_diff_file=$(printf '%s' "$FALLOW_DIFF_FILE" | tr -d '\n\r')
-  printf '%s\n' "FALLOW_DIFF_FILE=${_safe_diff_file}" >> "$GITHUB_ENV"
+  printf 'FALLOW_DIFF_FILE=%s\n' "$_safe_diff_file" >> "$GITHUB_ENV"
 fi
 
 if [ -n "${INPUT_CHANGED_SINCE:-}" ] && [ -z "${FALLOW_DIFF_FILE:-}" ]; then
