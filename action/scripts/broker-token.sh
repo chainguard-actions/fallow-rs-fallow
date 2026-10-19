@@ -50,9 +50,8 @@ token=$(printf '%s' "$resp" | jq -r '.data.token // empty')
 [ -n "$token" ] || emit_fallback "broker returned no token"
 echo "::add-mask::${token}"
 
-_safe_token=$(printf '%s' "$token" | tr -d '\n\r')
 {
-  echo "token=${_safe_token}"
+  echo "token=${token}"
   echo "branded=true"
 } >>"$GITHUB_OUTPUT"
 record_outcome true

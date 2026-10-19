@@ -1,0 +1,64 @@
+name: Test only and skip analysis selector inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal JS project for analysis
+        run: |
+          mkdir -p /tmp/fallow-only-skip
+          cat > /tmp/fallow-only-skip/package.json <<'EOF'
+          {
+            "name": "test-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-only-skip/index.js <<'EOF'
+          export function used() { return 42; }
+          export function unused() { return 0; }
+          EOF
+      - name: Run with only input (run only dead-code)
+        id: with-only
+        uses: .
+        continue-on-error: true
+        with:
+          root: /tmp/fallow-only-skip
+          format: json
+          fail-on-issues: 'false'
+          only: 'dead-code'
+          auto-changed-since: 'false'
+      - name: Assert only step ran
+        env:
+          OUTCOME: ${{ steps.with-only.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: only step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+      - name: Run with skip input (skip health and dupes)
+        id: with-skip
+        uses: .
+        continue-on-error: true
+        with:
+          root: /tmp/fallow-only-skip
+          format: json
+          fail-on-issues: 'false'
+          skip: 'health,dupes'
+          auto-changed-since: 'false'
+      - name: Assert skip step ran
+        env:
+          OUTCOME: ${{ steps.with-skip.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: skip step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

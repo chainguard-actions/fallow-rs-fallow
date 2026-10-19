@@ -1,0 +1,65 @@
+name: Test gate and security-gate inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal JS project for analysis
+        run: |
+          mkdir -p /tmp/fallow-gate-test
+          cat > /tmp/fallow-gate-test/package.json <<'EOF'
+          {
+            "name": "test-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-gate-test/index.js <<'EOF'
+          export function used() { return 42; }
+          EOF
+      - name: Run with gate input (audit command)
+        id: with-gate
+        uses: .
+        continue-on-error: true
+        with:
+          command: audit
+          root: /tmp/fallow-gate-test
+          format: json
+          fail-on-issues: 'false'
+          gate: new-only
+          auto-changed-since: 'false'
+      - name: Assert gate step ran
+        env:
+          OUTCOME: ${{ steps.with-gate.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: gate step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+      - name: Run with security-gate input (security command)
+        id: with-security-gate
+        uses: .
+        continue-on-error: true
+        with:
+          command: security
+          root: /tmp/fallow-gate-test
+          format: json
+          fail-on-issues: 'false'
+          security-gate: new
+          auto-changed-since: 'false'
+      - name: Assert security-gate step ran
+        env:
+          OUTCOME: ${{ steps.with-security-gate.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: security-gate step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

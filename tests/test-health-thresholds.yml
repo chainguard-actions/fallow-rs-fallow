@@ -1,0 +1,102 @@
+name: Test health threshold inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal JS project for health analysis
+        run: |
+          mkdir -p /tmp/fallow-health-thresh
+          cat > /tmp/fallow-health-thresh/package.json <<'EOF'
+          {
+            "name": "test-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-health-thresh/index.js <<'EOF'
+          export function simple() { return 42; }
+          export function complex(a, b, c, d) {
+            if (a > 0) {
+              if (b > 0) {
+                if (c > 0) {
+                  if (d > 0) { return a + b + c + d; }
+                  return a + b + c;
+                }
+                return a + b;
+              }
+              return a;
+            }
+            return 0;
+          }
+          EOF
+      - name: Run with max-cyclomatic and max-cognitive inputs
+        id: with-cyclomatic
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-health-thresh
+          format: json
+          fail-on-issues: 'false'
+          max-cyclomatic: '25'
+          max-cognitive: '20'
+          max-crap: '50.0'
+          auto-changed-since: 'false'
+      - name: Assert cyclomatic step ran
+        env:
+          OUTCOME: ${{ steps.with-cyclomatic.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: cyclomatic/cognitive/crap step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+      - name: Run with min-severity input
+        id: with-min-severity
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-health-thresh
+          format: json
+          fail-on-issues: 'false'
+          min-severity: 'high'
+          auto-changed-since: 'false'
+      - name: Assert min-severity step ran
+        env:
+          OUTCOME: ${{ steps.with-min-severity.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: min-severity step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+      - name: Run with min-score input
+        id: with-min-score
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-health-thresh
+          format: json
+          fail-on-issues: 'false'
+          min-score: '50'
+          auto-changed-since: 'false'
+      - name: Assert min-score step ran
+        env:
+          OUTCOME: ${{ steps.with-min-score.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: min-score step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

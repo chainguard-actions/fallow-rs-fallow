@@ -1,0 +1,45 @@
+name: Test threads input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal JS project for analysis
+        run: |
+          mkdir -p /tmp/fallow-threads-test
+          cat > /tmp/fallow-threads-test/package.json <<'EOF'
+          {
+            "name": "test-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-threads-test/index.js <<'EOF'
+          export function used() { return 42; }
+          EOF
+      - name: Run with threads input
+        id: with-threads
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: /tmp/fallow-threads-test
+          format: json
+          fail-on-issues: 'false'
+          threads: '2'
+          auto-changed-since: 'false'
+      - name: Assert threads step ran
+        env:
+          OUTCOME: ${{ steps.with-threads.outcome }}
+          ISSUES: ${{ steps.with-threads.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: threads step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

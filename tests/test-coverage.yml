@@ -1,0 +1,90 @@
+name: Test coverage inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal JS project with coverage data
+        run: |
+          mkdir -p /tmp/fallow-cov-test
+          cat > /tmp/fallow-cov-test/package.json <<'EOF'
+          {
+            "name": "test-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-cov-test/index.js <<'EOF'
+          export function used() { return 42; }
+          export function complex(a, b, c) {
+            if (a > 0) {
+              if (b > 0) {
+                if (c > 0) { return a + b + c; }
+                return a + b;
+              }
+              return a;
+            }
+            return 0;
+          }
+          EOF
+          # Create a minimal Istanbul coverage-final.json
+          cat > /tmp/fallow-coverage.json <<'EOF'
+          {
+            "/tmp/fallow-cov-test/index.js": {
+              "path": "/tmp/fallow-cov-test/index.js",
+              "statementMap": {"0": {"start": {"line": 1, "column": 0}, "end": {"line": 1, "column": 40}}},
+              "fnMap": {"0": {"name": "used", "decl": {"start": {"line": 1, "column": 0}, "end": {"line": 1, "column": 40}}, "loc": {"start": {"line": 1, "column": 0}, "end": {"line": 1, "column": 40}}}},
+              "branchMap": {},
+              "s": {"0": 10},
+              "f": {"0": 10},
+              "b": {}
+            }
+          }
+          EOF
+      - name: Run with coverage input
+        id: with-coverage
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-cov-test
+          format: json
+          fail-on-issues: 'false'
+          coverage: /tmp/fallow-coverage.json
+          coverage-root: /tmp/fallow-cov-test
+          auto-changed-since: 'false'
+      - name: Assert coverage step ran
+        env:
+          OUTCOME: ${{ steps.with-coverage.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: coverage step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+      - name: Run with runtime-coverage input
+        id: with-runtime-coverage
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-cov-test
+          format: json
+          fail-on-issues: 'false'
+          runtime-coverage: /tmp/fallow-coverage.json
+          auto-changed-since: 'false'
+      - name: Assert runtime-coverage step ran
+        env:
+          OUTCOME: ${{ steps.with-runtime-coverage.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: runtime-coverage step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

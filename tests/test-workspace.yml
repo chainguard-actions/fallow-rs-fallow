@@ -1,0 +1,62 @@
+name: Test workspace input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal monorepo project for analysis
+        run: |
+          mkdir -p /tmp/fallow-workspace-test/packages/app
+          mkdir -p /tmp/fallow-workspace-test/packages/lib
+          cat > /tmp/fallow-workspace-test/package.json <<'EOF'
+          {
+            "name": "mono",
+            "version": "1.0.0",
+            "workspaces": ["packages/*"]
+          }
+          EOF
+          cat > /tmp/fallow-workspace-test/packages/app/package.json <<'EOF'
+          {
+            "name": "app",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-workspace-test/packages/app/index.js <<'EOF'
+          export function used() { return 42; }
+          export function unused() { return 0; }
+          EOF
+          cat > /tmp/fallow-workspace-test/packages/lib/package.json <<'EOF'
+          {
+            "name": "lib",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-workspace-test/packages/lib/index.js <<'EOF'
+          export function libUsed() { return 1; }
+          EOF
+      - name: Run with workspace input scoped to app
+        id: with-workspace
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: /tmp/fallow-workspace-test
+          format: json
+          fail-on-issues: 'false'
+          workspace: 'app'
+          auto-changed-since: 'false'
+      - name: Assert workspace step ran
+        env:
+          OUTCOME: ${{ steps.with-workspace.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: workspace step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

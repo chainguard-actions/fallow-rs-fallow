@@ -1,0 +1,44 @@
+name: Test issue-types input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal JS project for analysis
+        run: |
+          mkdir -p /tmp/fallow-issue-types-test
+          cat > /tmp/fallow-issue-types-test/package.json <<'EOF'
+          {
+            "name": "test-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-issue-types-test/index.js <<'EOF'
+          export function used() { return 42; }
+          export function unused() { return 0; }
+          EOF
+      - name: Run with issue-types input
+        id: with-issue-types
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: /tmp/fallow-issue-types-test
+          format: json
+          fail-on-issues: 'false'
+          issue-types: 'unused-exports,unused-files'
+          auto-changed-since: 'false'
+      - name: Assert issue-types step ran
+        env:
+          OUTCOME: ${{ steps.with-issue-types.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: issue-types step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

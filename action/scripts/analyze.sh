@@ -789,8 +789,7 @@ fi
 # need to declare their own FALLOW_DIFF_FILE env (which would override
 # the analyze-step propagation otherwise). User-supplied path wins.
 if [ -n "${FALLOW_DIFF_FILE:-}" ] && [ -n "${GITHUB_ENV:-}" ]; then
-  _safe_diff_file=$(printf '%s' "$FALLOW_DIFF_FILE" | tr -d '\n\r')
-  printf '%s\n' "FALLOW_DIFF_FILE=${_safe_diff_file}" >> "$GITHUB_ENV"
+  printf '%s\n' "FALLOW_DIFF_FILE=${FALLOW_DIFF_FILE}" >> "$GITHUB_ENV"
 fi
 
 if [ -n "${INPUT_CHANGED_SINCE:-}" ] && [ -z "${FALLOW_DIFF_FILE:-}" ]; then
@@ -831,8 +830,7 @@ if [ -n "${INPUT_CHANGED_SINCE:-}" ] && [ -z "${FALLOW_DIFF_FILE:-}" ]; then
     # Propagate to the comment / review render steps (separate composite
     # steps see only $GITHUB_ENV, not exported shell variables).
     if [ -n "${GITHUB_ENV:-}" ]; then
-      _safe_diff_path=$(printf '%s' "$_DIFF_PATH" | tr -d '\n\r')
-      printf '%s\n' "FALLOW_DIFF_FILE=${_safe_diff_path}" >> "$GITHUB_ENV"
+      printf '%s\n' "FALLOW_DIFF_FILE=${_DIFF_PATH}" >> "$GITHUB_ENV"
     fi
   else
     rm -f "$_DIFF_PATH"
@@ -889,12 +887,9 @@ if [ -n "${GITHUB_ENV:-}" ]; then
   # Preserve exact argv for pinned-CLI compatibility as inert runner-owned
   # data. Later steps parse this JSON instead of executing a workspace file.
   ANALYSIS_ARGS_JSON=$(jq -cn --args '$ARGS.positional' -- "${ARGS[@]}" "${EXTRA_ARGS[@]}")
-  # Sanitize the path prefix before writing to GITHUB_ENV: strip carriage
-  # returns and newlines so a \r-embedded value cannot corrupt the env file.
-  SAFE_FALLOW_RENDER_PATH_PREFIX=$(printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r')
   printf '%s\n' \
     "FALLOW_RENDER_PATH_PREFIX_SET=${FALLOW_RENDER_PATH_PREFIX_SET}" \
-    "FALLOW_RENDER_PATH_PREFIX=${SAFE_FALLOW_RENDER_PATH_PREFIX}" \
+    "FALLOW_RENDER_PATH_PREFIX=${FALLOW_RENDER_PATH_PREFIX}" \
     "FALLOW_ANALYSIS_ARGS_JSON=${ANALYSIS_ARGS_JSON}" >> "$GITHUB_ENV"
 fi
 

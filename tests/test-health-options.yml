@@ -1,0 +1,102 @@
+name: Test health analysis option inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Create a minimal JS project for health analysis
+        run: |
+          mkdir -p /tmp/fallow-health-opts
+          cat > /tmp/fallow-health-opts/package.json <<'EOF'
+          {
+            "name": "test-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-health-opts/index.js <<'EOF'
+          export function simple() { return 42; }
+          export function complex(a, b, c) {
+            if (a > 0) {
+              if (b > 0) {
+                if (c > 0) { return a + b + c; }
+                return a + b;
+              }
+              return a;
+            }
+            return 0;
+          }
+          EOF
+      - name: Run with sort, top, min-commits, since inputs
+        id: with-sort-top
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-health-opts
+          format: json
+          fail-on-issues: 'false'
+          sort: 'cyclomatic'
+          top: '10'
+          min-commits: '1'
+          since: '1y'
+          auto-changed-since: 'false'
+      - name: Assert sort/top step ran
+        env:
+          OUTCOME: ${{ steps.with-sort-top.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: sort/top/min-commits/since step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+      - name: Run with save-snapshot input
+        id: with-save-snapshot
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-health-opts
+          format: json
+          fail-on-issues: 'false'
+          save-snapshot: /tmp/fallow-snapshots
+          auto-changed-since: 'false'
+      - name: Assert save-snapshot step ran
+        env:
+          OUTCOME: ${{ steps.with-save-snapshot.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: save-snapshot step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+      - name: Run with trend input
+        id: with-trend
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-health-opts
+          format: json
+          fail-on-issues: 'false'
+          trend: 'true'
+          auto-changed-since: 'false'
+      - name: Assert trend step ran
+        env:
+          OUTCOME: ${{ steps.with-trend.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: trend step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

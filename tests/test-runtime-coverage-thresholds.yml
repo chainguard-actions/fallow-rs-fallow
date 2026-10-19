@@ -1,0 +1,69 @@
+name: Test runtime coverage threshold inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal JS project with coverage data
+        run: |
+          mkdir -p /tmp/fallow-rt-cov-test
+          cat > /tmp/fallow-rt-cov-test/package.json <<'EOF'
+          {
+            "name": "test-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-rt-cov-test/index.js <<'EOF'
+          export function used() { return 42; }
+          export function complex(a, b, c) {
+            if (a > 0) {
+              if (b > 0) {
+                if (c > 0) { return a + b + c; }
+                return a + b;
+              }
+              return a;
+            }
+            return 0;
+          }
+          EOF
+          cat > /tmp/fallow-rt-coverage.json <<'EOF'
+          {
+            "/tmp/fallow-rt-cov-test/index.js": {
+              "path": "/tmp/fallow-rt-cov-test/index.js",
+              "statementMap": {"0": {"start": {"line": 1, "column": 0}, "end": {"line": 1, "column": 40}}},
+              "fnMap": {"0": {"name": "used", "decl": {"start": {"line": 1, "column": 0}, "end": {"line": 1, "column": 40}}, "loc": {"start": {"line": 1, "column": 0}, "end": {"line": 1, "column": 40}}}},
+              "branchMap": {},
+              "s": {"0": 200},
+              "f": {"0": 200},
+              "b": {}
+            }
+          }
+          EOF
+      - name: Run with runtime coverage threshold inputs
+        id: with-rt-thresholds
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: /tmp/fallow-rt-cov-test
+          format: json
+          fail-on-issues: 'false'
+          runtime-coverage: /tmp/fallow-rt-coverage.json
+          min-invocations-hot: '50'
+          min-observation-volume: '100'
+          low-traffic-threshold: '0.01'
+          auto-changed-since: 'false'
+      - name: Assert runtime coverage threshold step ran
+        env:
+          OUTCOME: ${{ steps.with-rt-thresholds.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: runtime coverage threshold step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

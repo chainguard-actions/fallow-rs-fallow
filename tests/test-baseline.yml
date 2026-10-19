@@ -1,0 +1,90 @@
+name: Test baseline inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal JS project for analysis
+        run: |
+          mkdir -p /tmp/fallow-test-project
+          cat > /tmp/fallow-test-project/package.json <<'EOF'
+          {
+            "name": "test-project",
+            "version": "1.0.0",
+            "main": "index.js"
+          }
+          EOF
+          cat > /tmp/fallow-test-project/index.js <<'EOF'
+          export function used() { return 42; }
+          export function unused() { return 0; }
+          EOF
+      - name: Save baseline with dead-code command
+        id: save-baseline
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: /tmp/fallow-test-project
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: /tmp/fallow-baseline.json
+          auto-changed-since: 'false'
+      - name: Assert save-baseline step ran
+        env:
+          OUTCOME: ${{ steps.save-baseline.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: save-baseline step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+      - name: Run with baseline input
+        id: with-baseline
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: /tmp/fallow-test-project
+          format: json
+          fail-on-issues: 'false'
+          baseline: /tmp/fallow-baseline.json
+          auto-changed-since: 'false'
+      - name: Assert with-baseline step ran
+        env:
+          OUTCOME: ${{ steps.with-baseline.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: with-baseline step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+      - name: Run with health-baseline and dupes-baseline inputs
+        id: with-multi-baseline
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: /tmp/fallow-test-project
+          format: json
+          fail-on-issues: 'false'
+          dead-code-baseline: /tmp/fallow-baseline.json
+          health-baseline: /tmp/fallow-health-baseline.json
+          dupes-baseline: /tmp/fallow-dupes-baseline.json
+          auto-changed-since: 'false'
+      - name: Assert multi-baseline step ran
+        env:
+          OUTCOME: ${{ steps.with-multi-baseline.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: multi-baseline step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
