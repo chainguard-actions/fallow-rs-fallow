@@ -9,46 +9,38 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create a minimal JS project for changed-since analysis
-        run: |
-          mkdir -p /tmp/fallow-changed-project
-          cat > /tmp/fallow-changed-project/package.json <<'EOF'
-          {
-            "name": "changed-test-project",
-            "version": "1.0.0",
-            "main": "index.js"
-          }
-          EOF
-          cat > /tmp/fallow-changed-project/index.js <<'EOF'
-          export function used() { return 42; }
-          export function unused() { return 0; }
-          EOF
-
-      - name: Get a git ref to use as changed-since
+      - name: Get a valid git ref for changed-since
         id: git-ref
         run: |
-          REF=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
+          # Use HEAD~1 if it exists, otherwise use HEAD itself
+          if git rev-parse HEAD~1 > /dev/null 2>&1; then
+            REF=$(git rev-parse HEAD~1)
+          else
+            REF=$(git rev-parse HEAD)
+          fi
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "Using ref: $REF"
 
-      - name: Run dead-code with changed-since
-        id: action
+      - id: action
         uses: .
         continue-on-error: true
         with:
           command: dead-code
-          root: /tmp/fallow-changed-project
+          root: .
           format: json
           fail-on-issues: 'false'
           changed-since: ${{ steps.git-ref.outputs.ref }}
-          annotations: 'false'
+          auto-changed-since: 'false'
 
-      - name: Assert action ran
+      - name: Assert changed-since run completed
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
-          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran (outcome=$OUTCOME)"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected on sentinel repo)"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

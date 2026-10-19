@@ -426,7 +426,7 @@ runs:
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_TYPE_AWARE: ${{ inputs.type-aware }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/install.sh
+      run: bash "$ACTION_PATH/action/scripts/install.sh"
 
     - name: Fallow branded token
       id: fallow-token
@@ -435,7 +435,7 @@ runs:
         BRANDED_TOKEN: ${{ inputs.branded-token }}
         BROKER_URL: ${{ inputs.broker-url }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/broker-token.sh
+      run: bash "$ACTION_PATH/action/scripts/broker-token.sh"
 
     # `restore-keys` are literal string-prefix matches, so `inputs.root` cannot
     # go into the key raw: the restore prefix for `root=packages/app` is
@@ -549,7 +549,7 @@ runs:
         # fetch and reuse the same file.
         FALLOW_DIFF_FILE: ${{ inputs.diff-file }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/analyze.sh
+      run: bash "$ACTION_PATH/action/scripts/analyze.sh"
 
     - name: Check Code Scanning availability
       id: ghas-check
@@ -563,7 +563,7 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         GH_REPO: ${{ github.repository }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/check-code-scanning.sh
+      run: bash "$ACTION_PATH/action/scripts/check-code-scanning.sh"
 
     - name: Upload SARIF
       if: >-
@@ -611,7 +611,7 @@ runs:
         FALLOW_API_RETRIES: ${{ inputs.api-retries }}
         FALLOW_API_RETRY_DELAY: ${{ inputs.api-retry-delay }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/comment.sh
+      run: bash "$ACTION_PATH/action/scripts/comment.sh"
 
     - name: Emit inline annotations
       if: >-
@@ -634,7 +634,7 @@ runs:
         FALLOW_CHANGED_FILES_FILE: ${{ inputs.artifacts-dir }}/fallow-changed-files.json
         FALLOW_PR_DECISION_FILE: ${{ inputs.artifacts-dir }}/fallow-pr-decision.json
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/annotate.sh
+      run: bash "$ACTION_PATH/action/scripts/annotate.sh"
 
     - name: Job summary
       if: always() && steps.analyze.outputs.issues != ''
@@ -661,7 +661,7 @@ runs:
         FALLOW_GATES_PASSED: ${{ steps.analyze.outputs.gates_passed }}
         FALLOW_ANALYSIS_DEGRADED: ${{ steps.analyze.outputs.analysis_degraded }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/summary.sh
+      run: bash "$ACTION_PATH/action/scripts/summary.sh"
 
     - name: Post review comments
       id: review
@@ -695,4 +695,4 @@ runs:
         FALLOW_API_RETRIES: ${{ inputs.api-retries }}
         FALLOW_API_RETRY_DELAY: ${{ inputs.api-retry-delay }}
         ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH"/action/scripts/review.sh
+      run: bash "$ACTION_PATH/action/scripts/review.sh"

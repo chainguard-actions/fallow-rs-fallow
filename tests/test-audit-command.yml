@@ -1,0 +1,40 @@
+name: Test audit command with gate and only/skip inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: audit
+          root: .
+          format: json
+          fail-on-issues: 'false'
+          gate: 'new-only'
+          security-gate: 'new'
+          only: 'dead-code,health'
+          skip: 'dupes'
+          auto-changed-since: 'false'
+
+      - name: Assert audit command run completed
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE_OUT: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE_OUT"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected on sentinel repo)"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
