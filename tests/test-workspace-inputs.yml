@@ -1,0 +1,56 @@
+name: Test workspace inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      # Test with workspace scoping
+      - id: workspace
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: .
+          format: json
+          fail-on-issues: 'false'
+          workspace: '*'
+
+      - name: Assert workspace step ran
+        env:
+          OUTCOME: ${{ steps.workspace.outcome }}
+        run: |
+          echo "workspace outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: workspace step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+
+      # Test with changed-workspaces scoping
+      - id: changed-workspaces
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: .
+          format: json
+          fail-on-issues: 'false'
+          changed-workspaces: 'HEAD~1'
+
+      - name: Assert changed-workspaces step ran
+        env:
+          OUTCOME: ${{ steps.changed-workspaces.outcome }}
+        run: |
+          echo "changed-workspaces outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: changed-workspaces step ran (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

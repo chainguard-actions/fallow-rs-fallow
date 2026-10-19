@@ -1,0 +1,80 @@
+name: Test audit and issue-type inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      # Test dead-code with issue-types and changed-since
+      - id: dead-code
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: .
+          format: json
+          fail-on-issues: 'false'
+          issue-types: 'unused-exports,unused-files'
+          changed-since: 'HEAD~1'
+
+      - name: Assert dead-code step ran
+        env:
+          OUTCOME: ${{ steps.dead-code.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: dead-code step ran with issue-types and changed-since (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+
+      # Test security with security-gate
+      - id: security
+        uses: .
+        continue-on-error: true
+        with:
+          command: security
+          root: .
+          format: json
+          fail-on-issues: 'false'
+          security-gate: 'new'
+
+      - name: Assert security step ran
+        env:
+          OUTCOME: ${{ steps.security.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: security step ran with security-gate (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+
+      # Test audit with gate input
+      - id: audit
+        uses: .
+        continue-on-error: true
+        with:
+          command: audit
+          root: .
+          format: json
+          fail-on-issues: 'false'
+          gate: 'new-only'
+
+      - name: Assert audit step ran
+        env:
+          OUTCOME: ${{ steps.audit.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: audit step ran with gate input (outcome=$OUTCOME)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

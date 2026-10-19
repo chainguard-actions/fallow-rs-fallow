@@ -1,4 +1,4 @@
-name: Test health analysis with thresholds
+name: Test health threshold inputs
 on:
   workflow_dispatch:
 jobs:
@@ -6,48 +6,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Create a minimal JS project
-        run: |
-          mkdir -p /tmp/fallow-health-thresh
-          cat > /tmp/fallow-health-thresh/package.json <<'EOF'
-          {
-            "name": "health-thresh-project",
-            "version": "1.0.0",
-            "main": "index.js"
-          }
-          EOF
-          cat > /tmp/fallow-health-thresh/index.js <<'EOF'
-          export function simpleFunction(a, b) {
-            if (a > b) {
-              return a;
-            }
-            return b;
-          }
-          EOF
-      - id: health
+
+      - id: action
         uses: .
         continue-on-error: true
         with:
           command: health
-          root: /tmp/fallow-health-thresh
+          root: .
           format: json
           fail-on-issues: 'false'
           max-cyclomatic: '25'
           max-cognitive: '20'
           max-crap: '50'
           min-severity: 'high'
-          sort: cyclomatic
+          min-score: '0'
+          sort: 'cyclomatic'
           top: '10'
+          min-commits: '1'
           since: '1y'
-          min-commits: '5'
-          auto-changed-since: 'false'
-      - name: Assert health step ran
+
+      - name: Assert action ran
         env:
-          OUTCOME: ${{ steps.health.outcome }}
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
           if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: step ran (outcome=$OUTCOME)"
+            echo "PASS: action ran with health threshold inputs (outcome=$OUTCOME)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
