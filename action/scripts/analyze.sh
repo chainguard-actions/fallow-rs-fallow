@@ -787,7 +787,8 @@ fi
 # need to declare their own FALLOW_DIFF_FILE env (which would override
 # the analyze-step propagation otherwise). User-supplied path wins.
 if [ -n "${FALLOW_DIFF_FILE:-}" ] && [ -n "${GITHUB_ENV:-}" ]; then
-  printf '%s\n' "FALLOW_DIFF_FILE=${FALLOW_DIFF_FILE}" >> "$GITHUB_ENV"
+  _SAFE_DIFF_FILE=$(printf '%s' "$FALLOW_DIFF_FILE" | tr -d '\n\r')
+  printf '%s\n' "FALLOW_DIFF_FILE=${_SAFE_DIFF_FILE}" >> "$GITHUB_ENV"
 fi
 
 if [ -n "${INPUT_CHANGED_SINCE:-}" ] && [ -z "${FALLOW_DIFF_FILE:-}" ]; then

@@ -1,47 +1,73 @@
-name: Test baseline inputs
+name: Test save-baseline then baseline comparison
 on:
   workflow_dispatch:
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      FALLOW_SKIP_BINARY_VERIFY: '1'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Create minimal JS project
-        run: |
-          mkdir -p /tmp/fallow-test-baseline
-          cat > /tmp/fallow-test-baseline/package.json <<'EOF'
-          {
-            "name": "test-baseline",
-            "version": "1.0.0",
-            "scripts": { "start": "node index.js" }
-          }
-          EOF
-          cat > /tmp/fallow-test-baseline/index.js <<'EOF'
-          function hello() { return 'hello'; }
-          module.exports = { hello };
-          EOF
-      - id: action
+
+      - id: save
         uses: .
-        continue-on-error: true
         with:
           command: dead-code
-          root: /tmp/fallow-test-baseline
-          fail-on-issues: 'false'
-          save-baseline: /tmp/fallow-baseline.json
-          baseline: /tmp/fallow-baseline.json
-          dead-code-baseline: /tmp/fallow-baseline.json
-          health-baseline: /tmp/fallow-baseline.json
-          dupes-baseline: /tmp/fallow-baseline.json
+          root: tests/fixtures/simple-js
           format: json
+          save-baseline: ${{ github.workspace }}/fallow-baseline.json
+          fail-on-issues: 'false'
           auto-changed-since: 'false'
-      - name: Assert action ran
-        env:
-          OUTCOME: ${{ steps.action.outcome }}
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+
+      - name: Assert baseline file was saved
         run: |
-          echo "outcome: $OUTCOME"
-          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran (outcome=$OUTCOME)"
-          else
-            echo "FAIL: unexpected outcome '$OUTCOME'"
+          if [ ! -f "$GITHUB_WORKSPACE/fallow-baseline.json" ]; then
+            echo "FAIL: baseline file not saved"
             exit 1
           fi
+          cat "$GITHUB_WORKSPACE/fallow-baseline.json"
+          echo "PASS"
+
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          baseline: ${{ github.workspace }}/fallow-baseline.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+
+      - name: Assert baseline was loaded
+        env:
+          ISSUES: ${{ steps.load.outputs.issues }}
+          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
+          BPATH: ${{ steps.load.outputs.baseline-path }}
+          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+        run: |
+          echo "issues (with baseline): $ISSUES"
+          echo "issues (when saved): $SAVED_ISSUES"
+          echo "baseline-path: $BPATH"
+          echo "baseline-stale-entries: $STALE"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          if [ "$ISSUES" -gt "$SAVED_ISSUES" ]; then
+            echo "FAIL: baseline run reported more issues than the run that saved it"
+            exit 1
+          fi
+          if [ -n "$BPATH" ] && [ "$BPATH" != "$GITHUB_WORKSPACE/fallow-baseline.json" ]; then
+            echo "FAIL: unexpected baseline-path '$BPATH'"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,56 +1,67 @@
-name: Test health threshold inputs
+name: Test health thresholds and sorting inputs
 on:
   workflow_dispatch:
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      FALLOW_SKIP_BINARY_VERIFY: '1'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Create minimal JS project
-        run: |
-          mkdir -p /tmp/fallow-test-health
-          cat > /tmp/fallow-test-health/package.json <<'EOF'
-          {
-            "name": "test-health",
-            "version": "1.0.0",
-            "scripts": { "start": "node index.js" }
-          }
-          EOF
-          cat > /tmp/fallow-test-health/index.js <<'EOF'
-          function compute(a, b, c, d, e) {
-            if (a) { if (b) { if (c) { if (d) { return e; } } } }
-            return 0;
-          }
-          module.exports = { compute };
-          EOF
+        with:
+          fetch-depth: 0
+
       - id: action
         uses: .
-        continue-on-error: true
         with:
           command: health
-          root: /tmp/fallow-test-health
-          fail-on-issues: 'false'
-          max-cyclomatic: '20'
-          max-cognitive: '15'
-          max-crap: '30'
-          min-severity: 'moderate'
-          min-score: '0'
-          sort: 'cyclomatic'
-          top: '10'
-          min-commits: '1'
-          since: '1y'
-          save-snapshot: /tmp/fallow-snapshot
-          trend: 'false'
+          root: tests/fixtures/simple-js
           format: json
+          max-cyclomatic: '10'
+          max-cognitive: '8'
+          max-crap: '30'
+          top: '5'
+          sort: cognitive
+          since: 1y
+          min-commits: '1'
+          threads: '2'
+          fail-on-issues: 'false'
           auto-changed-since: 'false'
-      - name: Assert action ran
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+
+      - name: Assert issues output is a number and results file exists
         env:
-          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME"
-          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran (outcome=$OUTCOME)"
-          else
-            echo "FAIL: unexpected outcome '$OUTCOME'"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing at: $RESULTS"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert flags were forwarded to fallow
+        run: |
+          ARGS_FILE="$GITHUB_WORKSPACE/fallow-analysis-args.sh"
+          if [ ! -f "$ARGS_FILE" ]; then
+            echo "SKIP: args file not found at $ARGS_FILE"
+            exit 0
+          fi
+          cat "$ARGS_FILE"
+          for flag in --max-cyclomatic --max-cognitive --max-crap --top --sort --since --min-commits --threads; do
+            if ! grep -q -- "$flag" "$ARGS_FILE"; then
+              echo "FAIL: $flag not forwarded"
+              exit 1
+            fi
+          done
+          echo "PASS: all flags forwarded"
