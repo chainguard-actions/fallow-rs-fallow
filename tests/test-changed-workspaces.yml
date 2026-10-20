@@ -1,110 +1,56 @@
-name: Test changed-workspaces and workspace inputs
+name: Test changed-workspaces monorepo scoping
 on:
   workflow_dispatch:
 jobs:
-  test-workspace:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a minimal monorepo project
+      - name: Create a monorepo with git history
         run: |
-          mkdir -p /tmp/fallow-ws-test/packages/app
-          cat > /tmp/fallow-ws-test/package.json << 'EOF'
-          {
-            "name": "monorepo",
-            "version": "1.0.0",
-            "workspaces": ["packages/*"]
-          }
-          EOF
-          cat > /tmp/fallow-ws-test/packages/app/package.json << 'EOF'
-          {
-            "name": "app",
-            "version": "1.0.0",
-            "main": "index.js"
-          }
-          EOF
-          cat > /tmp/fallow-ws-test/packages/app/index.js << 'EOF'
-          export function used() { return 42; }
-          export function unused() { return 0; }
-          EOF
+          P="$GITHUB_WORKSPACE/fallow-test/changed-ws"
+          mkdir -p "$P/packages/pkg-a/src" "$P/packages/pkg-b/src"
+          cd "$P"
+          git -c init.defaultBranch=main init -q .
+          echo '{"name":"mono-root","version":"1.0.0","private":true,"workspaces":["packages/*"]}' > package.json
+          for n in a b; do
+            echo "{\"name\":\"pkg-$n\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"src/index.js\"}" > "packages/pkg-$n/package.json"
+            printf 'export function f() { return 1; }\n' > "packages/pkg-$n/src/index.js"
+          done
+          git add -A
+          git -c user.email=t@example.com -c user.name=Test commit -q -m base
+          git tag base
+          printf 'export function f() { return 1; }\nexport function g() { return 2; }\n' > packages/pkg-a/src/index.js
+          git add -A
+          git -c user.email=t@example.com -c user.name=Test commit -q -m change
+          git log --oneline
 
-      - id: action-workspace
+      - id: action
         uses: .
-        continue-on-error: true
         with:
           command: dead-code
-          root: /tmp/fallow-ws-test
+          root: fallow-test/changed-ws
           format: json
+          changed-workspaces: base
           fail-on-issues: 'false'
-          workspace: 'app'
           auto-changed-since: 'false'
           annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
 
-      - name: Assert workspace action ran
+      - name: Assert outputs
         env:
-          OUTCOME: ${{ steps.action-workspace.outcome }}
-          ISSUES: ${{ steps.action-workspace.outputs.issues }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran (outcome=$OUTCOME)"
-          else
-            echo "FAIL: unexpected outcome '$OUTCOME'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a number"
             exit 1
           fi
-
-  test-changed-workspaces:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-
-      - name: Create a minimal monorepo project
-        run: |
-          mkdir -p /tmp/fallow-cws-test/packages/app
-          cat > /tmp/fallow-cws-test/package.json << 'EOF'
-          {
-            "name": "monorepo",
-            "version": "1.0.0",
-            "workspaces": ["packages/*"]
-          }
-          EOF
-          cat > /tmp/fallow-cws-test/packages/app/package.json << 'EOF'
-          {
-            "name": "app",
-            "version": "1.0.0",
-            "main": "index.js"
-          }
-          EOF
-          cat > /tmp/fallow-cws-test/packages/app/index.js << 'EOF'
-          export function used() { return 42; }
-          EOF
-
-      - id: action-changed-workspaces
-        uses: .
-        continue-on-error: true
-        with:
-          command: dead-code
-          root: /tmp/fallow-cws-test
-          format: json
-          fail-on-issues: 'false'
-          changed-workspaces: 'HEAD'
-          auto-changed-since: 'false'
-          annotations: 'false'
-
-      - name: Assert changed-workspaces action ran
-        env:
-          OUTCOME: ${{ steps.action-changed-workspaces.outcome }}
-          ISSUES: ${{ steps.action-changed-workspaces.outputs.issues }}
-        run: |
-          echo "outcome: $OUTCOME"
-          echo "issues: $ISSUES"
-          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran (outcome=$OUTCOME)"
-          else
-            echo "FAIL: unexpected outcome '$OUTCOME'"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
+          echo "PASS"

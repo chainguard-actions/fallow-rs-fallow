@@ -1,0 +1,92 @@
+name: Test dead-code save-baseline then baseline comparison
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a JS project with an unused export
+        run: |
+          P="$GITHUB_WORKSPACE/fallow-test/baseline"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
+          {
+            "name": "baseline-project",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": { "start": "node src/index.js" }
+          }
+          EOF
+          cat > "$P/src/index.js" <<'EOF'
+          import { used } from './lib.js';
+          used();
+          EOF
+          cat > "$P/src/lib.js" <<'EOF'
+          export function used() { return 1; }
+          export function unused() { return 2; }
+          EOF
+
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: fallow-test/baseline
+          format: json
+          save-baseline: ${{ github.workspace }}/fallow-test/baseline-file.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert baseline file was saved
+        env:
+          ISSUES: ${{ steps.save.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          F="$GITHUB_WORKSPACE/fallow-test/baseline-file.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: baseline file not written at $F"
+            exit 1
+          fi
+          cat "$F"
+          if ! jq empty "$F"; then
+            echo "FAIL: baseline is not valid JSON"
+            exit 1
+          fi
+          echo "PASS"
+
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: fallow-test/baseline
+          format: json
+          baseline: ${{ github.workspace }}/fallow-test/baseline-file.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert baseline comparison run
+        env:
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          RESULTS: ${{ steps.compare.outputs.results }}
+          BASELINE_PATH: ${{ steps.compare.outputs.baseline-path }}
+          STALE: ${{ steps.compare.outputs.baseline-stale-entries }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "baseline-path: $BASELINE_PATH"
+          echo "baseline-stale-entries: $STALE"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          echo "PASS"

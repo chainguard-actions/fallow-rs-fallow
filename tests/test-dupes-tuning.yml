@@ -1,0 +1,73 @@
+name: Test dupes with min-tokens, min-lines, threshold and top
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a JS project with duplicated code
+        run: |
+          P="$GITHUB_WORKSPACE/fallow-test/dupes-tuning"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
+          {
+            "name": "dupes-tuning-project",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": { "start": "node src/index.js" }
+          }
+          EOF
+          for f in a b; do
+            cat > "$P/src/$f.js" <<'EOF'
+          export function compute(items) {
+            let total = 0;
+            for (const item of items) {
+              if (item.active) {
+                total += item.price * item.quantity;
+              } else {
+                total -= item.discount;
+              }
+            }
+            return total;
+          }
+          EOF
+          done
+          cat > "$P/src/index.js" <<'EOF'
+          import { compute } from './a.js';
+          import { compute as c2 } from './b.js';
+          compute([]); c2([]);
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          command: dupes
+          root: fallow-test/dupes-tuning
+          format: json
+          min-tokens: '10'
+          min-lines: '2'
+          threshold: '100'
+          top: '5'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          echo "PASS"

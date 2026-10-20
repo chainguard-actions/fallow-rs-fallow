@@ -10,48 +10,81 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.31.0** was hardened automatically. 3 finding(s) were identified and resolved across 1 iteration(s).
+Action **fallow-rs--fallow/v3.31.0** was hardened automatically. 8 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Sub-rule (a): Eight `run:` steps in action.yml directly interpolate `${{ github.action_path }}` inside the shell command string (e.g., `run: bash ${{ github.action_path }}/action/scripts/install.sh`). While `github.action_path` is GitHub-controlled and not directly attacker-supplied, the check rules require that NO `${{ ... }}` expression appear anywhere inside a `run:` shell command string. Each of these steps should instead use the `$GITHUB_ACTION_PATH` environment variable (already available in composite action steps) or set `ACTION_PATH: ${{ github.action_path }}` in an `env:` block and reference `$ACTION_PATH` in the script.
+Sub-rule (a): the 'Install fallow' step puts an expression straight into run: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Use bash "$GITHUB_ACTION_PATH/action/scripts/install.sh" instead.
 
 Locations:
 
-- `action.yml:540`
+- `action.yml:411`
+
+### script-injection (severity: high)
+
+Sub-rule (a): the 'Fallow branded token' step puts an expression straight into run: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`.
+
+Locations:
+
+- `action.yml:419`
+
+### script-injection (severity: high)
+
+Sub-rule (a): the 'Run analysis' step puts an expression straight into run: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`.
+
+Locations:
+
+- `action.yml:532`
+
+### script-injection (severity: high)
+
+Sub-rule (a): the 'Check Code Scanning availability' step puts an expression straight into run: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`.
+
+Locations:
+
 - `action.yml:545`
-- `action.yml:660`
-- `action.yml:668`
-- `action.yml:712`
-- `action.yml:733`
-- `action.yml:769`
-- `action.yml:800`
 
-### github-env-injection (severity: high)
+### script-injection (severity: high)
 
-In action/scripts/analyze.sh, the user-controlled value `FALLOW_DIFF_FILE` (sourced from `inputs.diff-file`) is written to `$GITHUB_ENV` without sanitization: `printf '%s\n' "FALLOW_DIFF_FILE=${FALLOW_DIFF_FILE}" >> "$GITHUB_ENV"`. An attacker can supply a newline in `inputs.diff-file` to inject arbitrary environment variables into subsequent steps. The fix is to sanitize before writing: `safe=$(printf '%s' "$FALLOW_DIFF_FILE" | tr -d '\n\r'); printf 'FALLOW_DIFF_FILE=%s\n' "$safe" >> "$GITHUB_ENV"`.
+Sub-rule (a): the 'Post PR comment' step puts an expression straight into run: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`.
 
 Locations:
 
-- `action/scripts/analyze.sh:585`
+- `action.yml:592`
 
-### github-env-injection (severity: high)
+### script-injection (severity: high)
 
-In action/scripts/analyze.sh, the user-controlled value `FALLOW_RENDER_PATH_PREFIX` (sourced from `inputs.args` via `--report-path-prefix` or `--annotations-path-prefix` flags) is written to `$GITHUB_ENV` without sanitization: `printf '%s\n' "FALLOW_RENDER_PATH_PREFIX=${FALLOW_RENDER_PATH_PREFIX}" >> "$GITHUB_ENV"`. An attacker can embed a newline in the `args` input to inject arbitrary environment variables into subsequent steps. The fix is to sanitize: `safe=$(printf '%s' "$FALLOW_RENDER_PATH_PREFIX" | tr -d '\n\r'); printf 'FALLOW_RENDER_PATH_PREFIX=%s\n' "$safe" >> "$GITHUB_ENV"`.
+Sub-rule (a): the 'Emit inline annotations' step puts an expression straight into run: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`.
 
 Locations:
 
-- `action/scripts/analyze.sh:660`
+- `action.yml:614`
+
+### script-injection (severity: high)
+
+Sub-rule (a): the 'Job summary' step puts an expression straight into run: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`.
+
+Locations:
+
+- `action.yml:640`
+
+### script-injection (severity: high)
+
+Sub-rule (a): the 'Post review comments' step puts an expression straight into run: `run: bash ${{ github.action_path }}/action/scripts/review.sh`.
+
+Locations:
+
+- `action.yml:673`
 
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, github-env-injection
+**Fixes applied:** script-injection
 
 **Notes:**
 
-Fixed 8 script-injection occurrences in action.yml by replacing `run: bash ${{ github.action_path }}/action/scripts/<script>.sh` with `run: bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"` (using the automatically-available $GITHUB_ACTION_PATH env var). Fixed 2 github-env-injection issues in action/scripts/analyze.sh: (1) sanitized FALLOW_DIFF_FILE before writing to $GITHUB_ENV using `tr -d '\n\r'`; (2) sanitized FALLOW_RENDER_PATH_PREFIX before writing to $GITHUB_ENV using `tr -d '\n\r'`. The two remaining `github.action_path` references in action.yml are in `env:` blocks (ACTION_JQ_DIR), which is the correct pattern and not a finding.
+In action.yml, I changed all 8 `run: bash ${{ github.action_path }}/action/scripts/<x>.sh` lines (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review) to `run: bash "$GITHUB_ACTION_PATH/action/scripts/<x>.sh"`. Every step uses shell: bash, so this form works. Some of the edits merged adjacent lines into one; I repaired those and checked the YAML structure. The env: entries ACTION_JQ_DIR: ${{ github.action_path }}/action/jq are still there. That is fine because env: is the intended place for expressions.
 
