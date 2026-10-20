@@ -1,4 +1,4 @@
-name: Test health threshold inputs
+name: Test health thresholds and sorting
 on:
   workflow_dispatch:
 jobs:
@@ -6,35 +6,59 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
 
       - id: action
         uses: .
-        continue-on-error: true
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
         with:
           command: health
-          root: .
+          root: tests/fixtures/simple-js
           format: json
           fail-on-issues: 'false'
-          max-cyclomatic: '25'
-          max-cognitive: '20'
-          max-crap: '50'
-          min-severity: 'high'
-          min-score: '0'
-          sort: 'cyclomatic'
-          top: '10'
-          min-commits: '1'
-          since: '1y'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          max-cyclomatic: '2'
+          max-cognitive: '2'
+          max-crap: '30.0'
+          top: '3'
+          sort: cognitive
+          threads: '2'
 
-      - name: Assert action ran
+      - name: Assert issues output is a number
         env:
-          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action ran with health threshold inputs (outcome=$OUTCOME)"
-          else
-            echo "FAIL: unexpected outcome '$OUTCOME'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
+          echo "PASS"
+
+      - name: Assert args forwarded and results valid
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          ARGS_FILE="$(dirname "$RESULTS")/fallow-analysis-args.sh"
+          if [ -f "$ARGS_FILE" ]; then
+            cat "$ARGS_FILE"
+            for flag in --max-cyclomatic --max-cognitive --max-crap --top --sort --threads; do
+              if ! grep -q -- "$flag" "$ARGS_FILE"; then
+                echo "FAIL: $flag not forwarded"
+                exit 1
+              fi
+            done
+          fi
+          echo "PASS"

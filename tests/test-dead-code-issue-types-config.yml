@@ -1,0 +1,55 @@
+name: Test dead-code with issue-types, explicit config and changed-since
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - id: action
+        uses: .
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          config: ${{ github.workspace }}/tests/fixtures/simple-js/.fallowrc.json
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          issue-types: unused-files, unused-exports
+          changed-since: HEAD
+
+      - name: Assert results valid and flags forwarded
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          ARGS_FILE="$(dirname "$RESULTS")/fallow-analysis-args.sh"
+          if [ -f "$ARGS_FILE" ]; then
+            cat "$ARGS_FILE"
+            for flag in --unused-files --unused-exports --config --changed-since; do
+              if ! grep -q -- "$flag" "$ARGS_FILE"; then
+                echo "FAIL: $flag not forwarded"
+                exit 1
+              fi
+            done
+          fi
+          echo "PASS"
