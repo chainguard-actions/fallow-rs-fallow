@@ -1,0 +1,52 @@
+name: Test health save-snapshot then trend
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: snapshot
+        uses: .
+        with:
+          command: health
+          save-snapshot: 'true'
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert snapshot saved
+        run: |
+          ls -la .fallow/snapshots 2>/dev/null || true
+          if [ -z "$(find .fallow/snapshots -type f 2>/dev/null | head -1)" ]; then
+            echo "FAIL: no snapshot file found under .fallow/snapshots"
+            exit 1
+          fi
+          echo "PASS"
+
+      - id: trend
+        uses: .
+        with:
+          command: health
+          trend: 'true'
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert trend run produced results
+        env:
+          RESULTS: ${{ steps.trend.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS" 2>/dev/null; then
+            echo "FAIL: results missing or invalid"
+            exit 1
+          fi
+          echo "PASS"

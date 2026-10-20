@@ -1,4 +1,4 @@
-name: Test changed-since input
+name: Test dead-code scoped with changed-since
 on:
   workflow_dispatch:
 jobs:
@@ -9,39 +9,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get a valid git ref for changed-since
-        id: git-ref
-        run: |
-          # Use HEAD~1 if it exists, otherwise use HEAD itself
-          if git rev-parse HEAD~1 > /dev/null 2>&1; then
-            REF=$(git rev-parse HEAD~1)
-          else
-            REF=$(git rev-parse HEAD)
-          fi
-          echo "ref=$REF" >> "$GITHUB_OUTPUT"
-          echo "Using ref: $REF"
-
       - id: action
         uses: .
-        continue-on-error: true
         with:
           command: dead-code
-          root: .
-          format: json
+          changed-since: HEAD
           fail-on-issues: 'false'
-          changed-since: ${{ steps.git-ref.outputs.ref }}
-          auto-changed-since: 'false'
+          fail-on-empty-analysis: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
 
-      - name: Assert changed-since run completed
+      - name: Assert results
         env:
-          OUTCOME: ${{ steps.action.outcome }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME"
-          if [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected on sentinel repo)"
-          elif [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded"
-          else
-            echo "FAIL: unexpected outcome '$OUTCOME'"
+          echo "results: $RESULTS"
+          echo "issues: $ISSUES"
+          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS" 2>/dev/null; then
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not an integer"
+            exit 1
+          fi
+          echo "PASS"

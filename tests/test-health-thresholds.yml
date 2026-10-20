@@ -1,4 +1,4 @@
-name: Test health threshold inputs
+name: Test health command with complexity thresholds
 on:
   workflow_dispatch:
 jobs:
@@ -9,35 +9,51 @@ jobs:
 
       - id: action
         uses: .
-        continue-on-error: true
         with:
           command: health
-          root: .
-          format: json
-          fail-on-issues: 'false'
           max-cyclomatic: '25'
           max-cognitive: '20'
-          max-crap: '40.0'
-          min-severity: 'high'
-          min-score: '0'
-          sort: 'cyclomatic'
-          top: '10'
-          since: '1y'
-          min-commits: '5'
-          save-snapshot: /tmp/fallow-snapshot
-          trend: 'false'
+          max-crap: '30.0'
+          top: '5'
+          sort: cognitive
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
 
-      - name: Assert health thresholds run completed
+      - name: Assert issues output is a number
         env:
-          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME"
-          if [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected on sentinel repo)"
-          elif [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded"
-          else
-            echo "FAIL: unexpected outcome '$OUTCOME'"
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: expected a non-negative integer, got: '$ISSUES'"
             exit 1
           fi
+          echo "PASS"
+
+      - name: Assert results file is valid JSON and flags were forwarded
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results path: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if ! jq empty "$RESULTS" 2>/dev/null; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
+          if [ -f fallow-analysis-args.sh ]; then
+            cat fallow-analysis-args.sh
+            for flag in --max-cyclomatic --max-cognitive --max-crap --top --sort; do
+              if ! grep -q -- "$flag" fallow-analysis-args.sh; then
+                echo "FAIL: expected $flag in analysis args"
+                exit 1
+              fi
+            done
+          fi
+          echo "PASS"
