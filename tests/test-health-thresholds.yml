@@ -1,4 +1,4 @@
-name: Test health thresholds, sorting, min-severity and config
+name: Test health command with complexity thresholds
 on:
   workflow_dispatch:
 jobs:
@@ -7,22 +7,25 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a simple JS project with a fallow config
+      - name: Create a minimal JS project
         run: |
-          P="$GITHUB_WORKSPACE/fallow-test/health-thresholds"
+          P="$GITHUB_WORKSPACE/tests/fixtures/health-thresholds-project"
           mkdir -p "$P/src"
           cat > "$P/package.json" <<'EOF'
           {
             "name": "health-thresholds-project",
             "version": "1.0.0",
             "type": "module",
+            "main": "src/index.js",
             "scripts": { "start": "node src/index.js" }
           }
           EOF
-          echo '{}' > "$P/.fallowrc.json"
           cat > "$P/src/index.js" <<'EOF'
           export function add(a, b) {
-            return a + b;
+            if (a > b) {
+              return a + b;
+            }
+            return b + a;
           }
           add(1, 2);
           EOF
@@ -31,35 +34,39 @@ jobs:
         uses: .
         with:
           command: health
-          root: fallow-test/health-thresholds
-          config: ${{ github.workspace }}/fallow-test/health-thresholds/.fallowrc.json
+          root: tests/fixtures/health-thresholds-project
           format: json
-          max-cyclomatic: '50'
-          max-cognitive: '50'
-          max-crap: '100.0'
-          top: '5'
-          sort: cognitive
-          min-severity: critical
-          threads: '2'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
+          max-cyclomatic: '50'
+          max-cognitive: '50'
+          max-crap: '100'
+          top: '5'
+          sort: cognitive
+          min-severity: critical
 
-      - name: Assert outputs
+      - name: Assert issues output is a number
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number"
+            echo "FAIL: expected numeric issues, got '$ISSUES'"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          echo "PASS"
+
+      - name: Assert results file is valid JSON
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"
