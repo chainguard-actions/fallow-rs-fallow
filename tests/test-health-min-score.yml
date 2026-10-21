@@ -1,4 +1,4 @@
-name: Test combined run with only selector
+name: Test health command with min-score gate of 0 (always passes)
 on:
   workflow_dispatch:
 jobs:
@@ -10,27 +10,27 @@ jobs:
       - id: action
         uses: .
         with:
-          only: dead-code
+          command: health
+          min-score: '0'
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert results
+      - name: Assert outputs
         env:
-          RESULTS: ${{ steps.action.outputs.results }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "results: $RESULTS"
           echo "issues: $ISSUES"
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS" 2>/dev/null; then
-            echo "FAIL: results missing or invalid"
+          echo "results: $RESULTS"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a non-negative integer"
             exit 1
           fi
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues is not an integer"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

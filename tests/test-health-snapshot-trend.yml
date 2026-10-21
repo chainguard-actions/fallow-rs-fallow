@@ -1,4 +1,4 @@
-name: Test health save-snapshot then trend
+name: Test health save-snapshot followed by trend comparison
 on:
   workflow_dispatch:
 jobs:
@@ -11,42 +11,48 @@ jobs:
         uses: .
         with:
           command: health
+          score: 'true'
           save-snapshot: 'true'
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert snapshot saved
+      - name: Assert snapshot was saved
         run: |
           ls -la .fallow/snapshots 2>/dev/null || true
-          if [ -z "$(find .fallow/snapshots -type f 2>/dev/null | head -1)" ]; then
-            echo "FAIL: no snapshot file found under .fallow/snapshots"
+          if [ -z "$(ls -A .fallow/snapshots 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot written under .fallow/snapshots"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: snapshot saved"
 
       - id: trend
         uses: .
         with:
           command: health
+          score: 'true'
           trend: 'true'
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert trend run produced results
+      - name: Assert trend run outputs
         env:
+          ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
+          echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS" 2>/dev/null; then
-            echo "FAIL: results missing or invalid"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a non-negative integer"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

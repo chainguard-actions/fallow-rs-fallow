@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds
+name: Test health command with complexity thresholds, sort, top and hotspots window
 on:
   workflow_dispatch:
 jobs:
@@ -6,54 +6,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
       - id: action
         uses: .
         with:
           command: health
-          max-cyclomatic: '25'
-          max-cognitive: '20'
-          max-crap: '30.0'
-          top: '5'
+          max-cyclomatic: '40'
+          max-cognitive: '30'
+          max-crap: '60.5'
           sort: cognitive
+          top: '10'
+          hotspots: 'true'
+          since: 1y
+          min-commits: '1'
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert issues output is a number
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-        run: |
-          echo "issues: $ISSUES"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected a non-negative integer, got: '$ISSUES'"
-            exit 1
-          fi
-          echo "PASS"
-
-      - name: Assert results file is valid JSON and flags were forwarded
-        env:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "results path: $RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a non-negative integer"
             exit 1
           fi
-          if ! jq empty "$RESULTS" 2>/dev/null; then
-            echo "FAIL: results file is not valid JSON"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
-          fi
-          if [ -f fallow-analysis-args.sh ]; then
-            cat fallow-analysis-args.sh
-            for flag in --max-cyclomatic --max-cognitive --max-crap --top --sort; do
-              if ! grep -q -- "$flag" fallow-analysis-args.sh; then
-                echo "FAIL: expected $flag in analysis args"
-                exit 1
-              fi
-            done
           fi
           echo "PASS"

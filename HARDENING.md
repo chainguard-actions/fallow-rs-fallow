@@ -16,67 +16,67 @@ Action **fallow-rs--fallow/v3.34.0** was hardened automatically. 8 finding(s) we
 
 ### script-injection (severity: high)
 
-Sub-rule (a): step 'Install fallow' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Fix: use "$GITHUB_ACTION_PATH" instead.
+Rule (a), direct expression interpolation in the 'Install fallow' step: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Pass the path through the GITHUB_ACTION_PATH env var instead: `bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
-- `action.yml:411`
+- `action.yml:581`
 
 ### script-injection (severity: high)
 
-Sub-rule (a): step 'Fallow branded token' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`.
+Rule (a), direct expression interpolation in the 'Fallow branded token' step: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
-- `action.yml:419`
+- `action.yml:589`
 
 ### script-injection (severity: high)
 
-Sub-rule (a): step 'Run analysis' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`.
+Rule (a), direct expression interpolation in the 'Run analysis' step: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
-- `action.yml:532`
+- `action.yml:702`
 
 ### script-injection (severity: high)
 
-Sub-rule (a): step 'Check Code Scanning availability' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`.
+Rule (a), direct expression interpolation in the 'Check Code Scanning availability' step: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
-- `action.yml:545`
+- `action.yml:715`
 
 ### script-injection (severity: high)
 
-Sub-rule (a): step 'Post PR comment' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`.
+Rule (a), direct expression interpolation in the 'Post PR comment' step: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
-- `action.yml:592`
+- `action.yml:762`
 
 ### script-injection (severity: high)
 
-Sub-rule (a): step 'Emit inline annotations' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`.
+Rule (a), direct expression interpolation in the 'Emit inline annotations' step: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
-- `action.yml:614`
+- `action.yml:784`
 
 ### script-injection (severity: high)
 
-Sub-rule (a): step 'Job summary' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`.
+Rule (a), direct expression interpolation in the 'Job summary' step: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
-- `action.yml:640`
+- `action.yml:810`
 
 ### script-injection (severity: high)
 
-Sub-rule (a): step 'Post review comments' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/review.sh`.
+Rule (a), direct expression interpolation in the 'Post review comments' step: `run: bash ${{ github.action_path }}/action/scripts/review.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
-- `action.yml:673`
+- `action.yml:843`
 
 ## Iteration Notes
 
@@ -86,17 +86,13 @@ Locations:
 
 **Notes:**
 
-I fixed all 8 script-injection findings in action.yml. Each step's `run: bash ${{ github.action_path }}/action/scripts/<x>.sh` now reads `run: bash "$GITHUB_ACTION_PATH/action/scripts/<x>.sh"`. The affected steps are install, broker-token, analyze, check-code-scanning, comment, annotate, summary and review. Every one of them uses `shell: bash`, so the `$VAR` syntax is correct, and the quotes keep a path containing spaces as one argument. Nothing has been run or re-scanned yet. Two `ACTION_JQ_DIR` settings still use `${{ github.action_path }}`, but they sit in `env:` blocks rather than in shell code, so I left them unchanged.
+In action.yml I changed the 8 `run: bash ${{ github.action_path }}/action/scripts/<script>.sh` lines to `run: bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"`. All of these steps use shell: bash. The two ACTION_JQ_DIR env entries still use github.action_path, which is fine because env: values are not shell-interpreted. A few edits run in parallel overwrote each other, so I re-applied them one at a time and checked the result. Nothing has been run.
 
 ### Iteration 2
 
-**Fixes applied:** script-injection, invalid-yaml
+**Fixes applied:** invalid-yaml
 
 **Notes:**
 
-script-injection: The 'Run analysis', 'Check Code Scanning availability' and 'Emit inline annotations' steps now call their scripts with the quoted form `bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"`, like the other steps already did.
-
-invalid-yaml: An earlier pass had corrupted action.yml. Two run: lines had been merged with the next step's name (`run: basrun: bash "...comment.sh"name: Emit inline annotations` and the same for summary.sh / 'Post review comments'). I split each back into a correct `run:` line followed by a `- name:` entry, with nothing removed. I haven't parsed the file with a YAML loader. I checked by reading the repaired section back and by listing every run: line.
-
-Tool problem: when I sent several edits at once, they partly overwrote each other. Some were lost and others mangled nearby text (a missing `}}` on FALLOW_API_RETRY_DELAY and a garbled step name). I redid the edits one at a time and checked each by reading the file back. That kind of overlap may be what corrupted the file in the first place.
+Fixed the broken line in action.yml. The 'Job summary' step had `run:run:` and the next step ('Post review comments') stuck onto the same line. It is now `run: bash "$GITHUB_ACTION_PATH/action/scripts/summary.sh"`, and the next step starts on its own line with the right indentation. No other changes.
 

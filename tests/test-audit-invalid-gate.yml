@@ -12,10 +12,10 @@ jobs:
         continue-on-error: true
         with:
           command: audit
-          gate: bogus-gate
-          dead-code-baseline: baselines/dead-code.json
-          health-baseline: baselines/health.json
-          dupes-baseline: baselines/dupes.json
+          gate: not-a-gate
+          dead-code-baseline: fallow-dead-code-baseline.json
+          health-baseline: fallow-health-baseline.json
+          dupes-baseline: fallow-dupes-baseline.json
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
@@ -29,11 +29,11 @@ jobs:
           echo "outcome: $OUTCOME"
           echo "issues: '$ISSUES'"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for invalid gate"
+            echo "FAIL: expected failure for invalid gate value"
             exit 1
           fi
           if [ -n "$ISSUES" ]; then
-            echo "FAIL: analysis should not have run"
+            echo "FAIL: analysis should not have produced an issue count"
             exit 1
           fi
           echo "PASS"
