@@ -9,8 +9,6 @@ jobs:
       FALLOW_SKIP_BINARY_VERIFY: '1'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
 
       - id: action
         uses: .
@@ -19,22 +17,22 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          workspace: 'web'
-          changed-workspaces: 'nonexistent-ref-for-test'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          workspace: simple-js-fixture
+          changed-workspaces: HEAD
 
-      - name: Assert action failed
+      - name: Assert action rejected conflicting workspace inputs
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure when combining workspace and changed-workspaces, got '$OUTCOME'"
+            echo "FAIL: expected failure when workspace and changed-workspaces are both set"
             exit 1
           fi
           echo "PASS"

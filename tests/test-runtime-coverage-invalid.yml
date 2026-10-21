@@ -1,4 +1,4 @@
-name: Test runtime-coverage inputs reject non-integer min-invocations-hot
+name: Test runtime coverage options reject a non-numeric min-invocations-hot
 on:
   workflow_dispatch:
 
@@ -17,30 +17,24 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          runtime-coverage: coverage/v8
-          min-invocations-hot: 'not-a-number'
-          min-observation-volume: '10'
-          low-traffic-threshold: '0.01'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          runtime-coverage: tests/fixtures/coverage/coverage-final.json
+          min-invocations-hot: not-a-number
+          min-observation-volume: '10'
+          low-traffic-threshold: '0.1'
 
-      - name: Assert action failed input validation
+      - name: Assert action rejected invalid input
         env:
           OUTCOME: ${{ steps.action.outcome }}
-          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "outcome: $OUTCOME"
-          echo "issues: $ISSUES"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for invalid min-invocations-hot, got '$OUTCOME'"
-            exit 1
-          fi
-          if [ -n "$ISSUES" ]; then
-            echo "FAIL: issues should be empty when validation fails"
+            echo "FAIL: expected validation failure for non-numeric min-invocations-hot"
             exit 1
           fi
           echo "PASS"

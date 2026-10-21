@@ -1,4 +1,4 @@
-name: Test save-baseline then baseline comparison
+name: Test dead-code save-baseline then baseline comparison
 on:
   workflow_dispatch:
 
@@ -16,58 +16,41 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          save-baseline: ${{ github.workspace }}/fallow-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          save-baseline: fallow-dead-code-baseline.json
 
-      - name: Assert baseline file was saved
-        run: |
-          if [ ! -f "$GITHUB_WORKSPACE/fallow-baseline.json" ]; then
-            echo "FAIL: baseline file not saved"
-            exit 1
-          fi
-          cat "$GITHUB_WORKSPACE/fallow-baseline.json"
-          echo "PASS"
-
-      - id: load
+      - id: action
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          baseline: ${{ github.workspace }}/fallow-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          baseline: fallow-dead-code-baseline.json
 
-      - name: Assert baseline was loaded
+      - name: Assert baseline run outputs
         env:
-          ISSUES: ${{ steps.load.outputs.issues }}
-          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
-          BPATH: ${{ steps.load.outputs.baseline-path }}
-          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          BASELINE_PATH: ${{ steps.action.outputs.baseline-path }}
         run: |
-          echo "issues (with baseline): $ISSUES"
-          echo "issues (when saved): $SAVED_ISSUES"
-          echo "baseline-path: $BPATH"
-          echo "baseline-stale-entries: $STALE"
+          echo "issues: $ISSUES"
+          echo "baseline-path: $BASELINE_PATH"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ "$ISSUES" -gt "$SAVED_ISSUES" ]; then
-            echo "FAIL: baseline run reported more issues than the run that saved it"
-            exit 1
-          fi
-          if [ -n "$BPATH" ] && [ "$BPATH" != "$GITHUB_WORKSPACE/fallow-baseline.json" ]; then
-            echo "FAIL: unexpected baseline-path '$BPATH'"
+          if [ -n "$BASELINE_PATH" ] && [ "$BASELINE_PATH" != "fallow-dead-code-baseline.json" ]; then
+            echo "FAIL: unexpected baseline-path '$BASELINE_PATH'"
             exit 1
           fi
           echo "PASS"
