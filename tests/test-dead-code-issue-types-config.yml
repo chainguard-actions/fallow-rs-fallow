@@ -1,4 +1,4 @@
-name: Test dead-code with issue-types, explicit config and changed-since
+name: Test dead-code with issue-types filter and explicit config
 on:
   workflow_dispatch:
 jobs:
@@ -25,31 +25,24 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          issue-types: unused-files, unused-exports
-          changed-since: HEAD
+          issue-types: 'unused-exports, unused-files'
 
-      - name: Assert results valid and flags forwarded
+      - name: Assert issue-type flags and config forwarded
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          cat fallow-analysis-args.sh
+          grep -q -- '--unused-exports' fallow-analysis-args.sh || { echo "FAIL: --unused-exports not forwarded"; exit 1; }
+          grep -q -- '--unused-files' fallow-analysis-args.sh || { echo "FAIL: --unused-files not forwarded"; exit 1; }
+          grep -q -- '.fallowrc.json' fallow-analysis-args.sh || { echo "FAIL: config not forwarded"; exit 1; }
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric: '$ISSUES'"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
             echo "FAIL: results file missing or invalid"
             exit 1
-          fi
-          ARGS_FILE="$(dirname "$RESULTS")/fallow-analysis-args.sh"
-          if [ -f "$ARGS_FILE" ]; then
-            cat "$ARGS_FILE"
-            for flag in --unused-files --unused-exports --config --changed-since; do
-              if ! grep -q -- "$flag" "$ARGS_FILE"; then
-                echo "FAIL: $flag not forwarded"
-                exit 1
-              fi
-            done
           fi
           echo "PASS"

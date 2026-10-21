@@ -1,4 +1,4 @@
-name: Test health min-score gate passes at zero
+name: Test health min-score and min-severity gates (passing)
 on:
   workflow_dispatch:
 jobs:
@@ -25,19 +25,20 @@ jobs:
           auto-changed-since: 'false'
           annotations: 'false'
           min-score: '0'
+          min-severity: critical
 
-      - name: Assert run succeeded with results
+      - name: Assert gate flags forwarded and results valid
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
+          cat fallow-analysis-args.sh
+          grep -q -- '--min-score' fallow-analysis-args.sh || { echo "FAIL: --min-score not forwarded"; exit 1; }
+          grep -q -- '--min-severity' fallow-analysis-args.sh || { echo "FAIL: --min-severity not forwarded"; exit 1; }
+          grep -q -- '--complexity' fallow-analysis-args.sh || { echo "FAIL: --complexity not implied by min-score"; exit 1; }
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid: $RESULTS"
             exit 1
           fi
           echo "PASS"

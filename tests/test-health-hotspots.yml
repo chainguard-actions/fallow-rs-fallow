@@ -1,4 +1,4 @@
-name: Test health hotspots with since and min-commits
+name: Test health hotspots with git history window
 on:
   workflow_dispatch:
 jobs:
@@ -28,19 +28,26 @@ jobs:
           since: 1y
           min-commits: '1'
 
-      - name: Assert results valid
+      - name: Assert issues output is a number
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
+          echo "PASS: issues=$ISSUES"
+
+      - name: Assert since/min-commits forwarded and results valid
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          cat fallow-analysis-args.sh
+          grep -q -- '--since' fallow-analysis-args.sh || { echo "FAIL: --since not forwarded"; exit 1; }
+          grep -q -- '--min-commits' fallow-analysis-args.sh || { echo "FAIL: --min-commits not forwarded"; exit 1; }
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid: $RESULTS"
             exit 1
           fi
           echo "PASS"

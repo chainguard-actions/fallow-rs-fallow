@@ -1,4 +1,4 @@
-name: Test health thresholds and sorting
+name: Test health analysis with custom thresholds
 on:
   workflow_dispatch:
 jobs:
@@ -24,11 +24,11 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          max-cyclomatic: '2'
-          max-cognitive: '2'
-          max-crap: '30.0'
-          top: '3'
+          max-cyclomatic: '3'
+          max-cognitive: '3'
+          max-crap: '30'
           sort: cognitive
+          top: '5'
           threads: '2'
 
       - name: Assert issues output is a number
@@ -40,25 +40,35 @@ jobs:
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: issues=$ISSUES"
 
-      - name: Assert args forwarded and results valid
+      - name: Assert results file is valid JSON
         env:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "results: $RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          echo "results path: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
-          ARGS_FILE="$(dirname "$RESULTS")/fallow-analysis-args.sh"
-          if [ -f "$ARGS_FILE" ]; then
-            cat "$ARGS_FILE"
-            for flag in --max-cyclomatic --max-cognitive --max-crap --top --sort --threads; do
-              if ! grep -q -- "$flag" "$ARGS_FILE"; then
-                echo "FAIL: $flag not forwarded"
-                exit 1
-              fi
-            done
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
           fi
           echo "PASS"
+
+      - name: Assert threshold flags were forwarded to fallow
+        run: |
+          ARGS_FILE="fallow-analysis-args.sh"
+          if [ ! -f "$ARGS_FILE" ]; then
+            echo "FAIL: $ARGS_FILE not found"
+            exit 1
+          fi
+          cat "$ARGS_FILE"
+          for flag in --max-cyclomatic --max-cognitive --max-crap --sort --top --threads; do
+            if ! grep -q -- "$flag" "$ARGS_FILE"; then
+              echo "FAIL: $flag not forwarded"
+              exit 1
+            fi
+          done
+          echo "PASS: all threshold flags forwarded"
