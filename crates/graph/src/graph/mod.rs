@@ -1,0 +1,2807 @@
+//! Module dependency graph with re-export chain propagation and reachability analysis.
+//!
+//! The graph is built from resolved modules and entry points, then used to determine
+//! which files are reachable and which exports are referenced.
+
+mod ambiguity;
+mod build;
+mod cycles;
+mod effective_exports;
+mod effective_re_exports;
+mod entry_load;
+mod fan_io;
+mod impact_closure;
+mod namespace_aliases;
+mod namespace_indexes;
+mod namespace_re_exports;
+mod narrowing;
+mod package_entry;
+mod partition_order;
+mod public_exports;
+mod re_exports;
+mod reachability;
+mod shortest_import_path;
+mod test_reach;
+pub mod types;
+
+use std::path::Path;
+
+use fixedbitset::FixedBitSet;
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::resolve::{ResolvedModule, ResolvedReplacedModuleTarget};
+use fallow_types::discover::{DiscoveredFile, EntryPoint, FileId};
+use fallow_types::extract::{ImportLoadKind, ImportedName, ModuleLoadMechanism};
+use types::{ReferencePathInterner, ReferencePathNode, ReferenceRouteNodeId, ReferenceRoutes};
+
+/// Strip `root` and forward-slash-normalize a module path so report keys match
+/// across platforms. Every report surface that emits a root-relative path key
+/// goes through this, so the four surfaces cannot drift apart.
+pub(super) fn relativize(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+pub use ambiguity::{AmbiguityParticipants, AmbiguousStarExport};
+pub use cycles::CycleOptions;
+pub use effective_exports::{EffectiveExportBinding, EffectiveExportResolution, ExportNamespace};
+pub use effective_re_exports::EffectiveReExportRoute;
+pub use entry_load::{DominatingImport, EntryLoadClosure};
+pub use fan_io::{FocusFileFacts, FocusFileFactsPaths};
+pub use impact_closure::{
+    CoordinationGap, CoordinationGapPaths, ImpactClosure, ImpactClosurePaths,
+};
+pub use partition_order::{PartitionOrder, PartitionOrderPaths, ReviewUnit, ReviewUnitPaths};
+pub use public_exports::PublicExportOrigin;
+pub use re_exports::GraphReExportCycle;
+pub use shortest_import_path::ImportPathHop;
+pub use test_reach::{ExportTestReach, ExportTestReachResult, TestMaskingState};
+pub use types::{
+    ExportSymbol, ModuleNode, ReExportEdge, ReferenceKind, ReferencePathId, SymbolReference,
+};
+
+/// Direct declaration selected by one unique effective export binding.
+#[derive(Debug, Clone, Copy)]
+pub struct EffectiveExportOrigin<'graph> {
+    file_id: FileId,
+    export: &'graph ExportSymbol,
+}
+
+/// One namespace-specific export exposed by a module and its effective binding.
+#[derive(Debug, Clone, Copy)]
+pub struct EffectiveExportSurface<'graph> {
+    binding: EffectiveExportBinding,
+    namespace: ExportNamespace,
+    export: Option<&'graph ExportSymbol>,
+    origin: Option<EffectiveExportOrigin<'graph>>,
+    local_export: bool,
+}
+
+impl<'graph> EffectiveExportSurface<'graph> {
+    /// Canonical binding exposed by the requested module/name/namespace.
+    #[must_use]
+    pub const fn binding(self) -> EffectiveExportBinding {
+        self.binding
+    }
+
+    /// Namespace selected for this surface.
+    #[must_use]
+    pub const fn namespace(self) -> ExportNamespace {
+        self.namespace
+    }
+
+    /// Reference-bearing graph export selected for this surface.
+    ///
+    /// Direct declarations use their origin export. Named re-exports use their
+    /// single barrel surface while references remain namespace-specific;
+    /// namespace objects and implicit SFC defaults have no declaration export.
+    #[must_use]
+    pub const fn export(self) -> Option<&'graph ExportSymbol> {
+        self.export
+    }
+
+    /// Direct declaration that owns this binding, when one exists.
+    #[must_use]
+    pub const fn origin(self) -> Option<EffectiveExportOrigin<'graph>> {
+        self.origin
+    }
+}
+
+impl<'graph> EffectiveExportOrigin<'graph> {
+    /// Module that owns the selected declaration.
+    #[must_use]
+    pub const fn file_id(self) -> FileId {
+        self.file_id
+    }
+
+    /// Selected declaration in its owning module.
+    #[must_use]
+    pub const fn export(self) -> &'graph ExportSymbol {
+        self.export
+    }
+}
+
+/// True when the path's final component looks like a TypeScript declaration
+/// file (`.d.ts`, `.d.mts`, `.d.cts`). Used to seed declaration files as
+/// overall entry points so ambient `typeof import()` references stay alive;
+/// see [`ModuleGraph::build_with_declaration_seeding`] for the exception.
+///
+/// The analysis layer reuses this predicate. Keep it in sync with the
+/// discovery walk's declaration-file predicate, which exempts declaration
+/// files from the file-size skip.
+#[must_use]
+pub fn is_declaration_file_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| {
+            name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
+        })
+}
+
+/// The entry points of a graph build, split by reachability role.
+#[derive(Debug, Clone, Copy)]
+pub struct ReachabilityRoots<'a> {
+    /// Every entry point, of any role.
+    pub all: &'a [EntryPoint],
+    /// Runtime/application entry points.
+    pub runtime: &'a [EntryPoint],
+    /// Test entry points.
+    pub test: &'a [EntryPoint],
+}
+
+/// The core module dependency graph.
+///
+/// Derives `serde` so the whole graph can be persisted to `.fallow/graph-cache.bin`
+/// (see `crate::cache`) and skipped on a re-run whose inputs are byte-identical.
+/// `namespace_imported` is a derived `FixedBitSet` reconstructed from the edge
+/// set on cache load (`reconstruct_namespace_imported`), so it is
+/// `#[serde(skip, default)]` rather than persisted.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ModuleGraph {
+    /// All modules indexed by `FileId`.
+    ///
+    /// Invariant: `modules[file_id.0 as usize].file_id == file_id` for every
+    /// `FileId` in the graph. Holds because `discover/walk.rs` assigns FileIds
+    /// sequentially via `.enumerate()` after path-sorting, and
+    /// `build::populate_edges` pushes one `ModuleNode` per file in iteration
+    /// order. Detectors rely on this for O(1) FileId-to-module lookup
+    /// (`graph.modules.get(file_id.0 as usize)`) instead of building a
+    /// per-call `FxHashMap<FileId, &ModuleNode>`.
+    pub modules: Vec<ModuleNode>,
+    /// Flat edge storage for cache-friendly iteration.
+    edges: Vec<Edge>,
+    /// Maps npm package names to the `FileId`s that import them, with one
+    /// entry per import. A file with two imports of a package appears twice.
+    pub package_usage: FxHashMap<String, Vec<FileId>>,
+    /// Maps npm package names to the `FileId`s that import them with type-only
+    /// imports, with one entry per type-only import.
+    /// A package appearing here but not in `package_usage` (or only in both) indicates
+    /// it's only used for types and could be a devDependency.
+    pub type_only_package_usage: FxHashMap<String, Vec<FileId>>,
+    /// Maps npm package names to the `FileId`s that read a file of the
+    /// package through a webpack asset loader (`raw-loader!pkg/file.txt`).
+    /// The bundle holds the text, the bytes or a URL of the file, so the
+    /// package is used at build time and the import is not a runtime import.
+    /// Every entry is also in `package_usage`.
+    pub asset_package_usage: FxHashMap<String, Vec<FileId>>,
+    /// Package specifiers that each module imports statically with a runtime
+    /// value (no `import()`, no type-only import). Read by the startup weight
+    /// report to list the packages on the startup path of an entry.
+    pub eager_package_imports: FxHashMap<FileId, Vec<EagerPackageImport>>,
+    /// All entry point `FileId`s.
+    pub entry_points: FxHashSet<FileId>,
+    /// Runtime/application entry point `FileId`s.
+    pub runtime_entry_points: FxHashSet<FileId>,
+    /// Test entry point `FileId`s.
+    pub test_entry_points: FxHashSet<FileId>,
+    /// Compact correlation index for distinct test-root replacement profiles.
+    ///
+    /// Empty when no test root declares a project-internal replacement. That
+    /// preserves the ordinary single-BFS test reachability path.
+    test_reachability_index: TestReachabilityIndex,
+    /// Flat interned linked paths used by exact export references.
+    reference_paths: Vec<ReferencePathNode>,
+    /// Compact transition graphs used by namespace-derived references.
+    reference_routes: ReferenceRoutes,
+    /// Reverse index: for each `FileId`, which files import it.
+    pub reverse_deps: Vec<Vec<FileId>>,
+    /// Precomputed: which modules have namespace imports (import * as ns).
+    ///
+    /// Derived entirely from the edge set (a module is namespace-imported iff
+    /// some edge to it carries an `ImportedName::Namespace` symbol), so it is
+    /// not persisted: on cache load it is rebuilt by
+    /// [`ModuleGraph::reconstruct_namespace_imported`], which replicates the
+    /// exact insertion logic from `build.rs`.
+    #[serde(skip, default)]
+    namespace_imported: FixedBitSet,
+    /// Re-export cycles and self-loops detected during Phase 4 chain
+    /// resolution. Each entry names the participating files (sorted
+    /// lexicographically) and a `is_self_loop` flag distinguishing
+    /// single-file self-re-exports from multi-node cycles. Populated by
+    /// `re_exports::find_re_export_cycles` and consumed by the analysis
+    /// backend, which wraps each entry in a typed `ReExportCycleFinding`.
+    pub re_export_cycles: Vec<GraphReExportCycle>,
+    /// Canonical direct and transitive export binding resolution.
+    effective_exports: effective_exports::EffectiveExportIndex,
+}
+
+/// An edge in the module graph.
+///
+/// Public consumers inspect relationships through summary methods such as
+/// [`ModuleGraph::direct_importer_summaries`] and
+/// [`ModuleGraph::outgoing_edge_summaries`]. Keeping the raw storage private
+/// preserves graph invariants and the `Edge == 32` size assertion below.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct Edge {
+    /// Source module of this import edge.
+    source: FileId,
+    /// Target module imported by `source`.
+    target: FileId,
+    /// Symbols imported across this edge.
+    symbols: Vec<ImportedSymbol>,
+}
+
+impl Edge {
+    /// Whether the target can run as code through this edge (see
+    /// [`ImportLoadKind::runs_target_code`]). An edge whose every symbol is an
+    /// asset reference keeps the target in use, but reachability does not
+    /// continue into the imports of the target.
+    #[must_use]
+    pub(crate) fn runs_target_code(&self) -> bool {
+        self.symbols.is_empty()
+            || self
+                .symbols
+                .iter()
+                .any(|symbol| symbol.load_kind.runs_target_code())
+    }
+
+    /// Whether a test that loads the target through this edge runs target
+    /// code. The build erases a type-only import before the test runs, so an
+    /// edge whose every symbol is type-only gives no test reach. Dead-code
+    /// reachability keeps [`Self::runs_target_code`].
+    #[must_use]
+    pub(crate) fn runs_target_code_in_tests(&self) -> bool {
+        self.symbols.is_empty()
+            || self
+                .symbols
+                .iter()
+                .any(|symbol| !symbol.is_type_only && symbol.load_kind.runs_target_code())
+    }
+}
+
+/// One package specifier that a module imports statically with a runtime value.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EagerPackageImport {
+    /// The package name, for example `lodash` or `@scope/pkg`.
+    pub package: String,
+    /// The specifier as written, for example `lodash/debounce`.
+    pub specifier: String,
+}
+
+/// A symbol imported across an edge.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ImportedSymbol {
+    /// The name as imported from the target (`Named`, `Default`, `Namespace`,
+    /// `SideEffect`).
+    pub imported_name: ImportedName,
+    /// Local binding name in the importing file.
+    pub local_name: String,
+    /// Byte span of the import statement in the source file.
+    #[serde(with = "crate::cache::span_serde")]
+    pub import_span: oxc_span::Span,
+    /// Whether this import is type-only (`import type { ... }`).
+    /// Used to skip type-only edges in circular dependency detection.
+    pub is_type_only: bool,
+    /// Whether the ambient star this symbol stands for is spelled
+    /// `export type *` (issue #2375), which forwards type meanings only.
+    pub is_type_only_star: bool,
+    /// Runtime module mechanism that created this symbol edge.
+    mechanism: ModuleLoadMechanism,
+    /// When the target loads relative to the importer, and whether it runs
+    /// at all. Fits in the padding after the flags, so the 64-byte size
+    /// assertion holds.
+    load_kind: ImportLoadKind,
+}
+
+impl ImportedSymbol {
+    /// When the target of this symbol edge loads, relative to the importer.
+    #[must_use]
+    pub const fn load_kind(&self) -> ImportLoadKind {
+        self.load_kind
+    }
+
+    /// Whether this symbol loads its target before the importer runs and
+    /// carries a runtime value, so the target is on the startup path.
+    #[must_use]
+    pub const fn is_eager_value(&self) -> bool {
+        self.load_kind.is_eager_value(self.is_type_only)
+    }
+
+    /// Whether this symbol runs its target (see
+    /// [`ImportLoadKind::loads_target`]). A path reference and an asset
+    /// reference keep the target in use without running it.
+    #[must_use]
+    pub const fn loads_target(&self) -> bool {
+        self.load_kind.loads_target()
+    }
+
+    /// Whether this symbol is the whole-module shape of `export *` or
+    /// `export * as ns` inside a `declare module '...'` body (issue #2357):
+    /// type-only, bound to no local name, and naming the module namespace or
+    /// its `default` member (recorded for the `export * as ns` form).
+    ///
+    /// The ambient body is erased at runtime, so package usage stays
+    /// type-only, but the star forwards every export of the target, so the
+    /// graph credits its star surface instead of narrowing to imported names.
+    /// Every other type-only symbol, bound (`import type { x }`) or not (an
+    /// ambient named re-export, an `import()` type reference), credits the
+    /// names it actually imports.
+    #[must_use]
+    pub(crate) fn is_ambient_star(&self) -> bool {
+        self.is_type_only
+            && self.local_name.is_empty()
+            && matches!(
+                self.imported_name,
+                ImportedName::Namespace | ImportedName::Default
+            )
+    }
+
+    /// Whether this ambient star forwards both meanings of every name it
+    /// carries.
+    ///
+    /// `export *` inside the body re-exports the target's value and type
+    /// declarations alike, so it credits both namespaces. `export type *`
+    /// erases every value meaning (issue #2375), so it credits type space
+    /// only, exactly like the ambient named re-exports of issue #2349.
+    #[must_use]
+    pub(crate) fn is_value_bearing_ambient_star(&self) -> bool {
+        self.is_ambient_star() && !self.is_type_only_star
+    }
+}
+
+/// Flat bitset index mapping files to the test profiles that reach them.
+///
+/// Each file owns `words_per_file` contiguous reachable-profile words. Masks are
+/// target-sparse: only explicit replacement targets own a row, while every row
+/// retains dense profile words for constant-time word lookup. Retained storage
+/// is `O((files + replaced_targets) * ceil(profiles / 64))`; correlation queries
+/// intersect machine words instead of scanning profile file lists.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct TestReachabilityIndex {
+    profile_count: usize,
+    words_per_file: usize,
+    reachable_profiles: Vec<u64>,
+    masked_profiles: Vec<MaskedTestProfiles>,
+    /// The test roots of each profile, by profile index. The per-root query
+    /// reads it to find the replacement mask of one root.
+    profile_roots: Vec<Vec<FileId>>,
+    /// True when test roots declare replacement masks, but the distinct mask
+    /// count passed the profile safety cap. Reachability then ignores the
+    /// masks, so a mocked module counts as reached.
+    masking_capped: bool,
+}
+
+/// Sparse profile-mask row for one replaced target.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct MaskedTestProfiles {
+    target: FileId,
+    profiles: Vec<u64>,
+}
+
+impl TestReachabilityIndex {
+    fn new(file_capacity: usize, profile_count: usize) -> Self {
+        let words_per_file = profile_count.div_ceil(u64::BITS as usize);
+        let storage_len = file_capacity.saturating_mul(words_per_file);
+        Self {
+            profile_count,
+            words_per_file,
+            reachable_profiles: vec![0; storage_len],
+            masked_profiles: Vec::new(),
+            profile_roots: Vec::new(),
+            masking_capped: false,
+        }
+    }
+
+    /// The replaced targets of each test root that has a replacement, sorted
+    /// by target id.
+    fn root_masks(&self) -> FxHashMap<FileId, Vec<FileId>> {
+        let mut masks: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
+        for row in &self.masked_profiles {
+            for (profile, roots) in self.profile_roots.iter().enumerate() {
+                let masked = row
+                    .profiles
+                    .get(profile / u64::BITS as usize)
+                    .is_some_and(|word| word & (1_u64 << (profile % u64::BITS as usize)) != 0);
+                if !masked {
+                    continue;
+                }
+                for &root in roots {
+                    masks.entry(root).or_default().push(row.target);
+                }
+            }
+        }
+        masks
+    }
+
+    fn set_sparse_masks(&mut self, masks: FxHashMap<FileId, Vec<u64>>) {
+        let mut rows: Vec<_> = masks
+            .into_iter()
+            .map(|(target, profiles)| MaskedTestProfiles { target, profiles })
+            .collect();
+        rows.sort_unstable_by_key(|row| row.target.0);
+        self.masked_profiles = rows;
+    }
+
+    fn profiles_for<'a>(&self, storage: &'a [u64], file_id: FileId) -> Option<&'a [u64]> {
+        let start = (file_id.0 as usize).checked_mul(self.words_per_file)?;
+        let end = start.checked_add(self.words_per_file)?;
+        storage.get(start..end)
+    }
+
+    fn masked_profiles_for(&self, file_id: FileId) -> Option<&[u64]> {
+        self.masked_profiles
+            .binary_search_by_key(&file_id.0, |row| row.target.0)
+            .ok()
+            .map(|index| self.masked_profiles[index].profiles.as_slice())
+    }
+
+    fn covers_reference_path(
+        &self,
+        source: FileId,
+        path: types::ReferencePathId,
+        paths: &[ReferencePathNode],
+        routes: &ReferenceRoutes,
+    ) -> bool {
+        let Some(source_profiles) = self.profiles_for(&self.reachable_profiles, source) else {
+            return false;
+        };
+
+        for (word_index, &source_word) in source_profiles.iter().enumerate() {
+            let mut active_profiles = source_word;
+            if active_profiles == 0 {
+                continue;
+            }
+
+            let mut next = Some(path);
+            while let Some(path_id) = next {
+                let Some(path_node) = paths.get(path_id.index()) else {
+                    return false;
+                };
+                next = path_node.parent();
+                active_profiles = match *path_node {
+                    ReferencePathNode::Hop {
+                        target, mechanism, ..
+                    } => self.active_hop_profiles(target, mechanism, word_index, active_profiles),
+                    ReferencePathNode::Route {
+                        graph,
+                        start,
+                        terminal,
+                        start_mechanism,
+                        ..
+                    } => self.active_route_profiles(
+                        routes,
+                        graph,
+                        start,
+                        terminal,
+                        start_mechanism,
+                        word_index,
+                        active_profiles,
+                    ),
+                };
+                if active_profiles == 0 {
+                    break;
+                }
+            }
+
+            if active_profiles != 0 {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn active_hop_profiles(
+        &self,
+        target: FileId,
+        mechanism: ModuleLoadMechanism,
+        word_index: usize,
+        mut active_profiles: u64,
+    ) -> u64 {
+        let Some(target_word) = self
+            .profiles_for(&self.reachable_profiles, target)
+            .and_then(|profiles| profiles.get(word_index))
+        else {
+            return 0;
+        };
+        active_profiles &= target_word;
+        if matches!(mechanism, ModuleLoadMechanism::EsModule)
+            && let Some(masked_profiles) = self.masked_profiles_for(target)
+        {
+            let Some(masked_word) = masked_profiles.get(word_index) else {
+                return 0;
+            };
+            active_profiles &= !masked_word;
+        }
+        active_profiles
+    }
+
+    /// Evaluate one compact namespace transition graph with a monotone
+    /// profile-bit worklist. Each `(route node, profile bit)` is processed at
+    /// most once, including cyclic graphs.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the route identity and profile word form one evaluation contract"
+    )]
+    fn active_route_profiles(
+        &self,
+        routes: &ReferenceRoutes,
+        graph_id: types::ReferenceRouteGraphId,
+        start: ReferenceRouteNodeId,
+        terminal: ReferenceRouteNodeId,
+        start_mechanism: Option<ModuleLoadMechanism>,
+        word_index: usize,
+        candidate_profiles: u64,
+    ) -> u64 {
+        let Some(graph) = routes.graphs.get(graph_id.0 as usize) else {
+            return 0;
+        };
+        let node_count = graph.nodes.end.saturating_sub(graph.nodes.start) as usize;
+        let start_index = start.0 as usize;
+        let terminal_index = terminal.0 as usize;
+        if start_index >= node_count || terminal_index >= node_count {
+            return 0;
+        }
+
+        let mut attempted = vec![0_u64; node_count];
+        let mut pending = vec![0_u64; node_count];
+        let mut queued = vec![false; node_count];
+        let mut queue = std::collections::VecDeque::from([start_index]);
+        pending[start_index] = candidate_profiles;
+        queued[start_index] = true;
+        let mut successful_profiles = 0_u64;
+
+        while let Some(local_index) = queue.pop_front() {
+            queued[local_index] = false;
+            let incoming = pending[local_index] & !attempted[local_index];
+            pending[local_index] = 0;
+            attempted[local_index] |= incoming;
+            if incoming == 0 {
+                continue;
+            }
+
+            let Some(node) = routes.nodes.get(graph.nodes.start as usize + local_index) else {
+                return 0;
+            };
+            let active = if local_index == start_index {
+                start_mechanism.map_or(incoming, |mechanism| {
+                    self.active_hop_profiles(node.target, mechanism, word_index, incoming)
+                })
+            } else {
+                self.active_hop_profiles(node.target, node.mechanism, word_index, incoming)
+            };
+            if active == 0 {
+                continue;
+            }
+            if local_index == terminal_index {
+                successful_profiles |= active;
+                continue;
+            }
+
+            let Some(successors) = routes
+                .edges
+                .get(node.successors.start as usize..node.successors.end as usize)
+            else {
+                return 0;
+            };
+            for successor in successors {
+                let successor_index = successor.0 as usize;
+                if successor_index >= node_count {
+                    return 0;
+                }
+                let new_profiles = active & !attempted[successor_index] & !pending[successor_index];
+                if new_profiles == 0 {
+                    continue;
+                }
+                pending[successor_index] |= new_profiles;
+                if !queued[successor_index] {
+                    queued[successor_index] = true;
+                    queue.push_back(successor_index);
+                }
+            }
+        }
+
+        successful_profiles
+    }
+
+    #[cfg(test)]
+    fn profile_contains(&self, storage: &[u64], file_id: FileId, profile: usize) -> bool {
+        self.profiles_for(storage, file_id)
+            .and_then(|words| words.get(profile / u64::BITS as usize))
+            .is_some_and(|word| word & (1_u64 << (profile % u64::BITS as usize)) != 0)
+    }
+
+    #[cfg(test)]
+    fn profile_reaches(&self, file_id: FileId, profile: usize) -> bool {
+        self.profile_contains(&self.reachable_profiles, file_id, profile)
+    }
+
+    #[cfg(test)]
+    fn profile_masks(&self, file_id: FileId, profile: usize) -> bool {
+        self.masked_profiles_for(file_id)
+            .and_then(|words| words.get(profile / u64::BITS as usize))
+            .is_some_and(|word| word & (1_u64 << (profile % u64::BITS as usize)) != 0)
+    }
+}
+
+/// One outgoing edge that runs its target, from
+/// [`ModuleGraph::outgoing_edge_summaries`].
+#[derive(Debug, Clone, Copy)]
+pub struct OutgoingEdgeSummary<'a> {
+    /// The imported module.
+    pub target: FileId,
+    /// Whether every symbol that loads the target is type-only, so the build
+    /// erases the import.
+    pub all_type_only: bool,
+    /// Byte offset of the first value symbol that loads the target, or of
+    /// the first loading symbol when all of them are type-only.
+    pub span_start: Option<u32>,
+    /// Every symbol of the edge, also the symbols that do not load the
+    /// target. Filter with [`ImportedSymbol::loads_target`].
+    pub symbols: &'a [ImportedSymbol],
+}
+
+/// Importer details for one file that directly imports a target module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectImporterSummary {
+    /// Source file that imports the requested target.
+    pub source: FileId,
+    /// Symbols imported from the target by this source file.
+    pub symbols: Vec<ImportedSymbolSummary>,
+}
+
+/// Symbol details for a direct import edge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedSymbolSummary {
+    /// Imported binding name, using `default`, `*`, and `side-effect` for
+    /// non-named imports.
+    pub imported: String,
+    /// Local binding name in the importing file.
+    pub local: String,
+    /// Whether this symbol came from a type-only import.
+    pub type_only: bool,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<Edge>() == 32);
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<ImportedSymbol>() == 64);
+
+#[cold]
+#[inline(never)]
+fn propagate_namespace_references(
+    graph: &mut ModuleGraph,
+    module_by_id: &FxHashMap<FileId, &ResolvedModule>,
+    features: build::NamespaceFeatures,
+    exposed_namespace_targets: &re_exports::ExposedNamespaceTargets,
+    reference_paths: &mut ReferencePathInterner,
+) {
+    let indexes = namespace_indexes::NamespacePropagationIndexes::new(graph, module_by_id);
+    if features.has_aliases {
+        namespace_aliases::propagate_cross_package_aliases(
+            graph,
+            module_by_id,
+            &indexes,
+            reference_paths,
+        );
+    }
+    if features.has_re_exports {
+        namespace_re_exports::propagate_namespace_re_exports(
+            graph,
+            &indexes,
+            exposed_namespace_targets,
+            reference_paths,
+        );
+    }
+}
+
+impl ModuleGraph {
+    fn resolve_entry_point_ids(
+        entry_points: &[EntryPoint],
+        path_to_id: &FxHashMap<&Path, FileId>,
+    ) -> FxHashSet<FileId> {
+        entry_points
+            .iter()
+            .filter_map(|ep| {
+                path_to_id.get(ep.path.as_path()).copied().or_else(|| {
+                    dunce::canonicalize(&ep.path)
+                        .ok()
+                        .and_then(|path| path_to_id.get(path.as_path()).copied())
+                })
+            })
+            .collect()
+    }
+
+    /// Build the module graph from resolved modules and entry points.
+    pub fn build(
+        resolved_modules: &[ResolvedModule],
+        entry_points: &[EntryPoint],
+        files: &[DiscoveredFile],
+    ) -> Self {
+        Self::build_with_reachability_roots(
+            resolved_modules,
+            entry_points,
+            entry_points,
+            &[],
+            files,
+        )
+    }
+
+    /// Build the module graph with explicit runtime and test reachability roots.
+    pub fn build_with_reachability_roots(
+        resolved_modules: &[ResolvedModule],
+        entry_points: &[EntryPoint],
+        runtime_entry_points: &[EntryPoint],
+        test_entry_points: &[EntryPoint],
+        files: &[DiscoveredFile],
+    ) -> Self {
+        Self::build_with_reachability_roots_and_replacements(
+            resolved_modules,
+            &[],
+            entry_points,
+            runtime_entry_points,
+            test_entry_points,
+            files,
+        )
+    }
+
+    /// Build the module graph with root-specific test-time module replacements.
+    pub fn build_with_reachability_roots_and_replacements(
+        resolved_modules: &[ResolvedModule],
+        replaced_module_targets: &[ResolvedReplacedModuleTarget],
+        entry_points: &[EntryPoint],
+        runtime_entry_points: &[EntryPoint],
+        test_entry_points: &[EntryPoint],
+        files: &[DiscoveredFile],
+    ) -> Self {
+        Self::build_with_declaration_seeding(
+            resolved_modules,
+            replaced_module_targets,
+            &ReachabilityRoots {
+                all: entry_points,
+                runtime: runtime_entry_points,
+                test: test_entry_points,
+            },
+            files,
+            &FxHashSet::default(),
+        )
+    }
+
+    /// Build the module graph like
+    /// [`Self::build_with_reachability_roots_and_replacements`], except that
+    /// the declaration files in `unseeded_declaration_files` are not seeded as
+    /// entry points.
+    ///
+    /// Every other declaration file is seeded so ambient declarations and
+    /// their `typeof import()` references stay alive. The caller names the
+    /// orphan module declaration files: a module declaration file that nothing
+    /// points to adds nothing to the global scope, so it must be reachable
+    /// through an import to stay used.
+    pub fn build_with_declaration_seeding(
+        resolved_modules: &[ResolvedModule],
+        replaced_module_targets: &[ResolvedReplacedModuleTarget],
+        roots: &ReachabilityRoots<'_>,
+        files: &[DiscoveredFile],
+        unseeded_declaration_files: &FxHashSet<FileId>,
+    ) -> Self {
+        let ReachabilityRoots {
+            all: entry_points,
+            runtime: runtime_entry_points,
+            test: test_entry_points,
+        } = *roots;
+        let _span = tracing::info_span!("build_graph").entered();
+
+        let module_count = files.len();
+
+        let max_file_id = files
+            .iter()
+            .map(|f| f.id.0 as usize)
+            .max()
+            .map_or(0, |m| m + 1);
+        let total_capacity = max_file_id.max(module_count);
+
+        let path_to_id: FxHashMap<&Path, FileId> =
+            files.iter().map(|f| (f.path.as_path(), f.id)).collect();
+
+        let module_by_id: FxHashMap<FileId, &ResolvedModule> =
+            resolved_modules.iter().map(|m| (m.file_id, m)).collect();
+
+        let mut entry_point_ids = Self::resolve_entry_point_ids(entry_points, &path_to_id);
+        let runtime_entry_point_ids =
+            Self::resolve_entry_point_ids(runtime_entry_points, &path_to_id);
+        let test_entry_point_ids = Self::resolve_entry_point_ids(test_entry_points, &path_to_id);
+
+        for file in files {
+            if is_declaration_file_path(&file.path)
+                && !unseeded_declaration_files.contains(&file.id)
+            {
+                entry_point_ids.insert(file.id);
+            }
+        }
+
+        let (mut graph, namespace_features) = Self::populate_edges(&build::PopulateEdgesInput {
+            files,
+            module_by_id: &module_by_id,
+            entry_point_ids: &entry_point_ids,
+            runtime_entry_point_ids: &runtime_entry_point_ids,
+            test_entry_point_ids: &test_entry_point_ids,
+            module_count,
+            total_capacity,
+        });
+        graph.effective_exports = effective_exports::EffectiveExportIndex::build(resolved_modules);
+
+        let test_reachability_plan = reachability::TestReachabilityPlan::new(
+            &test_entry_point_ids,
+            replaced_module_targets,
+            total_capacity,
+        );
+
+        let mut reference_paths =
+            ReferencePathInterner::new(test_reachability_plan.requires_reference_provenance());
+        let whole_module_targets =
+            graph.populate_references(&module_by_id, &entry_point_ids, &mut reference_paths);
+        // Entry-point reachability depends on edges alone, so it is available
+        // here and is reused verbatim by `mark_reachable` below. The exposed
+        // namespace closure needs it to stay off modules the report already
+        // calls unused files.
+        let entry_reachable = graph.collect_reachable(&entry_point_ids, total_capacity);
+        let exposed_namespace_targets = graph.collect_exposed_namespace_targets(
+            &whole_module_targets,
+            &entry_reachable,
+            &module_by_id,
+        );
+
+        if namespace_features.has_aliases || namespace_features.has_re_exports {
+            propagate_namespace_references(
+                &mut graph,
+                &module_by_id,
+                namespace_features,
+                &exposed_namespace_targets,
+                &mut reference_paths,
+            );
+        }
+
+        graph.mark_reachable(
+            &entry_reachable,
+            &entry_point_ids,
+            &runtime_entry_point_ids,
+            test_reachability_plan,
+            total_capacity,
+        );
+
+        graph.re_export_cycles = graph.resolve_re_export_chains(
+            &module_by_id,
+            &exposed_namespace_targets,
+            &mut reference_paths,
+        );
+        let finalized_paths = reference_paths.finalize(&mut graph.modules);
+        graph.reference_paths = finalized_paths.paths;
+        graph.reference_routes = finalized_paths.routes;
+
+        graph
+    }
+
+    /// Total number of modules.
+    #[must_use]
+    pub const fn module_count(&self) -> usize {
+        self.modules.len()
+    }
+
+    /// Total number of edges.
+    #[must_use]
+    pub const fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    /// Return whether any test-root traversal reaches `file_id`.
+    #[must_use]
+    pub fn is_test_reachable(&self, file_id: FileId) -> bool {
+        self.modules
+            .get(file_id.0 as usize)
+            .is_some_and(ModuleNode::is_test_reachable)
+    }
+
+    /// Return whether one test-root traversal covers the export reference at
+    /// `reference_index` on `export`.
+    ///
+    /// Coverage requires one profile that reaches the referencing file and
+    /// every target hop. ESM hops also require that profile not to replace the
+    /// hop target; CommonJS hops remain active because Vitest replacement mocks
+    /// do not intercept `require()`.
+    ///
+    /// Only a value reference can give coverage. A type reference never runs
+    /// the export, so it never gives coverage. This includes `import type` and
+    /// a plain import that the test uses only in type positions.
+    #[must_use]
+    pub fn is_test_reference_covered(&self, export: &ExportSymbol, reference_index: usize) -> bool {
+        let Some(reference) = export.references.get(reference_index) else {
+            return false;
+        };
+        if reference.namespace != ExportNamespace::Value {
+            return false;
+        }
+        if self.test_reachability_index.profile_count == 0 {
+            return self.is_test_reachable(reference.from_file);
+        }
+
+        let Some(path) = export.reference_path(reference_index) else {
+            return false;
+        };
+
+        self.test_reachability_index.covers_reference_path(
+            reference.from_file,
+            path,
+            &self.reference_paths,
+            &self.reference_routes,
+        )
+    }
+
+    /// Return whether any reference on `export` is covered by a test-root
+    /// traversal.
+    #[must_use]
+    pub fn is_any_test_reference_covered(&self, export: &ExportSymbol) -> bool {
+        (0..export.references.len())
+            .any(|reference_index| self.is_test_reference_covered(export, reference_index))
+    }
+
+    #[cfg(test)]
+    fn reference_path_hops(
+        &self,
+        export: &ExportSymbol,
+        reference_index: usize,
+    ) -> Vec<(FileId, ModuleLoadMechanism)> {
+        let mut hops = Vec::new();
+        let mut next = export.reference_path(reference_index);
+        while let Some(path_id) = next {
+            let Some(node) = self.reference_paths.get(path_id.index()) else {
+                return Vec::new();
+            };
+            next = node.parent();
+            match *node {
+                ReferencePathNode::Hop {
+                    target, mechanism, ..
+                } => hops.push((target, mechanism)),
+                ReferencePathNode::Route {
+                    graph,
+                    start,
+                    terminal,
+                    start_mechanism,
+                    ..
+                } => hops.extend(self.reference_routes.canonical_hops(
+                    graph,
+                    start,
+                    terminal,
+                    start_mechanism,
+                )),
+            }
+        }
+        hops
+    }
+
+    /// Rebuild the `namespace_imported` bitset from the edge set.
+    ///
+    /// `namespace_imported` is `#[serde(skip)]`, so a graph loaded from the
+    /// persisted cache (`crate::cache`) arrives with an empty default bitset.
+    /// This restores it by replicating the EXACT insertion rule from
+    /// `build.rs`: a target `FileId` is namespace-imported iff some edge to it
+    /// carries an `ImportedName::Namespace` symbol. Both build-time insertion
+    /// sites (static / dynamic `import * as ns` in `collect_import_edge`, and
+    /// glob dynamic-import patterns in `collect_edges_for_module`) push a
+    /// `Namespace` symbol onto the target's edge, so iterating the persisted
+    /// edges and checking for a `Namespace` symbol reproduces the original
+    /// bitset bit-for-bit. The capacity matches `build.rs`'s
+    /// `max_file_id.max(module_count)`, which equals `modules.len()` under the
+    /// dense path-sorted FileId invariant.
+    pub(crate) fn reconstruct_namespace_imported(&mut self) {
+        let capacity = self
+            .edges
+            .iter()
+            .map(|edge| edge.target.0 as usize + 1)
+            .max()
+            .unwrap_or(0)
+            .max(self.modules.len());
+        let mut bitset = FixedBitSet::with_capacity(capacity);
+        for edge in &self.edges {
+            if edge
+                .symbols
+                .iter()
+                .any(|sym| matches!(sym.imported_name, ImportedName::Namespace))
+            {
+                let idx = edge.target.0 as usize;
+                if idx < capacity {
+                    bitset.insert(idx);
+                }
+            }
+        }
+        self.namespace_imported = bitset;
+    }
+
+    /// Resolve the effective declaration exported under `name` in one namespace.
+    ///
+    /// This is the canonical graph contract for direct exports and every named
+    /// or star re-export path. Missing and ambiguous bindings are explicit so
+    /// consumers cannot accidentally credit an arbitrary source declaration.
+    #[must_use]
+    pub fn resolve_export(
+        &self,
+        file_id: FileId,
+        name: &str,
+        namespace: ExportNamespace,
+    ) -> EffectiveExportResolution {
+        self.effective_exports.resolve(file_id, name, namespace)
+    }
+
+    /// Whether two effective bindings denote the same declaration surface.
+    ///
+    /// TypeScript declaration merges occupy separate export slots while
+    /// representing one symbol. Consumers that compare type and value lanes
+    /// use this instead of raw binding equality so either half can carry the
+    /// reference credit for the merged declaration.
+    #[must_use]
+    pub fn effective_bindings_share_declaration_group(
+        &self,
+        left: EffectiveExportBinding,
+        right: EffectiveExportBinding,
+    ) -> bool {
+        if left == right || left.origin_file() != right.origin_file() {
+            return left == right;
+        }
+        let Some(right_slot) = right.origin_slot() else {
+            return false;
+        };
+        self.effective_exports
+            .declaration_group_slots(left)
+            .contains(&right_slot)
+    }
+
+    /// Resolve one exported name to its unique direct declaration.
+    ///
+    /// Missing and ambiguous bindings return `None`. Namespace-object exports
+    /// are bindings in their own right rather than direct declarations, so
+    /// they also have no declaration origin.
+    #[must_use]
+    pub fn resolve_export_origin(
+        &self,
+        file_id: FileId,
+        name: &str,
+        namespace: ExportNamespace,
+    ) -> Option<EffectiveExportOrigin<'_>> {
+        let EffectiveExportResolution::Unique(binding) =
+            self.resolve_export(file_id, name, namespace)
+        else {
+            return None;
+        };
+        self.export_binding_origin(binding)
+    }
+
+    /// Resolve one module surface to its canonical binding and reference-bearing
+    /// graph export. Value and type namespaces are selected independently.
+    #[must_use]
+    pub fn effective_export_surface(
+        &self,
+        file_id: FileId,
+        name: &str,
+        namespace: ExportNamespace,
+    ) -> Option<EffectiveExportSurface<'_>> {
+        let EffectiveExportResolution::Unique(binding) =
+            self.resolve_export(file_id, name, namespace)
+        else {
+            return None;
+        };
+        let module = self.modules.get(file_id.0 as usize)?;
+        let exact_surface = module.exports.iter().find(|export| {
+            export.name.matches_str(name)
+                && match namespace {
+                    ExportNamespace::Type => export.is_type_only,
+                    ExportNamespace::Value => !export.is_type_only,
+                }
+        });
+        let surface_export = exact_surface.or_else(|| {
+            module
+                .exports
+                .iter()
+                .find(|export| export.name.matches_str(name))
+        });
+        let origin = self.export_binding_origin(binding);
+        let export = surface_export.or_else(|| origin.map(|o| o.export));
+        Some(EffectiveExportSurface {
+            binding,
+            namespace,
+            export,
+            origin,
+            local_export: surface_export.is_some(),
+        })
+    }
+
+    /// Local re-export specifier that owns one effective module surface.
+    ///
+    /// Direct declarations and star-only forwarded surfaces return `None`.
+    /// Named and namespace re-exports return the namespace-compatible edge
+    /// whose source resolves to the same canonical binding.
+    #[must_use]
+    pub fn effective_export_surface_re_export(
+        &self,
+        file_id: FileId,
+        name: &str,
+        namespace: ExportNamespace,
+    ) -> Option<&ReExportEdge> {
+        let EffectiveExportResolution::Unique(binding) =
+            self.resolve_export(file_id, name, namespace)
+        else {
+            return None;
+        };
+        self.modules
+            .get(file_id.0 as usize)?
+            .re_exports
+            .iter()
+            .find(|re_export| {
+                re_export.exported_name == name
+                    && (namespace == ExportNamespace::Type || !re_export.is_type_only)
+                    && if re_export.imported_name == "*" {
+                        binding.namespace_source() == Some(re_export.source_file)
+                    } else {
+                        self.resolve_export(
+                            re_export.source_file,
+                            &re_export.imported_name,
+                            namespace,
+                        ) == EffectiveExportResolution::Unique(binding)
+                    }
+            })
+    }
+
+    /// References that reach one exact module export surface.
+    ///
+    /// Star-only surfaces share their declaration with other barrels, so their
+    /// origin references are filtered by recorded provenance instead of being
+    /// borrowed wholesale from the declaration.
+    #[must_use]
+    pub fn effective_export_surface_references(
+        &self,
+        file_id: FileId,
+        name: &str,
+        namespace: ExportNamespace,
+    ) -> Vec<&SymbolReference> {
+        let Some(surface) = self.effective_export_surface(file_id, name, namespace) else {
+            return Vec::new();
+        };
+        let Some(export) = surface.export() else {
+            return Vec::new();
+        };
+        if surface.local_export
+            || surface
+                .origin()
+                .is_none_or(|origin| origin.file_id() == file_id)
+        {
+            return export.references_in(namespace).collect();
+        }
+        let mut exposed: FxHashMap<FileId, FxHashSet<String>> = FxHashMap::default();
+        exposed.entry(file_id).or_default().insert(name.to_string());
+        for route in self.effective_re_export_routes(file_id, name, namespace) {
+            exposed
+                .entry(route.barrel_file())
+                .or_default()
+                .insert(route.exported_name().to_string());
+        }
+        export
+            .references
+            .iter()
+            .filter(|reference| {
+                reference.namespace == namespace
+                    && self.reference_reaches_surface(reference, &exposed, namespace)
+            })
+            .collect()
+    }
+
+    fn reference_reaches_surface(
+        &self,
+        reference: &SymbolReference,
+        exposed: &FxHashMap<FileId, FxHashSet<String>>,
+        namespace: ExportNamespace,
+    ) -> bool {
+        if reference.kind == ReferenceKind::ReExport && exposed.contains_key(&reference.from_file) {
+            return true;
+        }
+        self.outgoing_symbol_edges(reference.from_file)
+            .any(|(target, symbols)| {
+                let Some(names) = exposed.get(&target) else {
+                    return false;
+                };
+                symbols.iter().any(|symbol| {
+                    symbol.import_span == reference.import_span
+                        && (namespace == ExportNamespace::Type
+                            || !symbol.is_type_only
+                            || symbol.is_value_bearing_ambient_star())
+                        && match &symbol.imported_name {
+                            ImportedName::Named(imported) => names.contains(imported.as_str()),
+                            ImportedName::Default => names.contains("default"),
+                            ImportedName::Namespace => true,
+                            ImportedName::SideEffect => false,
+                        }
+                })
+            })
+    }
+
+    /// Resolve a unique binding to its direct declaration, when it has one.
+    #[must_use]
+    pub fn export_binding_origin(
+        &self,
+        binding: EffectiveExportBinding,
+    ) -> Option<EffectiveExportOrigin<'_>> {
+        let origin_file = binding.origin_file();
+        let export = self
+            .modules
+            .get(origin_file.0 as usize)?
+            .exports
+            .get(binding.origin_slot()?)?;
+        Some(EffectiveExportOrigin {
+            file_id: origin_file,
+            export,
+        })
+    }
+
+    /// Unique bindings exposed by a module in one namespace.
+    ///
+    /// Multiple names that resolve to the same declaration are deduplicated;
+    /// missing and ambiguous exports are excluded.
+    #[must_use]
+    pub fn unique_export_bindings(
+        &self,
+        file_id: FileId,
+        namespace: ExportNamespace,
+    ) -> FxHashSet<EffectiveExportBinding> {
+        self.effective_exports.unique_bindings(file_id, namespace)
+    }
+
+    /// Whether `importer` connects to `source` as an origin of `name`.
+    ///
+    /// Any direct import connects the two modules for duplicate-export
+    /// grouping, even when it imports a different symbol. A re-export-only edge
+    /// connects them only when it contributes this binding, including each
+    /// contributor to an ambiguous star export and excluding star bindings
+    /// shadowed by an explicit export.
+    #[must_use]
+    pub fn importer_connects_export_origin(
+        &self,
+        importer: FileId,
+        source: FileId,
+        name: &str,
+        namespace: ExportNamespace,
+    ) -> bool {
+        let Some(importer_module) = self.modules.get(importer.0 as usize) else {
+            return false;
+        };
+        let re_export_count = importer_module
+            .re_exports
+            .iter()
+            .filter(|re_export| re_export.source_file == source)
+            .count();
+        if self.edges[importer_module.edge_range.clone()]
+            .iter()
+            .any(|edge| edge.target == source && edge.symbols.len() > re_export_count)
+        {
+            return true;
+        }
+
+        importer_module.re_exports.iter().any(|re_export| {
+            if re_export.source_file != source
+                || (namespace == ExportNamespace::Value && re_export.is_type_only)
+            {
+                return false;
+            }
+            let exported_name = if re_export.imported_name == "*" {
+                if re_export.exported_name != "*" || name == "default" {
+                    return false;
+                }
+                name
+            } else {
+                if re_export.imported_name != name {
+                    return false;
+                }
+                &re_export.exported_name
+            };
+            self.effective_exports.contributes_through(
+                importer,
+                exported_name,
+                source,
+                name,
+                namespace,
+            )
+        })
+    }
+
+    /// Check if any importer uses `import * as ns` for this module.
+    /// Uses precomputed bitset, O(1) lookup.
+    #[must_use]
+    pub fn has_namespace_import(&self, file_id: FileId) -> bool {
+        let idx = file_id.0 as usize;
+        if idx >= self.namespace_imported.len() {
+            return false;
+        }
+        self.namespace_imported.contains(idx)
+    }
+
+    /// Get the target `FileId`s of all outgoing edges for a module.
+    #[must_use]
+    pub fn edges_for(&self, file_id: FileId) -> Vec<FileId> {
+        let idx = file_id.0 as usize;
+        if idx >= self.modules.len() {
+            return Vec::new();
+        }
+        let range = &self.modules[idx].edge_range;
+        self.edges[range.clone()].iter().map(|e| e.target).collect()
+    }
+
+    /// Iterate the outgoing edges of `file_id` with full per-symbol data.
+    ///
+    /// `fallow trace` needs the raw `ImportedSymbol` set on each edge in
+    /// both directions, which the flattened summary structs cannot express.
+    /// Returns an empty iterator for out-of-range file ids.
+    pub fn outgoing_symbol_edges(
+        &self,
+        file_id: FileId,
+    ) -> impl Iterator<Item = (FileId, &[ImportedSymbol])> + '_ {
+        let idx = file_id.0 as usize;
+        let range = if idx < self.modules.len() {
+            self.modules[idx].edge_range.clone()
+        } else {
+            0..0
+        };
+        self.edges[range]
+            .iter()
+            .map(|edge| (edge.target, edge.symbols.as_slice()))
+    }
+
+    /// The importer `FileId`s that directly import `target` (reverse-dep view).
+    ///
+    /// Returns an empty slice when `target` is out of range.
+    #[must_use]
+    pub fn importers_of(&self, target: FileId) -> &[FileId] {
+        self.reverse_deps
+            .get(target.0 as usize)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Summarize files that directly import `target`.
+    ///
+    /// Uses existing reverse dependency and edge indexes. Returns an empty
+    /// list when the target is out of range or has no importers.
+    #[must_use]
+    pub fn direct_importer_summaries(&self, target: FileId) -> Vec<DirectImporterSummary> {
+        let Some(importers) = self.reverse_deps.get(target.0 as usize) else {
+            return Vec::new();
+        };
+
+        let mut summaries = Vec::new();
+        for &source in importers {
+            let idx = source.0 as usize;
+            let Some(source_node) = self.modules.get(idx) else {
+                continue;
+            };
+            let mut symbols = Vec::new();
+            for edge in &self.edges[source_node.edge_range.clone()] {
+                if edge.target != target {
+                    continue;
+                }
+                symbols.extend(edge.symbols.iter().map(|symbol| ImportedSymbolSummary {
+                    imported: imported_name_label(&symbol.imported_name),
+                    local: symbol.local_name.clone(),
+                    type_only: symbol.is_type_only,
+                }));
+            }
+            symbols.sort_by(|a, b| {
+                a.imported
+                    .cmp(&b.imported)
+                    .then_with(|| a.local.cmp(&b.local))
+                    .then_with(|| a.type_only.cmp(&b.type_only))
+            });
+            symbols.dedup();
+            summaries.push(DirectImporterSummary { source, symbols });
+        }
+        summaries.sort_by_key(|summary| summary.source.0);
+        summaries
+    }
+
+    /// Find the byte offset of the import statement from `source` to `target`.
+    ///
+    /// Mixed imports to the same target are stored as one edge. Prefer the
+    /// first eager value import, then the first value-carrying import, so
+    /// runtime-cycle diagnostics and line suppressions anchor on the import
+    /// that actually participates in the cycle. With lazy edges skipped, a
+    /// lazy `import()` on a mixed edge is not part of the cycle.
+    /// Returns `None` if no edge exists or the edge has no symbols.
+    #[must_use]
+    pub fn find_import_span_start(&self, source: FileId, target: FileId) -> Option<u32> {
+        let idx = source.0 as usize;
+        if idx >= self.modules.len() {
+            return None;
+        }
+        let range = &self.modules[idx].edge_range;
+        for edge in &self.edges[range.clone()] {
+            if edge.target == target {
+                return edge
+                    .symbols
+                    .iter()
+                    .find(|s| s.is_eager_value())
+                    .or_else(|| edge.symbols.iter().find(|s| !s.is_type_only))
+                    .or_else(|| edge.symbols.first())
+                    .map(|s| s.import_span.start);
+            }
+        }
+        None
+    }
+
+    /// Iterate the outgoing edges of `file_id` that run their target, with
+    /// the data the boundary detector and the security scans need in a single
+    /// pass.
+    ///
+    /// Only symbols that load the target count (see
+    /// [`ImportedSymbol::loads_target`]). A `require.resolve('./x')` path
+    /// reference and an asset loader request (`raw-loader!./x.js`) keep the
+    /// target in use but do not run it, so they cannot cross an architecture
+    /// boundary or carry code into a bundle. An edge without such a symbol is
+    /// skipped.
+    ///
+    /// When `featureB` has both `import type { Foo } from './x'` and
+    /// `import { bar } from './x'`, fallow groups them into ONE edge with the
+    /// type-only symbol first and the value symbol second. The summary
+    /// anchors on the value symbol, so findings anchor on the runtime import
+    /// line; otherwise a `// fallow-ignore-next-line` above the type-only line
+    /// would silently suppress the real violation.
+    ///
+    /// Returns an empty iterator for out-of-range file ids.
+    pub fn outgoing_edge_summaries(
+        &self,
+        file_id: FileId,
+    ) -> impl Iterator<Item = OutgoingEdgeSummary<'_>> + '_ {
+        self.outgoing_symbol_edges(file_id)
+            .filter_map(|(target, symbols)| {
+                let mut loading = symbols.iter().filter(|s| s.loads_target()).peekable();
+                let first = loading.peek().copied()?;
+                let value = loading.find(|s| !s.is_type_only);
+                Some(OutgoingEdgeSummary {
+                    target,
+                    all_type_only: value.is_none(),
+                    span_start: Some(value.unwrap_or(first).import_span.start),
+                    symbols,
+                })
+            })
+    }
+
+    /// Iterate outgoing edges with the symbols of each edge.
+    ///
+    /// One edge holds every import from `file_id` to one target, so
+    /// `import type { Y } from './y'` and `import { y } from './y'` share an
+    /// edge. Use this method when a consumer must suppress or report each
+    /// import statement on its own line; [`Self::outgoing_edge_summaries`]
+    /// gives only one span per edge. A re-export or a dynamic import pattern
+    /// has an empty `import_span`.
+    ///
+    /// Returns an empty iterator for out-of-range file ids.
+    pub fn outgoing_edge_symbols(
+        &self,
+        file_id: FileId,
+    ) -> impl Iterator<Item = (FileId, &[ImportedSymbol])> + '_ {
+        let idx = file_id.0 as usize;
+        let range = if idx < self.modules.len() {
+            self.modules[idx].edge_range.clone()
+        } else {
+            0..0
+        };
+        self.edges[range]
+            .iter()
+            .map(|edge| (edge.target, edge.symbols.as_slice()))
+    }
+
+    /// Like [`Self::outgoing_edge_summaries`] (only edges that run their
+    /// target, and only their loading symbols) but additionally reports, as a
+    /// fourth boolean, whether EVERY non-type-only symbol on the edge has an
+    /// `import_span` start in `excluded_span_starts` (`all_client_only`). The
+    /// security `client-server-leak` BFS passes the `next/dynamic ssr:false`
+    /// dynamic-import span starts so it can skip an edge reached ONLY through the
+    /// client-only escape hatch. An edge with no non-type-only symbols, or with at
+    /// least one non-type-only symbol whose span is not excluded, reports `false`
+    /// (so a target also reached via a real static import stays in the cone).
+    ///
+    /// Unlike [`Self::outgoing_edge_summaries`], a named symbol also counts as
+    /// type-only when the name resolves on the target to a type declaration and
+    /// to no value declaration (`import { Props } from "./x"` where `x` has
+    /// `export interface Props`). The build erases such an import, so it cannot
+    /// leak into a client bundle. Default, namespace, and side-effect imports,
+    /// and names that do not resolve to a type, stay live.
+    ///
+    /// Returns an empty iterator for out-of-range file ids.
+    pub fn outgoing_edge_summaries_with_exclusions<'a>(
+        &'a self,
+        file_id: FileId,
+        excluded_span_starts: &'a FxHashSet<u32>,
+    ) -> impl Iterator<Item = (FileId, bool, Option<u32>, bool)> + 'a {
+        let idx = file_id.0 as usize;
+        let range = if idx < self.modules.len() {
+            self.modules[idx].edge_range.clone()
+        } else {
+            0..0
+        };
+        self.edges[range].iter().filter_map(move |edge| {
+            let loading = || edge.symbols.iter().filter(|s| s.loads_target());
+            let first = loading().next()?;
+            let erased = |s: &&ImportedSymbol| {
+                s.is_type_only || self.names_only_type_exports(edge.target, &s.imported_name)
+            };
+            let all_type_only = loading().all(|s| erased(&s));
+            let span = loading()
+                .find(|s| !erased(s))
+                .unwrap_or(first)
+                .import_span
+                .start;
+            // `all_client_only`: there is at least one non-type-only symbol and
+            // every such symbol's import span is in the excluded set. A
+            // non-excluded value symbol keeps the edge live.
+            let mut value_symbols = loading().filter(|s| !erased(s)).peekable();
+            let all_client_only = value_symbols.peek().is_some()
+                && value_symbols.all(|s| excluded_span_starts.contains(&s.import_span.start));
+            Some((edge.target, all_type_only, Some(span), all_client_only))
+        })
+    }
+}
+
+impl ModuleGraph {
+    /// Return `true` when `name` is a named import that resolves on `target`
+    /// to a type declaration and to no value declaration. Default, namespace,
+    /// and side-effect imports return `false`, and so does a name that the
+    /// graph cannot resolve in the type namespace.
+    fn names_only_type_exports(&self, target: FileId, name: &ImportedName) -> bool {
+        let ImportedName::Named(name) = name else {
+            return false;
+        };
+        matches!(
+            self.resolve_export(target, name, ExportNamespace::Value),
+            EffectiveExportResolution::Missing
+        ) && matches!(
+            self.resolve_export(target, name, ExportNamespace::Type),
+            EffectiveExportResolution::Unique(_)
+        )
+    }
+}
+
+fn imported_name_label(name: &ImportedName) -> String {
+    match name {
+        ImportedName::Named(name) => name.clone(),
+        ImportedName::Default => "default".to_string(),
+        ImportedName::Namespace => "*".to_string(),
+        ImportedName::SideEffect => "side-effect".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::resolve::{ResolveResult, ResolvedImport, ResolvedModule};
+    use fallow_types::discover::{DiscoveredFile, EntryPoint, EntryPointSource, FileId};
+    use fallow_types::extract::{ExportName, ImportInfo, ImportedName, VisibilityTag};
+    use std::path::PathBuf;
+
+    fn build_simple_graph() -> ModuleGraph {
+        let files = vec![
+            DiscoveredFile {
+                id: FileId(0),
+                path: PathBuf::from("/project/src/entry.ts"),
+                size_bytes: 100,
+            },
+            DiscoveredFile {
+                id: FileId(1),
+                path: PathBuf::from("/project/src/utils.ts"),
+                size_bytes: 50,
+            },
+        ];
+
+        let entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/src/entry.ts"),
+            source: EntryPointSource::PackageJsonMain,
+        }];
+
+        let resolved_modules = vec![
+            ResolvedModule {
+                file_id: FileId(0),
+                path: PathBuf::from("/project/src/entry.ts"),
+                resolved_imports: vec![ResolvedImport {
+                    info: ImportInfo {
+                        source: "./utils".to_string(),
+                        imported_name: ImportedName::Named("foo".to_string()),
+                        local_name: "foo".to_string(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::InternalModule(FileId(1)),
+                }],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(1),
+                path: PathBuf::from("/project/src/utils.ts"),
+                exports: vec![
+                    fallow_types::extract::ExportInfo {
+                        name: ExportName::Named("foo".to_string()),
+                        local_name: Some("foo".to_string()),
+                        is_type_only: false,
+                        visibility: VisibilityTag::None,
+                        expected_unused_reason: None,
+                        span: oxc_span::Span::new(0, 20),
+                        members: vec![],
+                        is_side_effect_used: false,
+                        super_class: None,
+                        deprecated: false,
+                        deprecated_reason: None,
+                    },
+                    fallow_types::extract::ExportInfo {
+                        name: ExportName::Named("bar".to_string()),
+                        local_name: Some("bar".to_string()),
+                        is_type_only: false,
+                        visibility: VisibilityTag::None,
+                        expected_unused_reason: None,
+                        span: oxc_span::Span::new(25, 45),
+                        members: vec![],
+                        is_side_effect_used: false,
+                        super_class: None,
+                        deprecated: false,
+                        deprecated_reason: None,
+                    },
+                ]
+                .into(),
+                ..Default::default()
+            },
+        ];
+
+        ModuleGraph::build(&resolved_modules, &entry_points, &files)
+    }
+
+    fn declaration_seeding_graph(unseeded: &FxHashSet<FileId>) -> ModuleGraph {
+        let paths = [
+            "/project/types/ambient.d.ts",
+            "/project/types/orphan.d.ts",
+            "/project/types/helper.ts",
+        ];
+        let files: Vec<DiscoveredFile> = paths
+            .iter()
+            .zip(0u32..)
+            .map(|(path, id)| DiscoveredFile {
+                id: FileId(id),
+                path: PathBuf::from(path),
+                size_bytes: 10,
+            })
+            .collect();
+        let resolved_modules = vec![
+            ResolvedModule {
+                file_id: FileId(0),
+                path: files[0].path.clone(),
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(1),
+                path: files[1].path.clone(),
+                resolved_imports: vec![ResolvedImport {
+                    info: ImportInfo {
+                        source: "./helper".to_string(),
+                        imported_name: ImportedName::Named("Helper".to_string()),
+                        local_name: "Helper".to_string(),
+                        is_type_only: true,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::InternalModule(FileId(2)),
+                }],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(2),
+                path: files[2].path.clone(),
+                ..Default::default()
+            },
+        ];
+        ModuleGraph::build_with_declaration_seeding(
+            &resolved_modules,
+            &[],
+            &ReachabilityRoots {
+                all: &[],
+                runtime: &[],
+                test: &[],
+            },
+            &files,
+            unseeded,
+        )
+    }
+
+    #[test]
+    fn every_declaration_file_is_seeded_by_default() {
+        let graph = declaration_seeding_graph(&FxHashSet::default());
+        assert!(graph.modules[0].is_entry_point());
+        assert!(graph.modules[1].is_entry_point());
+        assert!(graph.modules[2].is_reachable());
+    }
+
+    #[test]
+    fn unseeded_declaration_file_no_longer_keeps_its_imports_reachable() {
+        let unseeded: FxHashSet<FileId> = std::iter::once(FileId(1)).collect();
+        let graph = declaration_seeding_graph(&unseeded);
+        assert!(graph.modules[0].is_entry_point());
+        assert!(!graph.modules[1].is_entry_point());
+        assert!(!graph.modules[1].is_reachable());
+        assert!(!graph.modules[2].is_reachable());
+    }
+
+    #[test]
+    fn graph_module_count() {
+        let graph = build_simple_graph();
+        assert_eq!(graph.module_count(), 2);
+    }
+
+    #[test]
+    fn graph_edge_count() {
+        let graph = build_simple_graph();
+        assert_eq!(graph.edge_count(), 1);
+    }
+
+    #[test]
+    fn graph_entry_point_is_reachable() {
+        let graph = build_simple_graph();
+        assert!(graph.modules[0].is_entry_point());
+        assert!(graph.modules[0].is_reachable());
+    }
+
+    #[test]
+    fn graph_imported_module_is_reachable() {
+        let graph = build_simple_graph();
+        assert!(!graph.modules[1].is_entry_point());
+        assert!(graph.modules[1].is_reachable());
+    }
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "this test fixture exercises four reachability roles end-to-end; splitting it \
+                  would obscure the cross-role assertions"
+    )]
+    fn graph_distinguishes_runtime_test_and_support_reachability() {
+        let files = vec![
+            DiscoveredFile {
+                id: FileId(0),
+                path: PathBuf::from("/project/src/main.ts"),
+                size_bytes: 100,
+            },
+            DiscoveredFile {
+                id: FileId(1),
+                path: PathBuf::from("/project/src/runtime-only.ts"),
+                size_bytes: 50,
+            },
+            DiscoveredFile {
+                id: FileId(2),
+                path: PathBuf::from("/project/tests/app.test.ts"),
+                size_bytes: 50,
+            },
+            DiscoveredFile {
+                id: FileId(3),
+                path: PathBuf::from("/project/tests/setup.ts"),
+                size_bytes: 50,
+            },
+            DiscoveredFile {
+                id: FileId(4),
+                path: PathBuf::from("/project/src/covered.ts"),
+                size_bytes: 50,
+            },
+        ];
+
+        let all_entry_points = vec![
+            EntryPoint {
+                path: PathBuf::from("/project/src/main.ts"),
+                source: EntryPointSource::PackageJsonMain,
+            },
+            EntryPoint {
+                path: PathBuf::from("/project/tests/app.test.ts"),
+                source: EntryPointSource::TestFile,
+            },
+            EntryPoint {
+                path: PathBuf::from("/project/tests/setup.ts"),
+                source: EntryPointSource::Plugin {
+                    name: "vitest".to_string(),
+                },
+            },
+        ];
+        let runtime_entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/src/main.ts"),
+            source: EntryPointSource::PackageJsonMain,
+        }];
+        let test_entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/tests/app.test.ts"),
+            source: EntryPointSource::TestFile,
+        }];
+
+        let resolved_modules = vec![
+            ResolvedModule {
+                file_id: FileId(0),
+                path: PathBuf::from("/project/src/main.ts"),
+                resolved_imports: vec![ResolvedImport {
+                    info: ImportInfo {
+                        source: "./runtime-only".to_string(),
+                        imported_name: ImportedName::Named("runtimeOnly".to_string()),
+                        local_name: "runtimeOnly".to_string(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::InternalModule(FileId(1)),
+                }],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(1),
+                path: PathBuf::from("/project/src/runtime-only.ts"),
+                exports: vec![fallow_types::extract::ExportInfo {
+                    name: ExportName::Named("runtimeOnly".to_string()),
+                    local_name: Some("runtimeOnly".to_string()),
+                    is_type_only: false,
+                    visibility: VisibilityTag::None,
+                    expected_unused_reason: None,
+                    span: oxc_span::Span::new(0, 20),
+                    members: vec![],
+                    is_side_effect_used: false,
+                    super_class: None,
+                    deprecated: false,
+                    deprecated_reason: None,
+                }]
+                .into(),
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(2),
+                path: PathBuf::from("/project/tests/app.test.ts"),
+                resolved_imports: vec![ResolvedImport {
+                    info: ImportInfo {
+                        source: "../src/covered".to_string(),
+                        imported_name: ImportedName::Named("covered".to_string()),
+                        local_name: "covered".to_string(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::InternalModule(FileId(4)),
+                }],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(3),
+                path: PathBuf::from("/project/tests/setup.ts"),
+                resolved_imports: vec![ResolvedImport {
+                    info: ImportInfo {
+                        source: "../src/runtime-only".to_string(),
+                        imported_name: ImportedName::Named("runtimeOnly".to_string()),
+                        local_name: "runtimeOnly".to_string(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::InternalModule(FileId(1)),
+                }],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(4),
+                path: PathBuf::from("/project/src/covered.ts"),
+                exports: vec![fallow_types::extract::ExportInfo {
+                    name: ExportName::Named("covered".to_string()),
+                    local_name: Some("covered".to_string()),
+                    is_type_only: false,
+                    visibility: VisibilityTag::None,
+                    expected_unused_reason: None,
+                    span: oxc_span::Span::new(0, 20),
+                    members: vec![],
+                    is_side_effect_used: false,
+                    super_class: None,
+                    deprecated: false,
+                    deprecated_reason: None,
+                }]
+                .into(),
+                ..Default::default()
+            },
+        ];
+
+        let graph = ModuleGraph::build_with_reachability_roots(
+            &resolved_modules,
+            &all_entry_points,
+            &runtime_entry_points,
+            &test_entry_points,
+            &files,
+        );
+
+        assert!(graph.modules[1].is_reachable());
+        assert!(graph.modules[1].is_runtime_reachable());
+        assert!(
+            !graph.modules[1].is_test_reachable(),
+            "support roots should not make runtime-only modules test reachable"
+        );
+
+        assert!(graph.modules[4].is_reachable());
+        assert!(graph.modules[4].is_test_reachable());
+        assert!(
+            !graph.modules[4].is_runtime_reachable(),
+            "test-only reachability should stay separate from runtime roots"
+        );
+    }
+
+    #[test]
+    fn graph_export_has_reference() {
+        let graph = build_simple_graph();
+        let utils = &graph.modules[1];
+        let foo_export = utils
+            .exports
+            .iter()
+            .find(|e| e.name.to_string() == "foo")
+            .unwrap();
+        assert!(
+            !foo_export.references.is_empty(),
+            "foo should have references"
+        );
+    }
+
+    #[test]
+    fn graph_unused_export_no_reference() {
+        let graph = build_simple_graph();
+        let utils = &graph.modules[1];
+        let bar_export = utils
+            .exports
+            .iter()
+            .find(|e| e.name.to_string() == "bar")
+            .unwrap();
+        assert!(
+            bar_export.references.is_empty(),
+            "bar should have no references"
+        );
+    }
+
+    #[test]
+    fn graph_no_namespace_import() {
+        let graph = build_simple_graph();
+        assert!(!graph.has_namespace_import(FileId(0)));
+        assert!(!graph.has_namespace_import(FileId(1)));
+    }
+
+    #[test]
+    fn graph_has_namespace_import() {
+        let files = vec![
+            DiscoveredFile {
+                id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                size_bytes: 100,
+            },
+            DiscoveredFile {
+                id: FileId(1),
+                path: PathBuf::from("/project/utils.ts"),
+                size_bytes: 50,
+            },
+        ];
+
+        let entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/entry.ts"),
+            source: EntryPointSource::PackageJsonMain,
+        }];
+
+        let resolved_modules = vec![
+            ResolvedModule {
+                file_id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                resolved_imports: vec![ResolvedImport {
+                    info: ImportInfo {
+                        source: "./utils".to_string(),
+                        imported_name: ImportedName::Namespace,
+                        local_name: "utils".to_string(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::InternalModule(FileId(1)),
+                }],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(1),
+                path: PathBuf::from("/project/utils.ts"),
+                exports: vec![fallow_types::extract::ExportInfo {
+                    name: ExportName::Named("foo".to_string()),
+                    local_name: Some("foo".to_string()),
+                    is_type_only: false,
+                    visibility: VisibilityTag::None,
+                    expected_unused_reason: None,
+                    span: oxc_span::Span::new(0, 20),
+                    members: vec![],
+                    is_side_effect_used: false,
+                    super_class: None,
+                    deprecated: false,
+                    deprecated_reason: None,
+                }]
+                .into(),
+                ..Default::default()
+            },
+        ];
+
+        let graph = ModuleGraph::build(&resolved_modules, &entry_points, &files);
+        assert!(
+            graph.has_namespace_import(FileId(1)),
+            "utils should have namespace import"
+        );
+    }
+
+    #[test]
+    fn graph_has_namespace_import_out_of_bounds() {
+        let graph = build_simple_graph();
+        assert!(!graph.has_namespace_import(FileId(999)));
+    }
+
+    /// The persisted graph cache skips `namespace_imported` and rebuilds it from
+    /// the edge set on load. This asserts the reconstruction reproduces the
+    /// fresh-built bitset BIT-FOR-BIT on a graph that exercises `import * as ns`,
+    /// matching what `build.rs` records at build time.
+    #[test]
+    fn reconstruct_namespace_imported_matches_fresh_build() {
+        let files = vec![
+            DiscoveredFile {
+                id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                size_bytes: 100,
+            },
+            DiscoveredFile {
+                id: FileId(1),
+                path: PathBuf::from("/project/utils.ts"),
+                size_bytes: 50,
+            },
+            DiscoveredFile {
+                id: FileId(2),
+                path: PathBuf::from("/project/named-only.ts"),
+                size_bytes: 50,
+            },
+        ];
+        let entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/entry.ts"),
+            source: EntryPointSource::PackageJsonMain,
+        }];
+        let resolved_modules = vec![
+            ResolvedModule {
+                file_id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                resolved_imports: vec![
+                    ResolvedImport {
+                        info: ImportInfo {
+                            source: "./utils".to_string(),
+                            imported_name: ImportedName::Namespace,
+                            local_name: "utils".to_string(),
+                            is_type_only: false,
+                            is_type_only_star: false,
+                            from_style: false,
+                            span: oxc_span::Span::new(0, 10),
+                            source_span: oxc_span::Span::default(),
+                        },
+                        target: ResolveResult::InternalModule(FileId(1)),
+                    },
+                    ResolvedImport {
+                        info: ImportInfo {
+                            source: "./named-only".to_string(),
+                            imported_name: ImportedName::Named("foo".to_string()),
+                            local_name: "foo".to_string(),
+                            is_type_only: false,
+                            is_type_only_star: false,
+                            from_style: false,
+                            span: oxc_span::Span::new(11, 20),
+                            source_span: oxc_span::Span::default(),
+                        },
+                        target: ResolveResult::InternalModule(FileId(2)),
+                    },
+                ],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(1),
+                path: PathBuf::from("/project/utils.ts"),
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(2),
+                path: PathBuf::from("/project/named-only.ts"),
+                exports: vec![fallow_types::extract::ExportInfo {
+                    name: ExportName::Named("foo".to_string()),
+                    local_name: Some("foo".to_string()),
+                    is_type_only: false,
+                    visibility: VisibilityTag::None,
+                    expected_unused_reason: None,
+                    span: oxc_span::Span::new(0, 20),
+                    members: vec![],
+                    is_side_effect_used: false,
+                    super_class: None,
+                    deprecated: false,
+                    deprecated_reason: None,
+                }]
+                .into(),
+                ..Default::default()
+            },
+        ];
+
+        let mut graph = ModuleGraph::build(&resolved_modules, &entry_points, &files);
+        let fresh = graph.namespace_imported.clone();
+
+        // Sanity: the namespace target is set, the named-only target is not.
+        assert!(graph.has_namespace_import(FileId(1)));
+        assert!(!graph.has_namespace_import(FileId(2)));
+
+        // Simulate the cache load: the bitset arrives empty (serde-skipped), then
+        // the loader reconstructs it from the persisted edges.
+        graph.namespace_imported = FixedBitSet::default();
+        graph.reconstruct_namespace_imported();
+
+        assert_eq!(
+            graph.namespace_imported, fresh,
+            "reconstructed namespace_imported must equal the fresh-built bitset"
+        );
+        assert!(graph.has_namespace_import(FileId(1)));
+        assert!(!graph.has_namespace_import(FileId(2)));
+    }
+
+    #[test]
+    fn graph_unreachable_module() {
+        let files = vec![
+            DiscoveredFile {
+                id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                size_bytes: 100,
+            },
+            DiscoveredFile {
+                id: FileId(1),
+                path: PathBuf::from("/project/utils.ts"),
+                size_bytes: 50,
+            },
+            DiscoveredFile {
+                id: FileId(2),
+                path: PathBuf::from("/project/orphan.ts"),
+                size_bytes: 30,
+            },
+        ];
+
+        let entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/entry.ts"),
+            source: EntryPointSource::PackageJsonMain,
+        }];
+
+        let resolved_modules = vec![
+            ResolvedModule {
+                file_id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                resolved_imports: vec![ResolvedImport {
+                    info: ImportInfo {
+                        source: "./utils".to_string(),
+                        imported_name: ImportedName::Named("foo".to_string()),
+                        local_name: "foo".to_string(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::InternalModule(FileId(1)),
+                }],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(1),
+                path: PathBuf::from("/project/utils.ts"),
+                exports: vec![fallow_types::extract::ExportInfo {
+                    name: ExportName::Named("foo".to_string()),
+                    local_name: Some("foo".to_string()),
+                    is_type_only: false,
+                    visibility: VisibilityTag::None,
+                    expected_unused_reason: None,
+                    span: oxc_span::Span::new(0, 20),
+                    members: vec![],
+                    is_side_effect_used: false,
+                    super_class: None,
+                    deprecated: false,
+                    deprecated_reason: None,
+                }]
+                .into(),
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(2),
+                path: PathBuf::from("/project/orphan.ts"),
+                exports: vec![fallow_types::extract::ExportInfo {
+                    name: ExportName::Named("orphan".to_string()),
+                    local_name: Some("orphan".to_string()),
+                    is_type_only: false,
+                    visibility: VisibilityTag::None,
+                    expected_unused_reason: None,
+                    span: oxc_span::Span::new(0, 20),
+                    members: vec![],
+                    is_side_effect_used: false,
+                    super_class: None,
+                    deprecated: false,
+                    deprecated_reason: None,
+                }]
+                .into(),
+                ..Default::default()
+            },
+        ];
+
+        let graph = ModuleGraph::build(&resolved_modules, &entry_points, &files);
+
+        assert!(graph.modules[0].is_reachable(), "entry should be reachable");
+        assert!(graph.modules[1].is_reachable(), "utils should be reachable");
+        assert!(
+            !graph.modules[2].is_reachable(),
+            "orphan should NOT be reachable"
+        );
+    }
+
+    #[test]
+    fn graph_package_usage_tracked() {
+        let files = vec![DiscoveredFile {
+            id: FileId(0),
+            path: PathBuf::from("/project/entry.ts"),
+            size_bytes: 100,
+        }];
+
+        let entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/entry.ts"),
+            source: EntryPointSource::PackageJsonMain,
+        }];
+
+        let resolved_modules = vec![ResolvedModule {
+            file_id: FileId(0),
+            path: PathBuf::from("/project/entry.ts"),
+            exports: vec![].into(),
+            re_exports: vec![],
+            resolved_imports: vec![
+                ResolvedImport {
+                    info: ImportInfo {
+                        source: "react".to_string(),
+                        imported_name: ImportedName::Default,
+                        local_name: "React".to_string(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::NpmPackage("react".to_string()),
+                },
+                ResolvedImport {
+                    info: ImportInfo {
+                        source: "lodash".to_string(),
+                        imported_name: ImportedName::Named("merge".to_string()),
+                        local_name: "merge".to_string(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(15, 30),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::NpmPackage("lodash".to_string()),
+                },
+            ],
+            ..Default::default()
+        }];
+
+        let graph = ModuleGraph::build(&resolved_modules, &entry_points, &files);
+        assert!(graph.package_usage.contains_key("react"));
+        assert!(graph.package_usage.contains_key("lodash"));
+        assert!(!graph.package_usage.contains_key("express"));
+    }
+
+    #[test]
+    fn graph_empty() {
+        let graph = ModuleGraph::build(&[], &[], &[]);
+        assert_eq!(graph.module_count(), 0);
+        assert_eq!(graph.edge_count(), 0);
+    }
+
+    /// The persisted graph cache postcard-encodes the whole `ModuleGraph` and
+    /// decodes it on a warm run. This proves the serde round-trip is lossless
+    /// for the structural surface analysis reads: module / edge / export /
+    /// reference counts and the `namespace_imported` bitset (reconstructed on
+    /// load) all survive.
+    #[test]
+    fn graph_postcard_round_trip_is_lossless() {
+        let graph = build_simple_graph();
+
+        let encoded = postcard::to_allocvec(&graph).expect("encode graph");
+        let mut decoded: ModuleGraph = postcard::from_bytes(&encoded).expect("decode graph");
+        // The store does this on load; do it here so the bitset is restored.
+        decoded.reconstruct_namespace_imported();
+
+        assert_eq!(decoded.module_count(), graph.module_count());
+        assert_eq!(decoded.edge_count(), graph.edge_count());
+        assert_eq!(decoded.namespace_imported, graph.namespace_imported);
+
+        // Export + reference + member surface survives byte-for-byte.
+        let utils = &decoded.modules[1];
+        let foo = utils
+            .exports
+            .iter()
+            .find(|e| e.name.to_string() == "foo")
+            .expect("foo export survives round-trip");
+        assert!(!foo.references.is_empty());
+        let bar = utils
+            .exports
+            .iter()
+            .find(|e| e.name.to_string() == "bar")
+            .expect("bar export survives round-trip");
+        assert!(bar.references.is_empty());
+
+        // Reachability flags and entry-point sets survive.
+        assert!(decoded.modules[0].is_entry_point());
+        assert!(decoded.modules[0].is_reachable());
+        assert!(decoded.modules[1].is_reachable());
+        assert_eq!(decoded.entry_points, graph.entry_points);
+    }
+
+    #[test]
+    fn graph_cjs_exports_tracked() {
+        let files = vec![DiscoveredFile {
+            id: FileId(0),
+            path: PathBuf::from("/project/entry.ts"),
+            size_bytes: 100,
+        }];
+
+        let entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/entry.ts"),
+            source: EntryPointSource::PackageJsonMain,
+        }];
+
+        let resolved_modules = vec![ResolvedModule {
+            file_id: FileId(0),
+            path: PathBuf::from("/project/entry.ts"),
+            has_cjs_exports: true,
+            has_angular_component_template_url: false,
+            ..Default::default()
+        }];
+
+        let graph = ModuleGraph::build(&resolved_modules, &entry_points, &files);
+        assert!(graph.modules[0].has_cjs_exports());
+    }
+
+    #[test]
+    fn graph_edges_for_returns_targets() {
+        let graph = build_simple_graph();
+        let targets = graph.edges_for(FileId(0));
+        assert_eq!(targets, vec![FileId(1)]);
+    }
+
+    #[test]
+    fn graph_edges_for_no_imports() {
+        let graph = build_simple_graph();
+        let targets = graph.edges_for(FileId(1));
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn graph_edges_for_out_of_bounds() {
+        let graph = build_simple_graph();
+        let targets = graph.edges_for(FileId(999));
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn graph_direct_importer_summaries_include_symbols() {
+        let graph = build_simple_graph();
+        let summaries = graph.direct_importer_summaries(FileId(1));
+
+        assert_eq!(
+            summaries,
+            vec![DirectImporterSummary {
+                source: FileId(0),
+                symbols: vec![ImportedSymbolSummary {
+                    imported: "foo".to_string(),
+                    local: "foo".to_string(),
+                    type_only: false,
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn graph_find_import_span_start_found() {
+        let graph = build_simple_graph();
+        let span_start = graph.find_import_span_start(FileId(0), FileId(1));
+        assert!(span_start.is_some());
+        assert_eq!(span_start.unwrap(), 0);
+    }
+
+    #[test]
+    fn graph_find_import_span_start_prefers_value_import_on_mixed_edge() {
+        let files = vec![
+            DiscoveredFile {
+                id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                size_bytes: 100,
+            },
+            DiscoveredFile {
+                id: FileId(1),
+                path: PathBuf::from("/project/utils.ts"),
+                size_bytes: 50,
+            },
+        ];
+        let entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/entry.ts"),
+            source: EntryPointSource::PackageJsonMain,
+        }];
+        let resolved_modules = vec![
+            ResolvedModule {
+                file_id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                resolved_imports: vec![
+                    ResolvedImport {
+                        info: ImportInfo {
+                            source: "./utils".to_string(),
+                            imported_name: ImportedName::Named("Foo".to_string()),
+                            local_name: "Foo".to_string(),
+                            is_type_only: true,
+                            is_type_only_star: false,
+                            from_style: false,
+                            span: oxc_span::Span::new(10, 20),
+                            source_span: oxc_span::Span::default(),
+                        },
+                        target: ResolveResult::InternalModule(FileId(1)),
+                    },
+                    ResolvedImport {
+                        info: ImportInfo {
+                            source: "./utils".to_string(),
+                            imported_name: ImportedName::Named("foo".to_string()),
+                            local_name: "foo".to_string(),
+                            is_type_only: false,
+                            is_type_only_star: false,
+                            from_style: false,
+                            span: oxc_span::Span::new(50, 60),
+                            source_span: oxc_span::Span::default(),
+                        },
+                        target: ResolveResult::InternalModule(FileId(1)),
+                    },
+                ],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(1),
+                path: PathBuf::from("/project/utils.ts"),
+                ..Default::default()
+            },
+        ];
+
+        let graph = ModuleGraph::build(&resolved_modules, &entry_points, &files);
+        assert_eq!(graph.find_import_span_start(FileId(0), FileId(1)), Some(50));
+    }
+
+    #[test]
+    fn graph_find_import_span_start_wrong_target() {
+        let graph = build_simple_graph();
+        let span_start = graph.find_import_span_start(FileId(0), FileId(0));
+        assert!(span_start.is_none());
+    }
+
+    #[test]
+    fn graph_find_import_span_start_source_out_of_bounds() {
+        let graph = build_simple_graph();
+        let span_start = graph.find_import_span_start(FileId(999), FileId(1));
+        assert!(span_start.is_none());
+    }
+
+    #[test]
+    fn graph_find_import_span_start_no_edges() {
+        let graph = build_simple_graph();
+        let span_start = graph.find_import_span_start(FileId(1), FileId(0));
+        assert!(span_start.is_none());
+    }
+
+    #[test]
+    fn graph_reverse_deps_populated() {
+        let graph = build_simple_graph();
+        assert!(graph.reverse_deps[1].contains(&FileId(0)));
+        assert!(graph.reverse_deps[0].is_empty());
+    }
+
+    #[test]
+    fn graph_type_only_package_usage_tracked() {
+        let files = vec![DiscoveredFile {
+            id: FileId(0),
+            path: PathBuf::from("/project/entry.ts"),
+            size_bytes: 100,
+        }];
+        let entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/entry.ts"),
+            source: EntryPointSource::PackageJsonMain,
+        }];
+        let resolved_modules = vec![ResolvedModule {
+            file_id: FileId(0),
+            path: PathBuf::from("/project/entry.ts"),
+            resolved_imports: vec![
+                ResolvedImport {
+                    info: ImportInfo {
+                        source: "react".to_string(),
+                        imported_name: ImportedName::Named("FC".to_string()),
+                        local_name: "FC".to_string(),
+                        is_type_only: true,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::NpmPackage("react".to_string()),
+                },
+                ResolvedImport {
+                    info: ImportInfo {
+                        source: "react".to_string(),
+                        imported_name: ImportedName::Named("useState".to_string()),
+                        local_name: "useState".to_string(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(15, 30),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::NpmPackage("react".to_string()),
+                },
+            ],
+            ..Default::default()
+        }];
+
+        let graph = ModuleGraph::build(&resolved_modules, &entry_points, &files);
+        assert!(graph.package_usage.contains_key("react"));
+        assert!(graph.type_only_package_usage.contains_key("react"));
+    }
+
+    #[test]
+    fn graph_default_import_reference() {
+        let files = vec![
+            DiscoveredFile {
+                id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                size_bytes: 100,
+            },
+            DiscoveredFile {
+                id: FileId(1),
+                path: PathBuf::from("/project/utils.ts"),
+                size_bytes: 50,
+            },
+        ];
+        let entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/entry.ts"),
+            source: EntryPointSource::PackageJsonMain,
+        }];
+        let resolved_modules = vec![
+            ResolvedModule {
+                file_id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                resolved_imports: vec![ResolvedImport {
+                    info: ImportInfo {
+                        source: "./utils".to_string(),
+                        imported_name: ImportedName::Default,
+                        local_name: "Utils".to_string(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::InternalModule(FileId(1)),
+                }],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(1),
+                path: PathBuf::from("/project/utils.ts"),
+                exports: vec![fallow_types::extract::ExportInfo {
+                    name: ExportName::Default,
+                    local_name: None,
+                    is_type_only: false,
+                    visibility: VisibilityTag::None,
+                    expected_unused_reason: None,
+                    span: oxc_span::Span::new(0, 20),
+                    members: vec![],
+                    is_side_effect_used: false,
+                    super_class: None,
+                    deprecated: false,
+                    deprecated_reason: None,
+                }]
+                .into(),
+                ..Default::default()
+            },
+        ];
+
+        let graph = ModuleGraph::build(&resolved_modules, &entry_points, &files);
+        let utils = &graph.modules[1];
+        let default_export = utils
+            .exports
+            .iter()
+            .find(|e| matches!(e.name, ExportName::Default))
+            .unwrap();
+        assert!(!default_export.references.is_empty());
+        assert_eq!(
+            default_export.references[0].kind,
+            ReferenceKind::DefaultImport
+        );
+    }
+
+    #[test]
+    fn graph_side_effect_import_no_export_reference() {
+        let files = vec![
+            DiscoveredFile {
+                id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                size_bytes: 100,
+            },
+            DiscoveredFile {
+                id: FileId(1),
+                path: PathBuf::from("/project/styles.ts"),
+                size_bytes: 50,
+            },
+        ];
+        let entry_points = vec![EntryPoint {
+            path: PathBuf::from("/project/entry.ts"),
+            source: EntryPointSource::PackageJsonMain,
+        }];
+        let resolved_modules = vec![
+            ResolvedModule {
+                file_id: FileId(0),
+                path: PathBuf::from("/project/entry.ts"),
+                resolved_imports: vec![ResolvedImport {
+                    info: ImportInfo {
+                        source: "./styles".to_string(),
+                        imported_name: ImportedName::SideEffect,
+                        local_name: String::new(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::InternalModule(FileId(1)),
+                }],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(1),
+                path: PathBuf::from("/project/styles.ts"),
+                exports: vec![fallow_types::extract::ExportInfo {
+                    name: ExportName::Named("primaryColor".to_string()),
+                    local_name: Some("primaryColor".to_string()),
+                    is_type_only: false,
+                    visibility: VisibilityTag::None,
+                    expected_unused_reason: None,
+                    span: oxc_span::Span::new(0, 20),
+                    members: vec![],
+                    is_side_effect_used: false,
+                    super_class: None,
+                    deprecated: false,
+                    deprecated_reason: None,
+                }]
+                .into(),
+                ..Default::default()
+            },
+        ];
+
+        let graph = ModuleGraph::build(&resolved_modules, &entry_points, &files);
+        assert_eq!(graph.edge_count(), 1);
+        let styles = &graph.modules[1];
+        assert!(styles.is_reachable());
+        let export = &styles.exports[0];
+        assert!(
+            export.references.is_empty(),
+            "side-effect import should not reference named exports"
+        );
+
+        let encoded = postcard::to_allocvec(&graph).expect("encode graph");
+        let decoded: ModuleGraph = postcard::from_bytes(&encoded).expect("decode graph");
+        assert_eq!(decoded.edge_count(), 1);
+        assert!(decoded.modules[1].is_reachable());
+        assert!(decoded.modules[1].exports[0].references.is_empty());
+    }
+
+    #[test]
+    fn graph_multiple_entry_points() {
+        let files = vec![
+            DiscoveredFile {
+                id: FileId(0),
+                path: PathBuf::from("/project/main.ts"),
+                size_bytes: 100,
+            },
+            DiscoveredFile {
+                id: FileId(1),
+                path: PathBuf::from("/project/worker.ts"),
+                size_bytes: 100,
+            },
+            DiscoveredFile {
+                id: FileId(2),
+                path: PathBuf::from("/project/shared.ts"),
+                size_bytes: 50,
+            },
+        ];
+        let entry_points = vec![
+            EntryPoint {
+                path: PathBuf::from("/project/main.ts"),
+                source: EntryPointSource::PackageJsonMain,
+            },
+            EntryPoint {
+                path: PathBuf::from("/project/worker.ts"),
+                source: EntryPointSource::PackageJsonMain,
+            },
+        ];
+        let resolved_modules = vec![
+            ResolvedModule {
+                file_id: FileId(0),
+                path: PathBuf::from("/project/main.ts"),
+                resolved_imports: vec![ResolvedImport {
+                    info: ImportInfo {
+                        source: "./shared".to_string(),
+                        imported_name: ImportedName::Named("helper".to_string()),
+                        local_name: "helper".to_string(),
+                        is_type_only: false,
+                        is_type_only_star: false,
+                        from_style: false,
+                        span: oxc_span::Span::new(0, 10),
+                        source_span: oxc_span::Span::default(),
+                    },
+                    target: ResolveResult::InternalModule(FileId(2)),
+                }],
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(1),
+                path: PathBuf::from("/project/worker.ts"),
+                ..Default::default()
+            },
+            ResolvedModule {
+                file_id: FileId(2),
+                path: PathBuf::from("/project/shared.ts"),
+                exports: vec![fallow_types::extract::ExportInfo {
+                    name: ExportName::Named("helper".to_string()),
+                    local_name: Some("helper".to_string()),
+                    is_type_only: false,
+                    visibility: VisibilityTag::None,
+                    expected_unused_reason: None,
+                    span: oxc_span::Span::new(0, 20),
+                    members: vec![],
+                    is_side_effect_used: false,
+                    super_class: None,
+                    deprecated: false,
+                    deprecated_reason: None,
+                }]
+                .into(),
+                ..Default::default()
+            },
+        ];
+
+        let graph = ModuleGraph::build(&resolved_modules, &entry_points, &files);
+        assert!(graph.modules[0].is_entry_point());
+        assert!(graph.modules[1].is_entry_point());
+        assert!(!graph.modules[2].is_entry_point());
+        assert!(graph.modules[0].is_reachable());
+        assert!(graph.modules[1].is_reachable());
+        assert!(graph.modules[2].is_reachable());
+    }
+}
