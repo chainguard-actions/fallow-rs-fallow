@@ -11,7 +11,7 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/sample-project
-          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -22,8 +22,9 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not numeric"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected a positive numeric issue count with an empty config"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq -e . "$RESULTS" > /dev/null; then

@@ -1,0 +1,66 @@
+name: Test dead-code baseline save then load
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/sample-project
+          version: 3.35.0
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          artifacts-dir: fallow-out-baseline-save
+          save-baseline: ${{ github.workspace }}/fallow-baseline.json
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+      - name: Assert baseline file was saved
+        env:
+          ISSUES: ${{ steps.save.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          ls -la "$GITHUB_WORKSPACE" | grep -i baseline || true
+          if [ ! -f "$GITHUB_WORKSPACE/fallow-baseline.json" ]; then
+            echo "FAIL: baseline file not saved"
+            exit 1
+          fi
+          if ! jq -e . "$GITHUB_WORKSPACE/fallow-baseline.json" > /dev/null; then
+            echo "FAIL: baseline is not valid JSON"
+            exit 1
+          fi
+          echo "PASS"
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/sample-project
+          version: 3.35.0
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          artifacts-dir: fallow-out-baseline-load
+          baseline: ${{ github.workspace }}/fallow-baseline.json
+          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+      - name: Assert baseline load ran
+        env:
+          SAVED: ${{ steps.save.outputs.issues }}
+          ISSUES: ${{ steps.load.outputs.issues }}
+          RESULTS: ${{ steps.load.outputs.results }}
+        run: |
+          echo "saved-run issues: $SAVED"
+          echo "loaded-run issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not numeric"
+            exit 1
+          fi
+          if [ "$ISSUES" -gt "$SAVED" ]; then
+            echo "FAIL: baseline run reported more issues than the run that saved it"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq -e . "$RESULTS" > /dev/null; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          echo "PASS"
