@@ -1,0 +1,55 @@
+name: Test workspace scoping in a monorepo
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create demo monorepo
+        run: |
+          mkdir -p demo-mono/packages/a/src demo-mono/packages/b/src
+          cat > demo-mono/package.json <<'EOF'
+          {"name":"demo-mono","version":"1.0.0","private":true,"workspaces":["packages/*"]}
+          EOF
+          for p in a b; do
+            cat > demo-mono/packages/$p/package.json <<EOF
+          {"name":"@demo/$p","version":"1.0.0","type":"module","main":"src/index.js"}
+          EOF
+            echo "export const value_$p = 1;" > demo-mono/packages/$p/src/index.js
+          done
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: demo-mono
+          workspace: '@demo/a'
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          cat fallow-analysis-args.sh
+          if ! grep -q -- '--workspace' fallow-analysis-args.sh; then
+            echo "FAIL: --workspace not forwarded"
+            exit 1
+          fi
+          echo "PASS"

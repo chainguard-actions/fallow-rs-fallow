@@ -1,0 +1,100 @@
+name: Test health min-score with save-snapshot then trend
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create demo project
+        run: |
+          mkdir -p demo-score/src
+          cat > demo-score/package.json <<'EOF'
+          {"name":"demo-score","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > demo-score/src/index.js <<'EOF'
+          import { add } from './math.js';
+          console.log(add(1, 2));
+          EOF
+          cat > demo-score/src/math.js <<'EOF'
+          export function add(a, b) { return a + b; }
+          EOF
+
+      - id: snapshot
+        uses: .
+        with:
+          command: health
+          root: demo-score
+          min-score: '0'
+          save-snapshot: 'true'
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert min-score run produced results and a snapshot
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
+          RESULTS: ${{ steps.snapshot.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          cat fallow-analysis-args.sh
+          if ! grep -q -- '--min-score' fallow-analysis-args.sh; then
+            echo "FAIL: --min-score not forwarded"
+            exit 1
+          fi
+          if ! grep -q -- '--save-snapshot' fallow-analysis-args.sh; then
+            echo "FAIL: --save-snapshot not forwarded"
+            exit 1
+          fi
+          SNAPS=$(find . -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
+          echo "snapshots: $SNAPS"
+          if [ -z "$SNAPS" ]; then
+            echo "FAIL: no snapshot file saved under .fallow/snapshots"
+            exit 1
+          fi
+          echo "PASS"
+
+      - id: trend
+        uses: .
+        with:
+          command: health
+          root: demo-score
+          trend: 'true'
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert trend run succeeded
+        env:
+          ISSUES: ${{ steps.trend.outputs.issues }}
+          RESULTS: ${{ steps.trend.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if ! grep -q -- '--trend' fallow-analysis-args.sh; then
+            echo "FAIL: --trend not forwarded"
+            exit 1
+          fi
+          echo "PASS"

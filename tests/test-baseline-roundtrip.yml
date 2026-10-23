@@ -1,0 +1,92 @@
+name: Test save-baseline then load baseline (dead-code)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create demo project
+        run: |
+          mkdir -p demo-baseline/src baselines
+          cat > demo-baseline/package.json <<'EOF'
+          {"name":"demo-baseline","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > demo-baseline/src/index.js <<'EOF'
+          import { add } from './math.js';
+          console.log(add(1, 2));
+          EOF
+          cat > demo-baseline/src/math.js <<'EOF'
+          export function add(a, b) { return a + b; }
+          export function unusedHelper(a) { return a * 2; }
+          EOF
+
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: demo-baseline
+          save-baseline: ${{ github.workspace }}/baselines/dead-code.json
+          save-regression-baseline: ${{ github.workspace }}/baselines/regression.json
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert baseline files were written
+        run: |
+          ls -la baselines
+          if [ ! -s baselines/dead-code.json ]; then
+            echo "FAIL: baseline file not written"
+            exit 1
+          fi
+          if ! jq empty baselines/dead-code.json; then
+            echo "FAIL: baseline is not valid JSON"
+            exit 1
+          fi
+          if [ ! -s baselines/regression.json ]; then
+            echo "FAIL: regression baseline file not written"
+            exit 1
+          fi
+          echo "PASS"
+
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: demo-baseline
+          baseline: ${{ github.workspace }}/baselines/dead-code.json
+          regression-baseline: ${{ github.workspace }}/baselines/regression.json
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert baseline was loaded
+        env:
+          ISSUES: ${{ steps.load.outputs.issues }}
+          BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
+          EXPECTED: ${{ github.workspace }}/baselines/dead-code.json
+        run: |
+          echo "issues: $ISSUES"
+          echo "baseline-path: $BASELINE_PATH"
+          echo "baseline-entries: $ENTRIES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          if [ "$BASELINE_PATH" != "$EXPECTED" ]; then
+            echo "FAIL: expected baseline-path '$EXPECTED'"
+            exit 1
+          fi
+          if [ -n "$ENTRIES" ] && ! echo "$ENTRIES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: baseline-entries is not numeric"
+            exit 1
+          fi
+          echo "PASS"

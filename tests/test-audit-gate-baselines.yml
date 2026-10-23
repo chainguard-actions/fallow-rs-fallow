@@ -1,0 +1,131 @@
+name: Test audit command with gate, changed-since and per-analysis baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create demo project with git history (base tag + one change)
+        run: |
+          mkdir -p demo-audit/src baselines
+          cd demo-audit
+          git init -q
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          cat > package.json <<'EOF'
+          {"name":"demo-audit","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > src/index.js <<'EOF'
+          import { add } from './math.js';
+          console.log(add(1, 2));
+          EOF
+          echo 'export function add(a, b) { return a + b; }' > src/math.js
+          git add -A && git commit -q -m "base"
+          git tag fallow-audit-base
+          echo 'export function sub(a, b) { return a - b; }' >> src/math.js
+          git commit -q -am "add sub"
+          git log --oneline
+
+      - id: dead-code-baseline
+        uses: .
+        with:
+          command: dead-code
+          root: demo-audit
+          save-baseline: ${{ github.workspace }}/baselines/dead-code.json
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - id: health-baseline
+        uses: .
+        with:
+          command: health
+          root: demo-audit
+          save-baseline: ${{ github.workspace }}/baselines/health.json
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - id: dupes-baseline
+        uses: .
+        with:
+          command: dupes
+          root: demo-audit
+          save-baseline: ${{ github.workspace }}/baselines/dupes.json
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert baselines exist
+        run: |
+          ls -la baselines
+          for f in dead-code health dupes; do
+            if [ ! -s "baselines/$f.json" ]; then
+              echo "FAIL: baselines/$f.json not written"
+              exit 1
+            fi
+          done
+          echo "PASS"
+
+      - id: action
+        uses: .
+        with:
+          command: audit
+          root: demo-audit
+          changed-since: fallow-audit-base
+          gate: all
+          dead-code-baseline: ${{ github.workspace }}/baselines/dead-code.json
+          health-baseline: ${{ github.workspace }}/baselines/health.json
+          dupes-baseline: ${{ github.workspace }}/baselines/dupes.json
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert audit outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: expected verdict pass/warn/fail"; exit 1 ;;
+          esac
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all', got '$GATE'"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          cat fallow-analysis-args.sh
+          for flag in '--gate' '--changed-since' '--dead-code-baseline' '--health-baseline' '--dupes-baseline'; do
+            if ! grep -q -- "$flag" fallow-analysis-args.sh; then
+              echo "FAIL: expected $flag in analysis args"
+              exit 1
+            fi
+          done
+          echo "PASS"

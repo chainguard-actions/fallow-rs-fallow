@@ -1,4 +1,4 @@
-name: Test dupes command with min-tokens, min-lines, threshold and top
+name: Test dupes min-tokens, min-lines, threshold and top
 on:
   workflow_dispatch:
 jobs:
@@ -7,15 +7,44 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Create demo project with duplicated code
+        run: |
+          mkdir -p demo-dupes/src
+          cat > demo-dupes/package.json <<'EOF'
+          {"name":"demo-dupes","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > demo-dupes/src/index.js <<'EOF'
+          import { a } from './a.js';
+          import { b } from './b.js';
+          console.log(a([1, 2, 3]), b([4, 5, 6]));
+          EOF
+          for f in a b; do
+            cat > demo-dupes/src/$f.js <<EOF
+          export function $f(items) {
+            const result = [];
+            for (const item of items) {
+              if (item % 2 === 0) {
+                result.push(item * 2);
+              } else {
+                result.push(item + 1);
+              }
+            }
+            return result.filter((x) => x > 1).map((x) => x.toString());
+          }
+          EOF
+          done
+
       - id: action
         uses: .
         with:
           command: dupes
-          min-tokens: '80'
-          min-lines: '8'
+          root: demo-dupes
+          min-tokens: '20'
+          min-lines: '3'
           threshold: '100'
           top: '5'
           fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
@@ -27,13 +56,19 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues is not a non-negative integer"
+            echo "FAIL: issues is not a number"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
+          cat fallow-analysis-args.sh
+          for flag in '--min-tokens' '--min-lines' '--threshold' '--top'; do
+            if ! grep -q -- "$flag" fallow-analysis-args.sh; then
+              echo "FAIL: expected $flag in analysis args"
+              exit 1
+            fi
+          done
           echo "PASS"

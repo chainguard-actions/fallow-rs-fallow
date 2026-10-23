@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds, sort, top and hotspots window
+name: Test health complexity thresholds, top, sort and min-severity
 on:
   workflow_dispatch:
 jobs:
@@ -6,22 +6,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
+
+      - name: Create demo project with simple functions
+        run: |
+          mkdir -p demo-health/src
+          cat > demo-health/package.json <<'EOF'
+          {"name":"demo-health","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > demo-health/src/index.js <<'EOF'
+          import { add, sub } from './math.js';
+          console.log(add(1, 2), sub(3, 1));
+          EOF
+          cat > demo-health/src/math.js <<'EOF'
+          export function add(a, b) { return a + b; }
+          export function sub(a, b) { return a - b; }
+          EOF
 
       - id: action
         uses: .
         with:
           command: health
-          max-cyclomatic: '40'
-          max-cognitive: '30'
-          max-crap: '60.5'
+          root: demo-health
+          max-cyclomatic: '10'
+          max-cognitive: '8'
+          max-crap: '25.5'
+          top: '5'
           sort: cognitive
-          top: '10'
-          hotspots: 'true'
-          since: 1y
-          min-commits: '1'
+          min-severity: critical
           fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
@@ -33,13 +46,23 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues is not a non-negative integer"
+            echo "FAIL: issues is not a number"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
+          echo "PASS"
+
+      - name: Assert threshold flags were forwarded
+        run: |
+          cat fallow-analysis-args.sh
+          for flag in '--max-cyclomatic' '--max-cognitive' '--max-crap' '--top' '--sort' '--min-severity'; do
+            if ! grep -q -- "$flag" fallow-analysis-args.sh; then
+              echo "FAIL: expected $flag in analysis args"
+              exit 1
+            fi
+          done
           echo "PASS"

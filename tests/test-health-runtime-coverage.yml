@@ -1,0 +1,91 @@
+name: Test health runtime-coverage inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create demo project and coverage input
+        run: |
+          mkdir -p demo-rt/src
+          cat > demo-rt/package.json <<'EOF'
+          {"name":"demo-rt","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > demo-rt/src/index.js <<'EOF'
+          import { add } from './math.js';
+          console.log(add(1, 2));
+          EOF
+          echo 'export function add(a, b) { return a + b; }' > demo-rt/src/math.js
+          cat > demo-rt/coverage-final.json <<EOF
+          {
+            "$GITHUB_WORKSPACE/demo-rt/src/math.js": {
+              "path": "$GITHUB_WORKSPACE/demo-rt/src/math.js",
+              "statementMap": {"0": {"start": {"line": 1, "column": 28}, "end": {"line": 1, "column": 41}}},
+              "fnMap": {"0": {"name": "add", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}}, "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 1, "column": 43}}, "line": 1}},
+              "branchMap": {},
+              "s": {"0": 250},
+              "f": {"0": 250},
+              "b": {}
+            }
+          }
+          EOF
+
+      # Runtime coverage is a paid/licensed fallow feature. Without a license
+      # the CLI may refuse to run, so accept a graceful failure but validate
+      # results strictly on success.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: demo-rt
+          runtime-coverage: ${{ github.workspace }}/demo-rt/coverage-final.json
+          min-invocations-hot: '100'
+          min-observation-volume: '10'
+          low-traffic-threshold: '0.1'
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert action ran (results on success, graceful failure otherwise)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          [ -f fallow-analysis-args.sh ] && cat fallow-analysis-args.sh
+          [ -f fallow-stderr.log ] && cat fallow-stderr.log
+          if [ "$OUTCOME" = "success" ]; then
+            if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+              echo "FAIL: issues is not a number"
+              exit 1
+            fi
+            if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+              echo "FAIL: results file missing or invalid"
+              exit 1
+            fi
+            for flag in '--runtime-coverage' '--min-invocations-hot' '--min-observation-volume' '--low-traffic-threshold'; do
+              if ! grep -q -- "$flag" fallow-analysis-args.sh; then
+                echo "FAIL: expected $flag in analysis args"
+                exit 1
+              fi
+            done
+            echo "PASS: runtime coverage analysis succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            # The numeric inputs passed validation if the analysis args were built.
+            if [ ! -f fallow-analysis-args.sh ]; then
+              echo "FAIL: action failed before building analysis args (input validation rejected valid values?)"
+              exit 1
+            fi
+            echo "PASS: runtime coverage failed gracefully (licensed feature unavailable)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

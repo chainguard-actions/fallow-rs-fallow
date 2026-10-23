@@ -1,0 +1,69 @@
+name: Test security command with security-gate new
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create demo project with git history (base tag + one benign change)
+        run: |
+          mkdir -p demo-sec/src
+          cd demo-sec
+          git init -q
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          cat > package.json <<'EOF'
+          {"name":"demo-sec","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > src/index.js <<'EOF'
+          import { add } from './math.js';
+          console.log(add(1, 2));
+          EOF
+          echo 'export function add(a, b) { return a + b; }' > src/math.js
+          git add -A && git commit -q -m "base"
+          git tag fallow-sec-base
+          echo '// benign comment' >> src/math.js
+          git commit -q -am "benign change"
+
+      - id: action
+        uses: .
+        with:
+          command: security
+          root: demo-sec
+          changed-since: fallow-sec-base
+          security-gate: new
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert security outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "gate: $GATE"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
+            echo "FAIL: expected gate 'new', got '$GATE'"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          cat fallow-analysis-args.sh
+          if ! grep -q -- '--gate' fallow-analysis-args.sh; then
+            echo "FAIL: --gate not forwarded"
+            exit 1
+          fi
+          echo "PASS"

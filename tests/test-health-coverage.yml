@@ -1,0 +1,71 @@
+name: Test health with Istanbul coverage and coverage-root
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create demo project and Istanbul coverage file
+        run: |
+          mkdir -p demo-cov/src
+          cat > demo-cov/package.json <<'EOF'
+          {"name":"demo-cov","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > demo-cov/src/index.js <<'EOF'
+          import { add } from './math.js';
+          console.log(add(1, 2));
+          EOF
+          echo 'export function add(a, b) { return a + b; }' > demo-cov/src/math.js
+          # Coverage recorded on a different machine under /ci-build; coverage-root rebases it.
+          cat > demo-cov/coverage-final.json <<'EOF'
+          {
+            "/ci-build/src/math.js": {
+              "path": "/ci-build/src/math.js",
+              "statementMap": {"0": {"start": {"line": 1, "column": 28}, "end": {"line": 1, "column": 41}}},
+              "fnMap": {"0": {"name": "add", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}}, "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 1, "column": 43}}, "line": 1}},
+              "branchMap": {},
+              "s": {"0": 1},
+              "f": {"0": 1},
+              "b": {}
+            }
+          }
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: demo-cov
+          coverage: ${{ github.workspace }}/demo-cov/coverage-final.json
+          coverage-root: /ci-build
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          cat fallow-analysis-args.sh
+          for flag in '--coverage' '--coverage-root'; do
+            if ! grep -q -- "$flag" fallow-analysis-args.sh; then
+              echo "FAIL: expected $flag in analysis args"
+              exit 1
+            fi
+          done
+          echo "PASS"
