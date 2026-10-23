@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds
+name: Test health command with complexity threshold inputs
 on:
   workflow_dispatch:
 jobs:
@@ -6,6 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
       - name: Create a minimal JS project
         run: |
@@ -16,18 +18,31 @@ jobs:
             "name": "health-thresholds-project",
             "version": "1.0.0",
             "type": "module",
-            "main": "src/index.js",
             "scripts": { "start": "node src/index.js" }
           }
           EOF
           cat > "$P/src/index.js" <<'EOF'
-          export function add(a, b) {
-            if (a > b) {
-              return a + b;
+          export function classify(a, b, c, d) {
+            if (a > 0) {
+              if (b > 0) {
+                if (c > 0) {
+                  if (d > 0) { return 4; } else { return 3; }
+                } else if (c < -10) {
+                  return -3;
+                } else {
+                  return 2;
+                }
+              } else if (b < -10) {
+                return -2;
+              } else {
+                return 1;
+              }
+            } else if (a < -10) {
+              return -1;
             }
-            return b + a;
+            return 0;
           }
-          add(1, 2);
+          classify(1, 2, 3, 4);
           EOF
 
       - id: action
@@ -36,17 +51,18 @@ jobs:
           command: health
           root: tests/fixtures/health-thresholds-project
           format: json
+          max-cyclomatic: '3'
+          max-cognitive: '3'
+          max-crap: '30'
+          top: '5'
+          sort: cognitive
+          since: 1y
+          min-commits: '1'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
-          max-cyclomatic: '50'
-          max-cognitive: '50'
-          max-crap: '100'
-          top: '5'
-          sort: cognitive
-          min-severity: critical
 
       - name: Assert issues output is a number
         env:
@@ -68,5 +84,8 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: invalid JSON"
+            exit 1
+          fi
           echo "PASS"

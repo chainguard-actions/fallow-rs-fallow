@@ -1,4 +1,4 @@
-name: Test combined run with only selector and threads
+name: Test health command with min-score and min-severity gates
 on:
   workflow_dispatch:
 jobs:
@@ -7,50 +7,51 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a minimal JS project
+      - name: Create a simple, healthy JS project
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/combined-only-project"
+          P="$GITHUB_WORKSPACE/tests/fixtures/health-gates-project"
           mkdir -p "$P/src"
           cat > "$P/package.json" <<'EOF'
           {
-            "name": "combined-only-project",
+            "name": "health-gates-project",
             "version": "1.0.0",
             "type": "module",
-            "main": "src/index.js",
             "scripts": { "start": "node src/index.js" }
           }
           EOF
           cat > "$P/src/index.js" <<'EOF'
-          export function add(a, b) { return a + b; }
+          export function add(a, b) {
+            return a + b;
+          }
           add(1, 2);
           EOF
 
       - id: action
         uses: .
         with:
-          root: tests/fixtures/combined-only-project
+          command: health
+          root: tests/fixtures/health-gates-project
           format: json
+          min-score: '0'
+          min-severity: critical
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
-          only: dead-code,health
-          threads: '2'
 
-      - name: Assert outputs
+      - name: Assert action succeeded and results are valid JSON
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
+          OUTCOME: ${{ steps.action.outcome }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues, got '$ISSUES'"
+          echo "outcome: $OUTCOME results: $RESULTS"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

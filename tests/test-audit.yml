@@ -1,0 +1,118 @@
+name: Test audit command with gate and per-analysis baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Create project
+        run: |
+          P="$GITHUB_WORKSPACE/tests/fixtures/audit-project"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
+          {
+            "name": "audit-project",
+            "version": "1.0.0",
+            "type": "module",
+            "main": "src/index.js"
+          }
+          EOF
+          cat > "$P/src/index.js" <<'EOF'
+          import { used } from './lib.js';
+          console.log(used());
+          EOF
+          cat > "$P/src/lib.js" <<'EOF'
+          export function used() { return 1; }
+          export function unusedExport() { return 2; }
+          EOF
+
+      - name: Save dead-code baseline
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/audit-project
+          save-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Save health baseline
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/audit-project
+          save-baseline: ${{ github.workspace }}/audit-health-baseline.json
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Save dupes baseline
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/audit-project
+          save-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert baselines exist
+        run: |
+          for f in audit-dead-code-baseline.json audit-health-baseline.json audit-dupes-baseline.json; do
+            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: missing $f"
+              exit 1
+            fi
+          done
+          echo "PASS"
+
+      - id: action
+        uses: .
+        with:
+          command: audit
+          root: tests/fixtures/audit-project
+          changed-since: HEAD
+          gate: all
+          dead-code-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
+          health-baseline: ${{ github.workspace }}/audit-health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
+          max-crap: '30'
+          format: json
+          fail-on-issues: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert audit outputs
+        env:
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "verdict: $VERDICT gate: $GATE issues: $ISSUES"
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+          esac
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all', got '$GATE'"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: expected numeric issues"
+            exit 1
+          fi
+          echo "PASS"

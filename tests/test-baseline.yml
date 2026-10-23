@@ -7,81 +7,84 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a JS project with unused code
+      - name: Create project with unused code
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/dead-code-baseline-project"
+          P="$GITHUB_WORKSPACE/tests/fixtures/baseline-project"
           mkdir -p "$P/src"
           cat > "$P/package.json" <<'EOF'
           {
-            "name": "dead-code-baseline-project",
+            "name": "baseline-project",
             "version": "1.0.0",
             "type": "module",
-            "main": "src/index.js",
-            "scripts": { "start": "node src/index.js" }
+            "main": "src/index.js"
           }
           EOF
           cat > "$P/src/index.js" <<'EOF'
-          import { used } from './used.js';
+          import { used } from './lib.js';
           console.log(used());
           EOF
-          cat > "$P/src/used.js" <<'EOF'
+          cat > "$P/src/lib.js" <<'EOF'
           export function used() { return 1; }
           export function unusedExport() { return 2; }
           EOF
 
       - id: save
-        name: Save a baseline
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/dead-code-baseline-project
+          root: tests/fixtures/baseline-project
+          save-baseline: ${{ github.workspace }}/fallow-baseline.json
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
-          save-baseline: ${{ github.workspace }}/fallow-baseline.json
 
-      - name: Assert baseline file was written
-        env:
-          ISSUES: ${{ steps.save.outputs.issues }}
+      - name: Assert baseline file was saved
         run: |
-          echo "issues: $ISSUES"
           F="$GITHUB_WORKSPACE/fallow-baseline.json"
           if [ ! -f "$F" ]; then
-            echo "FAIL: baseline file not found at $F"
+            echo "FAIL: baseline not saved at $F"
             exit 1
           fi
-          jq empty "$F" || { echo "FAIL: baseline is not valid JSON"; exit 1; }
+          if ! jq empty "$F"; then
+            echo "FAIL: baseline is not valid JSON"
+            exit 1
+          fi
+          cat "$F"
           echo "PASS"
 
       - id: compare
-        name: Compare against the baseline
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/dead-code-baseline-project
+          root: tests/fixtures/baseline-project
+          baseline: ${{ github.workspace }}/fallow-baseline.json
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
-          baseline: ${{ github.workspace }}/fallow-baseline.json
 
-      - name: Assert baseline run reports no more issues than the saved run
+      - name: Assert baseline comparison did not increase issues
         env:
-          BEFORE: ${{ steps.save.outputs.issues }}
           ISSUES: ${{ steps.compare.outputs.issues }}
+          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
+          OUTCOME: ${{ steps.compare.outcome }}
         run: |
-          echo "before: $BEFORE after: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || ! [[ "$BEFORE" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues"
+          echo "issues: $ISSUES saved-run issues: $SAVED_ISSUES outcome: $OUTCOME"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success with baseline"
             exit 1
           fi
-          if [ "$ISSUES" -gt "$BEFORE" ]; then
-            echo "FAIL: baseline run reported more issues than the saved run"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || ! [[ "$SAVED_ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: expected numeric issue counts"
+            exit 1
+          fi
+          if [ "$ISSUES" -gt "$SAVED_ISSUES" ]; then
+            echo "FAIL: baseline run reported more issues than the run that saved it"
             exit 1
           fi
           echo "PASS"

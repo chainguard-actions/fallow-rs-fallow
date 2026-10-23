@@ -1,0 +1,90 @@
+name: Test combined run with skip/only selectors, threads, save-snapshot and trend
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create project
+        run: |
+          P="$GITHUB_WORKSPACE/tests/fixtures/snapshot-project"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
+          {
+            "name": "snapshot-project",
+            "version": "1.0.0",
+            "type": "module",
+            "main": "src/index.js"
+          }
+          EOF
+          cat > "$P/src/index.js" <<'EOF'
+          import { used } from './lib.js';
+          console.log(used());
+          EOF
+          cat > "$P/src/lib.js" <<'EOF'
+          export function used() { return 1; }
+          export function unusedExport() { return 2; }
+          EOF
+
+      - id: first
+        uses: .
+        with:
+          root: tests/fixtures/snapshot-project
+          skip: dupes
+          threads: '2'
+          score: 'true'
+          save-snapshot: 'true'
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert snapshot saved
+        env:
+          RESULTS: ${{ steps.first.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          D="$GITHUB_WORKSPACE/tests/fixtures/snapshot-project/.fallow/snapshots"
+          ls -la "$D" || true
+          if [ -z "$(ls -A "$D" 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot written under $D"
+            exit 1
+          fi
+          echo "PASS"
+
+      - id: second
+        uses: .
+        with:
+          root: tests/fixtures/snapshot-project
+          only: health
+          trend: 'true'
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert trend run produced results
+        env:
+          ISSUES: ${{ steps.second.outputs.issues }}
+          RESULTS: ${{ steps.second.outputs.results }}
+        run: |
+          echo "issues: $ISSUES results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: expected numeric issues"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          echo "PASS"

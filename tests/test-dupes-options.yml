@@ -1,0 +1,75 @@
+name: Test dupes command with min-tokens, min-lines, threshold, top
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a project with duplicated code
+        run: |
+          P="$GITHUB_WORKSPACE/tests/fixtures/dupes-options-project"
+          mkdir -p "$P/src/a" "$P/src/b"
+          cat > "$P/package.json" <<'EOF'
+          {
+            "name": "dupes-options-project",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": { "start": "node src/index.js" }
+          }
+          EOF
+          for d in a b; do
+            cat > "$P/src/$d/util.js" <<'EOF'
+          export function compute(items) {
+            let total = 0;
+            for (const item of items) {
+              if (item.enabled) {
+                total += item.price * item.quantity;
+              } else {
+                total -= item.discount || 0;
+              }
+            }
+            const tax = total * 0.21;
+            const shipping = total > 100 ? 0 : 9.99;
+            return { total, tax, shipping, grand: total + tax + shipping };
+          }
+          EOF
+          done
+          cat > "$P/src/index.js" <<'EOF'
+          import { compute as c1 } from './a/util.js';
+          import { compute as c2 } from './b/util.js';
+          console.log(c1([]), c2([]));
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/dupes-options-project
+          format: json
+          min-tokens: '10'
+          min-lines: '3'
+          threshold: '100'
+          top: '5'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert results
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: expected numeric issues"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          echo "PASS"
