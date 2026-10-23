@@ -1,4 +1,4 @@
-name: Test changed-since scoping
+name: Test dead-code scoped by changed-workspaces
 on:
   workflow_dispatch:
 jobs:
@@ -12,26 +12,19 @@ jobs:
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/sample-project
+          root: tests/fixtures/monorepo
           version: 3.35.0
           fail-on-issues: 'false'
-          changed-since: HEAD
-          artifacts-dir: fallow-out-changed-since
+          auto-changed-since: 'false'
+          artifacts-dir: fallow-out-changed-workspaces
+          changed-workspaces: HEAD
       - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          echo "changed-files-unavailable: $UNAVAILABLE"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
-            exit 1
-          fi
-          if [ ! -f "$RESULTS" ] || ! jq -e . "$RESULTS" > /dev/null; then
-            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

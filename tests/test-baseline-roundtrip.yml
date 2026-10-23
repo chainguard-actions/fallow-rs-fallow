@@ -1,0 +1,69 @@
+name: Test dead-code baseline and regression baseline save then load
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/sample-project
+          version: 3.35.0
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          artifacts-dir: fallow-out-baseline-save
+          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          save-regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
+      - name: Assert baseline files saved
+        run: |
+          ls -la "$GITHUB_WORKSPACE/fallow-baselines"
+          for f in dead-code.json regression.json; do
+            if [ ! -s "$GITHUB_WORKSPACE/fallow-baselines/$f" ]; then
+              echo "FAIL: $f was not saved"
+              exit 1
+            fi
+            if ! jq -e . "$GITHUB_WORKSPACE/fallow-baselines/$f" > /dev/null; then
+              echo "FAIL: $f is not valid JSON"
+              exit 1
+            fi
+          done
+          echo "PASS"
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/sample-project
+          version: 3.35.0
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          artifacts-dir: fallow-out-baseline-load
+          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
+      - name: Assert baseline loaded
+        env:
+          ISSUES: ${{ steps.load.outputs.issues }}
+          BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
+          EXPECTED: ${{ github.workspace }}/fallow-baselines/dead-code.json
+        run: |
+          echo "issues: $ISSUES"
+          echo "baseline-path: $BASELINE_PATH"
+          echo "baseline-entries: $ENTRIES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not numeric"
+            exit 1
+          fi
+          if [ -n "$ENTRIES" ] && ! [[ "$ENTRIES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: baseline-entries is not numeric"
+            exit 1
+          fi
+          if [ -n "$BASELINE_PATH" ] && [ "$BASELINE_PATH" != "$EXPECTED" ]; then
+            echo "FAIL: baseline-path does not match the baseline input"
+            exit 1
+          fi
+          echo "PASS"
