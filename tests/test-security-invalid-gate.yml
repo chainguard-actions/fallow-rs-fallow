@@ -16,21 +16,26 @@ jobs:
         with:
           command: security
           root: tests/fixtures/simple-js
+          security-gate: bogus
           format: json
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          security-gate: bogus
 
-      - name: Assert action rejected the invalid security-gate
+      - name: Assert validation failure
         env:
           OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME"
+          echo "outcome: $OUTCOME issues: '$ISSUES'"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for security-gate=bogus"
+            echo "FAIL: expected security-gate=bogus to be rejected"
+            exit 1
+          fi
+          if [ -n "$ISSUES" ]; then
+            echo "FAIL: no issues count expected when validation fails"
             exit 1
           fi
           echo "PASS"

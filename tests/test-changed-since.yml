@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-since
+name: Test changed-since scoping
 on:
   workflow_dispatch:
 
@@ -17,13 +17,14 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
+          changed-since: HEAD
           format: json
           fail-on-issues: 'false'
+          auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          changed-since: HEAD
 
       - name: Assert outputs
         env:
@@ -31,6 +32,7 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1

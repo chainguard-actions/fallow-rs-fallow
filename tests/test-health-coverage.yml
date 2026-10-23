@@ -10,14 +10,14 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Resolve coverage path
-        run: echo "COVERAGE_FILE=$GITHUB_WORKSPACE/tests/fixtures/coverage/coverage-final.json" >> "$GITHUB_ENV"
-
       - id: action
         uses: .
         with:
           command: health
           root: tests/fixtures/simple-js
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /ci/project
+          max-crap: '30'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -25,8 +25,6 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          coverage: ${{ env.COVERAGE_FILE }}
-          coverage-root: /coverage-origin
 
       - name: Assert outputs
         env:
@@ -34,7 +32,6 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1

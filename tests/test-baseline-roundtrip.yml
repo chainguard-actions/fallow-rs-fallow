@@ -1,4 +1,4 @@
-name: Test dead-code save-baseline then baseline comparison
+name: Test save-baseline then baseline comparison
 on:
   workflow_dispatch:
 
@@ -15,6 +15,7 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
+          save-baseline: ${{ runner.temp }}/fallow-dead-code-baseline.json
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -22,13 +23,24 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          save-baseline: fallow-dead-code-baseline.json
+
+      - name: Assert baseline file saved
+        env:
+          BASELINE: ${{ runner.temp }}/fallow-dead-code-baseline.json
+        run: |
+          ls -la "$(dirname "$BASELINE")"
+          if [ ! -s "$BASELINE" ]; then
+            echo "FAIL: baseline file not saved at $BASELINE"
+            exit 1
+          fi
+          echo "PASS: baseline saved"
 
       - id: action
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/simple-js
+          baseline: ${{ runner.temp }}/fallow-dead-code-baseline.json
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -36,21 +48,22 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          baseline: fallow-dead-code-baseline.json
 
       - name: Assert baseline run outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
           BASELINE_PATH: ${{ steps.action.outputs.baseline-path }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           echo "baseline-path: $BASELINE_PATH"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ -n "$BASELINE_PATH" ] && [ "$BASELINE_PATH" != "fallow-dead-code-baseline.json" ]; then
-            echo "FAIL: unexpected baseline-path '$BASELINE_PATH'"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing at: $RESULTS"
             exit 1
           fi
           echo "PASS"

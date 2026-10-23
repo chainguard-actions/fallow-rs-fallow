@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend
+name: Test combined run with only selector
 on:
   workflow_dispatch:
 
@@ -10,26 +10,11 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - id: snapshot
-        uses: .
-        with:
-          command: health
-          root: tests/fixtures/simple-js
-          format: json
-          fail-on-issues: 'false'
-          auto-changed-since: 'false'
-          sarif: 'false'
-          annotations: 'false'
-          comment: 'false'
-          no-cache: 'true'
-          score: 'true'
-          save-snapshot: 'true'
-
       - id: action
         uses: .
         with:
-          command: health
           root: tests/fixtures/simple-js
+          only: 'dead-code,health'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -37,19 +22,12 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          score: 'true'
-          trend: 'true'
 
       - name: Assert outputs
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
-            exit 1
-          fi
+          echo "results: $RESULTS"
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing at: $RESULTS"
             exit 1

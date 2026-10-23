@@ -1,4 +1,4 @@
-name: Test health with complexity thresholds, top, sort and threads
+name: Test health complexity thresholds
 on:
   workflow_dispatch:
 
@@ -15,6 +15,11 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
+          max-cyclomatic: '20'
+          max-cognitive: '15'
+          max-crap: '30.0'
+          sort: cognitive
+          min-severity: critical
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -22,12 +27,6 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          max-cyclomatic: '20'
-          max-cognitive: '15'
-          max-crap: '30'
-          top: '5'
-          sort: cognitive
-          threads: '2'
 
       - name: Assert outputs
         env:
@@ -35,7 +34,6 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1

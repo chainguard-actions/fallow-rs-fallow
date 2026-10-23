@@ -1,4 +1,4 @@
-name: Test combined run with skip
+name: Test workspace scoping in a monorepo
 on:
   workflow_dispatch:
 
@@ -13,7 +13,9 @@ jobs:
       - id: action
         uses: .
         with:
-          root: tests/fixtures/simple-js
+          command: dead-code
+          root: tests/fixtures/monorepo
+          workspace: '@fixture/app'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -21,7 +23,6 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          skip: dupes
 
       - name: Assert outputs
         env:

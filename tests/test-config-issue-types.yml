@@ -1,4 +1,4 @@
-name: Test explicit config file
+name: Test config file, issue-types filter and threads
 on:
   workflow_dispatch:
 
@@ -10,15 +10,14 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Resolve config path
-        run: echo "FALLOW_CFG=$GITHUB_WORKSPACE/tests/fixtures/fallow-config/.fallowrc.json" >> "$GITHUB_ENV"
-
       - id: action
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          config: ${{ env.FALLOW_CFG }}
+          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
+          issue-types: 'unused-files,unused-exports'
+          threads: '2'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -33,6 +32,7 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1

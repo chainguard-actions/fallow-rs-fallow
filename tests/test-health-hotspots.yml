@@ -17,6 +17,9 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
+          hotspots: 'true'
+          since: 1y
+          min-commits: '1'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -24,9 +27,6 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          hotspots: 'true'
-          since: 1y
-          min-commits: '1'
 
       - name: Assert outputs
         env:
@@ -34,7 +34,6 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
