@@ -1,4 +1,4 @@
-name: Test dead-code save-baseline then compare against baseline
+name: Test baseline save and load
 on:
   workflow_dispatch:
 jobs:
@@ -26,17 +26,21 @@ jobs:
           annotations: 'false'
           save-baseline: ${{ github.workspace }}/fallow-test-baseline.json
 
-      - name: Assert baseline file was saved
+      - name: Assert baseline file saved
         run: |
           F="$GITHUB_WORKSPACE/fallow-test-baseline.json"
           if [ ! -f "$F" ]; then
-            echo "FAIL: baseline not saved at $F"
+            echo "FAIL: baseline file not written at $F"
             exit 1
           fi
-          jq empty "$F" || { echo "FAIL: baseline is not valid JSON"; exit 1; }
-          echo "PASS: baseline saved"
+          cat "$F"
+          if ! jq empty "$F"; then
+            echo "FAIL: baseline is not valid JSON"
+            exit 1
+          fi
+          echo "PASS"
 
-      - id: compare
+      - id: load
         uses: .
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
@@ -49,20 +53,20 @@ jobs:
           annotations: 'false'
           baseline: ${{ github.workspace }}/fallow-test-baseline.json
 
-      - name: Assert baseline comparison
+      - name: Assert baseline suppressed all known issues
         env:
-          ISSUES: ${{ steps.compare.outputs.issues }}
-          BASELINE_PATH: ${{ steps.compare.outputs.baseline-path }}
-          EXPECTED_PATH: ${{ github.workspace }}/fallow-test-baseline.json
+          ISSUES: ${{ steps.load.outputs.issues }}
+          BPATH: ${{ steps.load.outputs.baseline-path }}
+          EXPECTED: ${{ github.workspace }}/fallow-test-baseline.json
         run: |
           echo "issues: $ISSUES"
-          echo "baseline-path: $BASELINE_PATH"
+          echo "baseline-path: $BPATH"
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 new issues against freshly saved baseline"
+            echo "FAIL: expected 0 issues after loading baseline, got '$ISSUES'"
             exit 1
           fi
-          if [ -n "$BASELINE_PATH" ] && [ "$BASELINE_PATH" != "$EXPECTED_PATH" ]; then
-            echo "FAIL: baseline-path mismatch"
+          if [ "$BPATH" != "$EXPECTED" ]; then
+            echo "FAIL: baseline-path expected '$EXPECTED'"
             exit 1
           fi
           echo "PASS"
