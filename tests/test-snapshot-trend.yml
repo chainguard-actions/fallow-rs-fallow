@@ -1,0 +1,71 @@
+name: Test health save-snapshot then trend
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create sample project
+        run: |
+          set -e
+          S="$GITHUB_WORKSPACE/fallow-sample"
+          rm -rf "$S"; mkdir -p "$S/src"
+          cat > "$S/package.json" <<'EOF'
+          {"name":"fallow-sample","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > "$S/src/index.js" <<'EOF'
+          export function f(x) { if (x) { return 1; } return 0; }
+          console.log(f(1));
+          EOF
+
+      - id: snapshot
+        uses: .
+        with:
+          command: health
+          root: fallow-sample
+          save-snapshot: 'true'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert a snapshot was saved
+        run: |
+          FOUND="$(find "$GITHUB_WORKSPACE/fallow-sample/.fallow/snapshots" "$GITHUB_WORKSPACE/.fallow/snapshots" -type f 2>/dev/null | head -n1)"
+          echo "snapshot: $FOUND"
+          if [ -z "$FOUND" ]; then
+            echo "FAIL: no snapshot file under .fallow/snapshots"
+            exit 1
+          fi
+          echo "PASS: snapshot saved"
+
+      - id: trend
+        uses: .
+        with:
+          command: health
+          root: fallow-sample
+          trend: 'true'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert trend run succeeded
+        env:
+          ISSUES: ${{ steps.trend.outputs.issues }}
+          RESULTS: ${{ steps.trend.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a non-negative integer"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          echo "PASS"
