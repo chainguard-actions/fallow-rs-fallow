@@ -1,0 +1,43 @@
+name: Test changed-since scoping to HEAD
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - id: action
+        uses: .
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          changed-since: HEAD
+          fail-on-issues: 'false'
+          annotations: 'false'
+
+      - name: Assert outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          UNAVAIL: ${{ steps.action.outputs.changed-files-unavailable }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "changed-files-unavailable: $UNAVAIL"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          if [ "$UNAVAIL" != "true" ] && [ "$UNAVAIL" != "false" ]; then
+            echo "FAIL: changed-files-unavailable must be true/false"
+            exit 1
+          fi
+          echo "PASS"

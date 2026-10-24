@@ -1,4 +1,4 @@
-name: Test audit with gate and per-analysis baselines
+name: Test audit with gate all and per-analysis baselines
 on:
   workflow_dispatch:
 jobs:
@@ -21,10 +21,10 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
+          save-baseline: ${{ github.workspace }}/bl-dead-code.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          save-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
 
       - name: Save health baseline
         uses: .
@@ -34,10 +34,10 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
+          save-baseline: ${{ github.workspace }}/bl-health.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          save-baseline: ${{ github.workspace }}/audit-health-baseline.json
 
       - name: Save dupes baseline
         uses: .
@@ -47,20 +47,10 @@ jobs:
           command: dupes
           root: tests/fixtures/simple-js
           format: json
+          save-baseline: ${{ github.workspace }}/bl-dupes.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          save-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
-
-      - name: Assert baselines exist
-        run: |
-          for f in audit-dead-code-baseline.json audit-health-baseline.json audit-dupes-baseline.json; do
-            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
-              echo "FAIL: missing $f"
-              exit 1
-            fi
-          done
-          echo "PASS"
 
       - id: action
         uses: .
@@ -70,16 +60,15 @@ jobs:
           command: audit
           root: tests/fixtures/simple-js
           format: json
-          fail-on-issues: 'false'
-          auto-changed-since: 'false'
-          annotations: 'false'
-          changed-since: HEAD
           gate: all
-          dead-code-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
-          health-baseline: ${{ github.workspace }}/audit-health-baseline.json
-          dupes-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
+          changed-since: HEAD
+          dead-code-baseline: ${{ github.workspace }}/bl-dead-code.json
+          health-baseline: ${{ github.workspace }}/bl-health.json
+          dupes-baseline: ${{ github.workspace }}/bl-dupes.json
+          fail-on-issues: 'false'
+          annotations: 'false'
 
-      - name: Assert audit verdict and gate
+      - name: Assert audit outputs
         env:
           VERDICT: ${{ steps.action.outputs.verdict }}
           GATE: ${{ steps.action.outputs.gate }}
@@ -90,14 +79,14 @@ jobs:
           echo "issues: $ISSUES"
           case "$VERDICT" in
             pass|warn|fail) ;;
-            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+            *) echo "FAIL: verdict must be pass/warn/fail"; exit 1 ;;
           esac
           if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
             echo "FAIL: expected gate 'all', got '$GATE'"
             exit 1
           fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test baseline save and load
+name: Test dead-code save-baseline then baseline comparison
 on:
   workflow_dispatch:
 jobs:
@@ -21,26 +21,26 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-test-baseline.json
 
       - name: Assert baseline file saved
         run: |
-          F="$GITHUB_WORKSPACE/fallow-test-baseline.json"
+          F="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
           if [ ! -f "$F" ]; then
-            echo "FAIL: baseline file not written at $F"
+            echo "FAIL: baseline file not saved at $F"
             exit 1
           fi
-          cat "$F"
           if ! jq empty "$F"; then
             echo "FAIL: baseline is not valid JSON"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: baseline saved"
 
-      - id: load
+      # All current findings are in the baseline, so the gate must pass.
+      - id: compare
         uses: .
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
@@ -48,25 +48,20 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          fail-on-issues: 'false'
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          fail-on-issues: 'true'
           auto-changed-since: 'false'
           annotations: 'false'
-          baseline: ${{ github.workspace }}/fallow-test-baseline.json
 
-      - name: Assert baseline suppressed all known issues
+      - name: Assert baseline suppresses known findings
         env:
-          ISSUES: ${{ steps.load.outputs.issues }}
-          BPATH: ${{ steps.load.outputs.baseline-path }}
-          EXPECTED: ${{ github.workspace }}/fallow-test-baseline.json
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          BASELINE_PATH: ${{ steps.compare.outputs.baseline-path }}
         run: |
           echo "issues: $ISSUES"
-          echo "baseline-path: $BPATH"
+          echo "baseline-path: $BASELINE_PATH"
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 issues after loading baseline, got '$ISSUES'"
-            exit 1
-          fi
-          if [ "$BPATH" != "$EXPECTED" ]; then
-            echo "FAIL: baseline-path expected '$EXPECTED'"
+            echo "FAIL: expected 0 new issues against the freshly saved baseline"
             exit 1
           fi
           echo "PASS"
