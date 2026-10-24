@@ -3,8 +3,7 @@
     "path": "/ci/project/index.js",
     "statementMap": {
       "0": { "start": { "line": 3, "column": 2 }, "end": { "line": 3, "column": 27 } },
-      "1": { "start": { "line": 7, "column": 2 }, "end": { "line": 7, "column": 12 } },
-      "2": { "start": { "line": 10, "column": 0 }, "end": { "line": 10, "column": 29 } }
+      "1": { "start": { "line": 7, "column": 2 }, "end": { "line": 7, "column": 12 } }
     },
     "fnMap": {
       "0": {
@@ -21,8 +20,8 @@
       }
     },
     "branchMap": {},
-    "s": { "0": 1, "1": 0, "2": 1 },
-    "f": { "0": 1, "1": 0 },
+    "s": { "0": 5, "1": 0 },
+    "f": { "0": 5, "1": 0 },
     "b": {}
   }
 }

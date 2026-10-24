@@ -16,7 +16,7 @@ Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 8 finding(s) we
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Install fallow' step puts a ${{ }} expression straight into the run: line: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Pass it through env instead (or use the $GITHUB_ACTION_PATH env var) and quote it: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh".
+Sub-rule (a): step 'Install fallow' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Use `bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"` instead.
 
 Locations:
 
@@ -24,7 +24,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Fallow branded token' step puts a ${{ }} expression straight into the run: line: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`.
+Sub-rule (a): step 'Fallow branded token' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`. Use `"$GITHUB_ACTION_PATH"` instead.
 
 Locations:
 
@@ -32,7 +32,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Run analysis' step puts a ${{ }} expression straight into the run: line: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`.
+Sub-rule (a): step 'Run analysis' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`. Use `"$GITHUB_ACTION_PATH"` instead.
 
 Locations:
 
@@ -40,7 +40,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Check Code Scanning availability' step puts a ${{ }} expression straight into the run: line: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`.
+Sub-rule (a): step 'Check Code Scanning availability' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`. Use `"$GITHUB_ACTION_PATH"` instead.
 
 Locations:
 
@@ -48,7 +48,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Post PR comment' step puts a ${{ }} expression straight into the run: line: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`.
+Sub-rule (a): step 'Post PR comment' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`. Use `"$GITHUB_ACTION_PATH"` instead.
 
 Locations:
 
@@ -56,7 +56,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Emit inline annotations' step puts a ${{ }} expression straight into the run: line: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`.
+Sub-rule (a): step 'Emit inline annotations' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`. Use `"$GITHUB_ACTION_PATH"` instead.
 
 Locations:
 
@@ -64,7 +64,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Job summary' step puts a ${{ }} expression straight into the run: line: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`.
+Sub-rule (a): step 'Job summary' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`. Use `"$GITHUB_ACTION_PATH"` instead.
 
 Locations:
 
@@ -72,7 +72,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Post review comments' step puts a ${{ }} expression straight into the run: line: `run: bash ${{ github.action_path }}/action/scripts/review.sh`.
+Sub-rule (a): step 'Post review comments' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/review.sh`. Use `"$GITHUB_ACTION_PATH"` instead.
 
 Locations:
 
@@ -86,21 +86,21 @@ Locations:
 
 **Notes:**
 
-In action.yml, I changed each of the 8 `run: bash ${{ github.action_path }}/action/scripts/<x>.sh` lines to `run: bash "$GITHUB_ACTION_PATH/action/scripts/<x>.sh"`. All of these steps run in bash, so the variable works as written. GITHUB_ACTION_PATH is set by the runner, so the paths still resolve when the action runs under a different owner/repo name. I left the ACTION_JQ_DIR env entries as they were: they already sit in env:, not inline in run:. I haven't run the action to test this.
+In action.yml, all 8 `run: bash ${{ github.action_path }}/action/scripts/X.sh` lines (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review) now read `run: bash "$GITHUB_ACTION_PATH/action/scripts/X.sh"`. Every one of these steps uses shell: bash. I left the ACTION_JQ_DIR env values that use github.action_path alone, because env: entries are not shell-injectable.
 
 ### Iteration 2
 
-**Fixes applied:** invalid-yaml
+**Fixes applied:** script-injection, invalid-yaml
 
 **Notes:**
 
-Repaired three run: lines in action.yml that had been garbled by edit splicing: (1) the broker-token step had 'run:run:' with the next comment block glued onto it; (2) the analyze step had 'run:run:' with the following '- name: Check Code Scanning availability' on the same line; (3) the annotate step had 'run: bash ${run: bash "...annotate.sh": Job summary', which swallowed the '- name: Job summary' step header. Each is now 'run: bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"', with step boundaries restored. All referenced scripts exist under action/scripts. Nothing else changed.
+In action.yml, the 'Install fallow' and 'Post review comments' steps now run their scripts with bash "$GITHUB_ACTION_PATH/action/scripts/install.sh" and bash "$GITHUB_ACTION_PATH/action/scripts/review.sh" instead of an inline ${{ github.action_path }}. I also fixed the broken 'Job summary' line ('run:run: bash .../summary.sh  - name: Post review comments'), which caused the YAML error at line 640. It is now 'run: bash "$GITHUB_ACTION_PATH/action/scripts/summary.sh"' followed by a correctly indented '- name: Post review comments' step. My first edit for that line reported success but did not change the file; a second edit did, and reading the file back confirms it.
 
-### Iteration 1
+### Iteration 3
 
 **Fixes applied:** github-env-injection
 
 **Notes:**
 
-In action/scripts/analyze.sh, FALLOW_DIFF_FILE (which comes from inputs.diff-file) is now passed through `printf '%s' ... | tr -d '\n\r'` before it is written to $GITHUB_ENV. As an extra precaution I sanitized the auto-generated _DIFF_PATH the same way where it is written to $GITHUB_ENV. Each value is captured into its own variable before the printf, so the original command's exit status is not hidden. action.yml did not need changes. Nothing was run to test this.
+In action/scripts/analyze.sh, the user-supplied FALLOW_DIFF_FILE (from inputs.diff-file) is now checked before it is written to $GITHUB_ENV. If it contains a newline or carriage return, the step stops with an ::error:: and exit code 2, the same way the script already handles artifacts-dir. The value is also passed through tr -d '\n\r' right before the write. The other FALLOW_DIFF_FILE write uses the script's own artifact path, built from the already-checked artifacts-dir, so it was left alone. action.yml needed no change.
 

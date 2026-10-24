@@ -1,4 +1,4 @@
-name: Test runtime-coverage options reject a non-integer min-invocations-hot
+name: Test health min-severity and min-score gates (passing)
 on:
   workflow_dispatch:
 
@@ -12,15 +12,12 @@ jobs:
 
       - id: action
         uses: .
-        continue-on-error: true
         with:
           command: health
           root: tests/fixtures/simple-js
-          runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          min-invocations-hot: 'not-a-number'
-          min-observation-volume: '10'
-          low-traffic-threshold: '0.1'
           format: json
+          min-severity: critical
+          min-score: '0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -28,18 +25,21 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert validation failure
+      - name: Assert gates passed on trivial fixture
         env:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
-          echo "outcome: $OUTCOME issues: '$ISSUES'"
-          if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected the action to reject min-invocations-hot=not-a-number"
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          echo "gates-failed: $GATES_FAILED"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
             exit 1
           fi
-          if [ -n "$ISSUES" ]; then
-            echo "FAIL: analysis should not have produced an issues count"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test regression baseline save and compare
+name: Test save-regression-baseline then fail-on-regression
 on:
   workflow_dispatch:
 
@@ -15,8 +15,8 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          save-regression-baseline: ${{ runner.temp }}/fallow-regression.json
           format: json
+          save-regression-baseline: /tmp/fallow-regression-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -25,23 +25,22 @@ jobs:
           no-cache: 'true'
 
       - name: Assert regression baseline saved
-        env:
-          FILE: ${{ runner.temp }}/fallow-regression.json
         run: |
-          if [ ! -s "$FILE" ]; then
-            echo "FAIL: regression baseline not saved at $FILE"
+          if [ ! -f /tmp/fallow-regression-baseline.json ]; then
+            echo "FAIL: regression baseline not saved"
             exit 1
           fi
-          echo "PASS: regression baseline saved"
+          cat /tmp/fallow-regression-baseline.json
+          echo "PASS"
 
-      - id: action
+      - id: compare
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          regression-baseline: ${{ runner.temp }}/fallow-regression.json
-          fail-on-regression: 'true'
           format: json
+          regression-baseline: /tmp/fallow-regression-baseline.json
+          fail-on-regression: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -49,18 +48,19 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert no regression
+      - name: Assert no regression detected
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
-          OUTCOME: ${{ steps.action.outcome }}
+          OUTCOME: ${{ steps.compare.outcome }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME issues: $ISSUES"
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
           if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: unchanged code should not regress"
+            echo "FAIL: expected no regression"
             exit 1
           fi
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test combined run with only selector
+name: Test combined run limited with only
 on:
   workflow_dispatch:
 
@@ -14,8 +14,8 @@ jobs:
         uses: .
         with:
           root: tests/fixtures/simple-js
-          only: 'dead-code,health'
           format: json
+          only: dead-code,health
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -25,11 +25,16 @@ jobs:
 
       - name: Assert outputs
         env:
+          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "results: $RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"

@@ -15,8 +15,8 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          workspace: '@fixture/app'
           format: json
+          workspace: pkg-a
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -35,7 +35,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
+            echo "FAIL: results file missing"
             exit 1
           fi
           echo "PASS"

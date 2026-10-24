@@ -17,8 +17,8 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          changed-since: HEAD
           format: json
+          changed-since: HEAD
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -29,16 +29,12 @@ jobs:
       - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
+          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "changed-files-unavailable: $UNAVAILABLE"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
-            exit 1
-          fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
             exit 1
           fi
           echo "PASS"

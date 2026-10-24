@@ -1,0 +1,73 @@
+name: Test save-baseline then baseline comparison
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FALLOW_SKIP_BINARY_VERIFY: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          save-baseline: /tmp/fallow-dead-code-baseline.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+
+      - name: Assert baseline file saved
+        run: |
+          if [ ! -f /tmp/fallow-dead-code-baseline.json ]; then
+            echo "FAIL: baseline file was not saved"
+            exit 1
+          fi
+          cat /tmp/fallow-dead-code-baseline.json
+          echo "PASS"
+
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          baseline: /tmp/fallow-dead-code-baseline.json
+          fail-on-issues: 'true'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+
+      - name: Assert baseline suppressed findings
+        env:
+          ISSUES: ${{ steps.load.outputs.issues }}
+          BEFORE: ${{ steps.save.outputs.issues }}
+          PATH_OUT: ${{ steps.load.outputs.baseline-path }}
+          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+        run: |
+          echo "issues before baseline: $BEFORE"
+          echo "issues with baseline: $ISSUES"
+          echo "baseline-path: $PATH_OUT"
+          echo "baseline-stale-entries: $STALE"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$' || ! echo "$BEFORE" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues outputs are not numbers"
+            exit 1
+          fi
+          if [ "$ISSUES" -gt "$BEFORE" ]; then
+            echo "FAIL: baseline run reported more issues than the run that saved it"
+            exit 1
+          fi
+          if [ -n "$PATH_OUT" ] && [ "$PATH_OUT" != "/tmp/fallow-dead-code-baseline.json" ]; then
+            echo "FAIL: unexpected baseline-path"
+            exit 1
+          fi
+          echo "PASS"
