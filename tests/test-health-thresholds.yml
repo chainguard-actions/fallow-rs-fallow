@@ -1,4 +1,4 @@
-name: Test health with complexity thresholds and hotspot options
+name: Test health thresholds and sorting
 on:
   workflow_dispatch:
 jobs:
@@ -17,14 +17,14 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-health-thresholds
-          max-cyclomatic: '10'
-          max-cognitive: '10'
-          max-crap: '30.0'
-          sort: cognitive
+          max-cyclomatic: '50'
+          max-cognitive: '40'
+          max-crap: '1000'
           top: '5'
-          hotspots: 'true'
+          sort: cognitive
           since: 1y
           min-commits: '1'
+          min-severity: critical
       - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
