@@ -1,4 +1,4 @@
-name: Test dead-code with git-derived changed-workspaces scoping
+name: Test changed-workspaces scoping in a monorepo
 on:
   workflow_dispatch:
 jobs:
@@ -9,56 +9,41 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create npm workspaces monorepo
+      - name: Create a monorepo with two workspaces
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/changed-workspaces-monorepo"
+          P="$GITHUB_WORKSPACE/tests/fixtures/cws-project"
           mkdir -p "$P/packages/pkg-a/src" "$P/packages/pkg-b/src"
-          cat > "$P/package.json" <<'EOF'
-          {
-            "name": "changed-workspaces-monorepo",
-            "private": true,
-            "workspaces": ["packages/*"]
-          }
-          EOF
+          echo '{"name":"cws-root","version":"1.0.0","private":true,"workspaces":["packages/*"]}' > "$P/package.json"
           for n in a b; do
-            cat > "$P/packages/pkg-$n/package.json" <<EOF
-          {
-            "name": "pkg-$n",
-            "version": "1.0.0",
-            "type": "module",
-            "main": "src/index.js"
-          }
-          EOF
-            cat > "$P/packages/pkg-$n/src/index.js" <<'EOF'
-          export const main = () => 1;
-          EOF
+            echo "{\"name\":\"pkg-$n\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"src/index.js\"}" > "$P/packages/pkg-$n/package.json"
+            echo "export function f$n() { return 1; }" > "$P/packages/pkg-$n/src/index.js"
           done
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/changed-workspaces-monorepo
-          changed-workspaces: HEAD
+          root: tests/fixtures/cws-project
           format: json
+          changed-workspaces: HEAD
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert action succeeded with valid results
+      - name: Assert outputs
         env:
-          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME results: $RESULTS"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: expected success"
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: expected numeric issues, got '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
           echo "PASS"

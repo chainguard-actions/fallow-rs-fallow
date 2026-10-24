@@ -1,4 +1,4 @@
-name: Test health command with complexity threshold inputs
+name: Test health command with complexity thresholds, top and sort
 on:
   workflow_dispatch:
 jobs:
@@ -6,74 +6,76 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
 
-      - name: Create a minimal JS project
+      - name: Create a JS project with a complex function
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/health-thresholds-project"
+          P="$GITHUB_WORKSPACE/tests/fixtures/thresholds-project"
           mkdir -p "$P/src"
           cat > "$P/package.json" <<'EOF'
           {
-            "name": "health-thresholds-project",
+            "name": "thresholds-project",
             "version": "1.0.0",
             "type": "module",
+            "main": "src/index.js",
             "scripts": { "start": "node src/index.js" }
           }
           EOF
           cat > "$P/src/index.js" <<'EOF'
-          export function classify(a, b, c, d) {
+          export function complexFunction(a, b, c, d, e) {
             if (a > 0) {
               if (b > 0) {
                 if (c > 0) {
-                  if (d > 0) { return 4; } else { return 3; }
-                } else if (c < -10) {
-                  return -3;
-                } else {
-                  return 2;
+                  if (d > 0) {
+                    if (e > 0) {
+                      return a + b + c + d + e;
+                    } else if (e < -10) {
+                      return a;
+                    }
+                    return a + b + c + d;
+                  }
+                  return a + b + c;
                 }
-              } else if (b < -10) {
-                return -2;
-              } else {
-                return 1;
+                return a + b;
               }
-            } else if (a < -10) {
-              return -1;
+              return a;
             }
             return 0;
           }
-          classify(1, 2, 3, 4);
+          complexFunction(1, 2, 3, 4, 5);
           EOF
 
       - id: action
         uses: .
         with:
           command: health
-          root: tests/fixtures/health-thresholds-project
+          root: tests/fixtures/thresholds-project
           format: json
           max-cyclomatic: '3'
           max-cognitive: '3'
-          max-crap: '30'
+          max-crap: '10'
           top: '5'
           sort: cognitive
-          since: 1y
-          min-commits: '1'
+          threads: '2'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert issues output is a number
+      - name: Assert issues output is a positive number
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues, got '$ISSUES'"
+            echo "FAIL: expected issues to be a number, got: '$ISSUES'"
             exit 1
           fi
-          echo "PASS"
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected low thresholds to flag the complex function"
+            exit 1
+          fi
+          echo "PASS: issues=$ISSUES"
 
       - name: Assert results file is valid JSON
         env:
@@ -84,8 +86,5 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
-          if ! jq empty "$RESULTS"; then
-            echo "FAIL: invalid JSON"
-            exit 1
-          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

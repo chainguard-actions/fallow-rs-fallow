@@ -1,4 +1,4 @@
-name: Test dead-code save-regression-baseline then regression-baseline
+name: Test save-regression-baseline then regression-baseline comparison
 on:
   workflow_dispatch:
 jobs:
@@ -7,76 +7,65 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create project with unused code
+      - name: Create a JS project with an unused export
         run: |
           P="$GITHUB_WORKSPACE/tests/fixtures/regression-project"
           mkdir -p "$P/src"
-          cat > "$P/package.json" <<'EOF'
-          {
-            "name": "regression-project",
-            "version": "1.0.0",
-            "type": "module",
-            "main": "src/index.js"
-          }
-          EOF
+          echo '{"name":"regression-project","version":"1.0.0","type":"module","main":"src/index.js"}' > "$P/package.json"
           cat > "$P/src/index.js" <<'EOF'
-          import { used } from './lib.js';
+          import { used } from './util.js';
           console.log(used());
           EOF
-          cat > "$P/src/lib.js" <<'EOF'
+          cat > "$P/src/util.js" <<'EOF'
           export function used() { return 1; }
-          export function unusedExport() { return 2; }
+          export function unusedHelper() { return 2; }
           EOF
+          mkdir -p "$GITHUB_WORKSPACE/fallow-regression"
 
       - id: save
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/regression-project
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
           format: json
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert regression baseline saved
+      - name: Assert regression baseline file was saved
         run: |
-          F="$GITHUB_WORKSPACE/fallow-regression.json"
+          F="$GITHUB_WORKSPACE/fallow-regression/regression.json"
           if [ ! -f "$F" ]; then
-            echo "FAIL: regression baseline not saved at $F"
+            echo "FAIL: regression baseline not found at $F"
             exit 1
           fi
-          cat "$F"
+          jq empty "$F" || { echo "FAIL: not valid JSON"; exit 1; }
           echo "PASS"
 
-      - id: compare
+      - id: action
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/regression-project
-          regression-baseline: ${{ github.workspace }}/fallow-regression.json
-          fail-on-regression: 'true'
           format: json
+          regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
+          fail-on-regression: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert no regression detected
+      - name: Assert no regression and numeric issues
         env:
-          OUTCOME: ${{ steps.compare.outcome }}
-          ISSUES: ${{ steps.compare.outputs.issues }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME issues: $ISSUES"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: expected success (no regression against own baseline)"
-            exit 1
-          fi
+          echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues"
+            echo "FAIL: expected numeric issues, got '$ISSUES'"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: unchanged code did not regress"

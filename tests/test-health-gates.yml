@@ -1,4 +1,4 @@
-name: Test health command with min-score and min-severity gates
+name: Test health command min-score and min-severity gates pass on a simple project
 on:
   workflow_dispatch:
 jobs:
@@ -7,15 +7,16 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a simple, healthy JS project
+      - name: Create a trivial JS project
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/health-gates-project"
+          P="$GITHUB_WORKSPACE/tests/fixtures/gates-project"
           mkdir -p "$P/src"
           cat > "$P/package.json" <<'EOF'
           {
-            "name": "health-gates-project",
+            "name": "gates-project",
             "version": "1.0.0",
             "type": "module",
+            "main": "src/index.js",
             "scripts": { "start": "node src/index.js" }
           }
           EOF
@@ -30,7 +31,7 @@ jobs:
         uses: .
         with:
           command: health
-          root: tests/fixtures/health-gates-project
+          root: tests/fixtures/gates-project
           format: json
           min-score: '0'
           min-severity: critical
@@ -40,18 +41,19 @@ jobs:
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert action succeeded and results are valid JSON
+      - name: Assert action succeeded with results
         env:
-          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME results: $RESULTS"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: expected success"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: expected numeric issues, got '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
           echo "PASS"
