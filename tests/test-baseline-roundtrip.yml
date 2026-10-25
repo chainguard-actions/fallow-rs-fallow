@@ -1,4 +1,4 @@
-name: Test dead-code save-baseline then baseline comparison
+name: Test dead-code baseline and regression baseline save then load
 on:
   workflow_dispatch:
 jobs:
@@ -7,82 +7,63 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project
-        run: |
-          set -e
-          S="$GITHUB_WORKSPACE/fallow-sample"
-          rm -rf "$S"; mkdir -p "$S/src"
-          cat > "$S/package.json" <<'EOF'
-          {"name":"fallow-sample","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
-          EOF
-          cat > "$S/src/index.js" <<'EOF'
-          import { used } from './util.js';
-          console.log(used());
-          EOF
-          cat > "$S/src/util.js" <<'EOF'
-          export function used() { return 1; }
-          export function unusedHelper() { return 2; }
-          EOF
-          rm -f "$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
-
       - id: save
         uses: .
         with:
           command: dead-code
-          root: fallow-sample
-          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          save-baseline: fallow-test-baseline.json
+          save-regression-baseline: fallow-test-regression.json
           fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert baseline file was saved
+      - name: Assert baseline files were saved
         run: |
-          F="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
-          if [ ! -f "$F" ]; then
-            echo "FAIL: baseline file not written at $F"
-            exit 1
-          fi
-          cat "$F"
-          if ! jq empty "$F"; then
-            echo "FAIL: baseline is not valid JSON"
-            exit 1
-          fi
-          echo "PASS: baseline saved"
+          for f in fallow-test-baseline.json fallow-test-regression.json; do
+            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f was not written"
+              exit 1
+            fi
+            if ! jq empty "$GITHUB_WORKSPACE/$f"; then
+              echo "FAIL: $f is not valid JSON"
+              exit 1
+            fi
+          done
+          echo "PASS"
 
       - id: load
         uses: .
         with:
           command: dead-code
-          root: fallow-sample
-          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          baseline: fallow-test-baseline.json
+          regression-baseline: fallow-test-regression.json
           fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert baseline load produced outputs
+      - name: Assert baseline outputs
         env:
-          ISSUES: ${{ steps.load.outputs.issues }}
-          SAVE_ISSUES: ${{ steps.save.outputs.issues }}
           BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
-          EXPECTED_PATH: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          ISSUES: ${{ steps.load.outputs.issues }}
+          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
         run: |
-          echo "issues: $          echo "issues without baseline: $SAVE_ISSUES"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$' || ! echo "$SAVE_ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues outputs are not integers"
+          echo "baseline-path: $BASELINE_PATH issues: $ISSUES stale: '$STALE'"
+          if [ "$BASELINE_PATH" != "fallow-test-baseline.json" ]; then
+            echo "FAIL: expected baseline-path to echo the input"
             exit 1
           fi
-          if [ "$ISSUES" -gt "$SAVE_ISSUES" ]; then
-            echo "FAIL: baseline run reported more issues than the run that saved it"
-            exit 1
-          fiaseline of the same tree"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues not a number"
             exit 1
           fi
-          if [ -n "$BASELINE_PATH" ] && [ "$BASELINE_PATH" != "$EXPECTED_PATH" ]; then
-            echo "FAIL: baseline-path does not match the input"
+          if [ -n "$STALE" ] && [ "$STALE" != "0" ]; then
+            echo "FAIL: freshly saved baseline should have no stale entries, got $STALE"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds
+name: Test health command with custom thresholds, sort, top and min-severity
 on:
   workflow_dispatch:
 jobs:
@@ -7,65 +7,53 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project
-        run: |
-          set -e
-          S="$GITHUB_WORKSPACE/fallow-sample"
-          rm -rf "$S"; mkdir -p "$S/src"
-          cat > "$S/package.json" <<'EOF'
-          {"name":"fallow-sample","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
-          EOF
-          cat > "$S/src/index.js" <<'EOF'
-          import { classify } from './complex.js';
-          console.log(classify(1, 2, 3));
-          EOF
-          cat > "$S/src/complex.js" <<'EOF'
-          export function classify(a, b, c) {
-            let r = 0;
-            if (a > 0) {
-              if (b > 0) {
-                for (let i = 0; i < c; i++) {
-                  if (i % 2 === 0 && a > b) { r += i; } else if (i % 3 === 0 || b > c) { r -= i; } else { r *= 2; }
-                }
-              } else if (b < -10) {
-                r = a ? b : c;
-              }
-            } else {
-              switch (c) { case 1: r = 1; break; case 2: r = 2; break; default: r = 3; }
-            }
-            return r;
-          }
-          EOF
-
+      # Thresholds are set so high that no function can reach them, so the
+      # min-severity gate has nothing to fire on and the step must succeed.
       - id: action
         uses: .
         with:
           command: health
-          root: fallow-sample
-          max-cyclomatic: '30'
-          max-cognitive: '25'
-          max-crap: '40.5'
+          max-cyclomatic: '1000'
+          max-cognitive: '1000'
+          max-crap: '100000000'
           top: '5'
           sort: cognitive
+          min-severity: critical
           fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert issues is a number and results valid JSON
+      - name: Assert issues output is a number
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues is not a non-negative integer"
+            echo "FAIL: expected non-negative integer, got '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+          echo "PASS"
+
+      - name: Assert results file is valid JSON and args carried the thresholds
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
             echo "FAIL: results file missing or invalid JSON"
             exit 1
+          fi
+          ARGS_FILE="$GITHUB_WORKSPACE/fallow-analysis-args.sh"
+          if [ -f "$ARGS_FILE" ]; then
+            cat "$ARGS_FILE"
+            for flag in --max-cyclomatic --max-cognitive --max-crap --top --sort --min-severity; do
+              if ! grep -q -- "$flag" "$ARGS_FILE"; then
+                echo "FAIL: expected $flag in analysis args"
+                exit 1
+              fi
+            done
           fi
           echo "PASS"

@@ -12,26 +12,24 @@ jobs:
         continue-on-error: true
         with:
           command: security
-          security-gate: everything
-          fail-on-issues: 'false'
+          security-gate: not-a-gate
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert action rejected the security gate
+      - name: Assert the action failed on security-gate validation
         env:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME"
-          echo "issues: '$ISSUES'"
+          echo "outcome: $OUTCOME issues: '$ISSUES'"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for security-gate=everything"
+            echo "FAIL: expected failure for invalid security-gate"
             exit 1
           fi
           if [ -n "$ISSUES" ]; then
-            echo "FAIL: expected no issues output after validation error"
+            echo "FAIL: no issues output expected when validation fails"
             exit 1
           fi
           echo "PASS"

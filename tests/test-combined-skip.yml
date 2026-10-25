@@ -1,0 +1,39 @@
+name: Test combined run with skip
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          skip: dupes,health
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert results valid and skip flag passed
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "results: $RESULTS issues: $ISSUES"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues not a number"
+            exit 1
+          fi
+          if ! grep -q -- '--skip' "$GITHUB_WORKSPACE/fallow-analysis-args.sh"; then
+            echo "FAIL: expected --skip in analysis args"
+            exit 1
+          fi
+          echo "PASS"

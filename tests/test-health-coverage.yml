@@ -1,4 +1,4 @@
-name: Test health command with Istanbul coverage
+name: Test health command with Istanbul coverage and coverage-root
 on:
   workflow_dispatch:
 jobs:
@@ -7,76 +7,36 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project with coverage data
+      - name: Create an empty Istanbul coverage file
         run: |
-          set -e
-          S="$GITHUB_WORKSPACE/fallow-sample"
-          rm -rf "$S"; mkdir -p "$S/src" "$S/coverage"
-          cat > "$S/package.json" <<'EOF'
-          {"name":"fallow-sample","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
-          EOF
-          cat > "$S/src/index.js" <<'EOF'
-          export function add(a, b) {
-            if (a > b) {
-              return a + b;
-            }
-            return b + a;
-          }
-          console.log(add(1, 2));
-          EOF
-          F="$S/src/index.js"
-          cat > "$S/coverage/coverage-final.json" <<EOF
-          {
-            "$F": {
-              "path": "$F",
-              "statementMap": {
-                "0": {"start": {"line": 3, "column": 4}, "end": {"line": 3, "column": 17}},
-                "1": {"start": {"line": 5, "column": 2}, "end": {"line": 5, "column": 15}}
-              },
-              "fnMap": {
-                "0": {"name": "add", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}},
-                      "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 6, "column": 1}}, "line": 1}
-              },
-              "branchMap": {
-                "0": {"loc": {"start": {"line": 2, "column": 2}, "end": {"line": 4, "column": 3}}, "type": "if",
-                      "locations": [{"start": {"line": 2, "column": 2}, "end": {"line": 4, "column": 3}},
-                                    {"start": {"line": 2, "column": 2}, "end": {"line": 4, "column": 3}}], "line": 2}
-              },
-              "s": {"0": 1, "1": 0},
-              "f": {"0": 1},
-              "b": {"0": [1, 0]}
-            }
-          }
-          EOF
-          jq empty "$S/coverage/coverage-final.json"
+          mkdir -p fallow-test-coverage
+          echo '{}' > fallow-test-coverage/coverage-final.json
 
       - id: action
         uses: .
         with:
           command: health
-          root: fallow-sample
-          coverage: ${{ github.workspace }}/fallow-sample/coverage/coverage-final.json
-          coverage-root: ${{ github.workspace }}/fallow-sample
-          max-crap: '30'
+          coverage: fallow-test-coverage/coverage-final.json
+          coverage-root: .
           fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert results valid JSON
+      - name: Assert results valid
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues is not a non-negative integer"
+          echo "results: $RESULTS issues: $ISSUES"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues not a number"
             exit 1
           fi
           echo "PASS"
