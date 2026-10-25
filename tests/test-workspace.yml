@@ -1,4 +1,4 @@
-name: Test workspace scoping in a monorepo
+name: Test dead-code scoped to a workspace in a monorepo
 on:
   workflow_dispatch:
 jobs:
@@ -7,45 +7,67 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a monorepo with two workspaces
+      - name: Create a monorepo with two workspace packages
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/ws-project"
-          mkdir -p "$P/packages/pkg-a/src" "$P/packages/pkg-b/src"
-          echo '{"name":"ws-root","version":"1.0.0","private":true,"workspaces":["packages/*"]}' > "$P/package.json"
-          for n in a b; do
-            echo "{\"name\":\"pkg-$n\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"src/index.js\"}" > "$P/packages/pkg-$n/package.json"
-            echo "export function f$n() { return 1; }" > "$P/packages/pkg-$n/src/index.js"
+          R="$GITHUB_WORKSPACE/tests/fixtures/monorepo"
+          mkdir -p "$R/packages/web/src" "$R/packages/admin/src"
+          cat > "$R/package.json" <<'EOF'
+          {
+            "name": "monorepo",
+            "version": "1.0.0",
+            "private": true,
+            "workspaces": ["packages/*"]
+          }
+          EOF
+          for p in web admin; do
+            cat > "$R/packages/$p/package.json" <<EOF
+          {
+            "name": "$p",
+            "version": "1.0.0",
+            "type": "module",
+            "main": "src/index.js"
+          }
+          EOF
+            cat > "$R/packages/$p/src/index.js" <<'EOF'
+          import { used } from './util.js';
+          console.log(used());
+          EOF
+            cat > "$R/packages/$p/src/util.js" <<'EOF'
+          export function used() { return 1; }
+          export function unusedHelper() { return 2; }
+          EOF
           done
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/ws-project
+          root: tests/fixtures/monorepo
           format: json
-          workspace: pkg-a
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
+          workspace: web
 
-      - name: Assert outputs
+      - name: Assert results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues, got '$ISSUES'"
+            echo "FAIL: issues is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
-          if jq -r '.. | .path? // empty' "$RESULTS" 2>/dev/null | grep -q 'pkg-b'; then
-            echo "FAIL: results include findings from pkg-b despite workspace: pkg-a"
+          if grep -q 'packages/admin/src/util.js' "$RESULTS"; then
+            echo "FAIL: results include the out-of-scope admin workspace"
             exit 1
           fi
           echo "PASS"

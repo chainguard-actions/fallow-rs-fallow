@@ -1,4 +1,4 @@
-name: Test dead-code command with issue-types and an explicit config file
+name: Test dead-code with issue-types, config file and threads
 on:
   workflow_dispatch:
 jobs:
@@ -7,37 +7,48 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a JS project with an unused export and a config file
+      - name: Create a JS project with unused code and a config file
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/issue-types-project"
-          mkdir -p "$P/src"
-          echo '{"name":"issue-types-project","version":"1.0.0","type":"module","main":"src/index.js"}' > "$P/package.json"
-          cat > "$P/src/index.js" <<'EOF'
+          R="$GITHUB_WORKSPACE/tests/fixtures/dc-types"
+          mkdir -p "$R/src"
+          cat > "$R/package.json" <<'EOF'
+          {
+            "name": "dc-types",
+            "version": "1.0.0",
+            "type": "module",
+            "main": "src/index.js",
+            "scripts": { "start": "node src/index.js" }
+          }
+          EOF
+          cat > "$R/src/index.js" <<'EOF'
           import { used } from './util.js';
           console.log(used());
           EOF
-          cat > "$P/src/util.js" <<'EOF'
+          cat > "$R/src/util.js" <<'EOF'
           export function used() { return 1; }
           export function unusedHelper() { return 2; }
           EOF
-          echo '{}' > "$P/.fallowrc.json"
+          cat > "$R/src/orphan.js" <<'EOF'
+          export const orphan = 3;
+          EOF
+          echo '{}' > "$R/.fallowrc.json"
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/issue-types-project
-          config: tests/fixtures/issue-types-project/.fallowrc.json
+          root: tests/fixtures/dc-types
+          config: ${{ github.workspace }}/tests/fixtures/dc-types/.fallowrc.json
           format: json
-          issue-types: unused-exports,unused-files
-          threads: '1'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
+          issue-types: unused-exports,unused-files
+          threads: '2'
 
-      - name: Assert outputs
+      - name: Assert results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -45,12 +56,11 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues, got '$ISSUES'"
+            echo "FAIL: issues is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

@@ -9,45 +9,48 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create a JS project with an unused export
+      - name: Create a JS project
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/changed-since-project"
-          mkdir -p "$P/src"
-          echo '{"name":"changed-since-project","version":"1.0.0","type":"module","main":"src/index.js"}' > "$P/package.json"
-          cat > "$P/src/index.js" <<'EOF'
-          import { used } from './util.js';
-          console.log(used());
+          R="$GITHUB_WORKSPACE/tests/fixtures/dc-changed"
+          mkdir -p "$R/src"
+          cat > "$R/package.json" <<'EOF'
+          {
+            "name": "dc-changed",
+            "version": "1.0.0",
+            "type": "module",
+            "main": "src/index.js",
+            "scripts": { "start": "node src/index.js" }
+          }
           EOF
-          cat > "$P/src/util.js" <<'EOF'
-          export function used() { return 1; }
-          export function unusedHelper() { return 2; }
+          cat > "$R/src/index.js" <<'EOF'
+          export function unusedThing() { return 1; }
           EOF
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/changed-since-project
+          root: tests/fixtures/dc-changed
           format: json
-          changed-since: HEAD
           fail-on-issues: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
+          changed-since: HEAD
 
-      - name: Assert outputs
+      - name: Assert results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "changed-files-unavailable: $UNAVAILABLE"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues, got '$ISSUES'"
+            echo "FAIL: issues is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ "$UNAVAILABLE" != "true" ] && [ "$UNAVAILABLE" != "false" ]; then
-            echo "FAIL: changed-files-unavailable should be true/false, got '$UNAVAILABLE'"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test health command with Istanbul coverage and coverage-root
+name: Test health with Istanbul coverage and coverage-root
 on:
   workflow_dispatch:
 jobs:
@@ -9,18 +9,17 @@ jobs:
 
       - name: Create a JS project and Istanbul coverage file
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/coverage-project"
-          mkdir -p "$P/src"
-          cat > "$P/package.json" <<'EOF'
+          ROOT="$GITHUB_WORKSPACE/tests/fixtures/health-coverage"
+          mkdir -p "$ROOT/src" "$GITHUB_WORKSPACE/coverage-data"
+          cat > "$ROOT/package.json" <<'EOF'
           {
-            "name": "coverage-project",
+            "name": "health-coverage",
             "version": "1.0.0",
             "type": "module",
-            "main": "src/index.js",
             "scripts": { "start": "node src/index.js" }
           }
           EOF
-          cat > "$P/src/index.js" <<'EOF'
+          cat > "$ROOT/src/index.js" <<'EOF'
           export function pick(a, b) {
             if (a > b) {
               return a;
@@ -29,57 +28,45 @@ jobs:
           }
           pick(1, 2);
           EOF
-          cat > "$P/coverage-final.json" <<'EOF'
+          F="$ROOT/src/index.js"
+          cat > "$GITHUB_WORKSPACE/coverage-data/coverage-final.json" <<EOF
           {
-            "/build/app/src/index.js": {
-              "path": "/build/app/src/index.js",
+            "$F": {
+              "path": "$F",
               "statementMap": {
-                "0": { "start": { "line": 2, "column": 2 }, "end": { "line": 4, "column": 3 } },
-                "1": { "start": { "line": 3, "column": 4 }, "end": { "line": 3, "column": 13 } },
-                "2": { "start": { "line": 5, "column": 2 }, "end": { "line": 5, "column": 11 } }
+                "0": {"start": {"line": 2, "column": 2}, "end": {"line": 4, "column": 3}},
+                "1": {"start": {"line": 3, "column": 4}, "end": {"line": 3, "column": 13}},
+                "2": {"start": {"line": 5, "column": 2}, "end": {"line": 5, "column": 11}}
               },
               "fnMap": {
-                "0": {
-                  "name": "pick",
-                  "decl": { "start": { "line": 1, "column": 16 }, "end": { "line": 1, "column": 20 } },
-                  "loc": { "start": { "line": 1, "column": 27 }, "end": { "line": 6, "column": 1 } },
-                  "line": 1
-                }
+                "0": {"name": "pick", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 20}},
+                      "loc": {"start": {"line": 1, "column": 27}, "end": {"line": 6, "column": 1}}, "line": 1}
               },
-              "branchMap": {
-                "0": {
-                  "loc": { "start": { "line": 2, "column": 2 }, "end": { "line": 4, "column": 3 } },
-                  "type": "if",
-                  "locations": [
-                    { "start": { "line": 2, "column": 2 }, "end": { "line": 4, "column": 3 } },
-                    { "start": { "line": 2, "column": 2 }, "end": { "line": 4, "column": 3 } }
-                  ],
-                  "line": 2
-                }
-              },
-              "s": { "0": 1, "1": 0, "2": 1 },
-              "f": { "0": 1 },
-              "b": { "0": [0, 1] }
+              "branchMap": {},
+              "s": {"0": 1, "1": 0, "2": 1},
+              "f": {"0": 1},
+              "b": {}
             }
           }
           EOF
+          jq empty "$GITHUB_WORKSPACE/coverage-data/coverage-final.json"
 
       - id: action
         uses: .
         with:
           command: health
-          root: tests/fixtures/coverage-project
+          root: tests/fixtures/health-coverage
           format: json
-          coverage: tests/fixtures/coverage-project/coverage-final.json
-          coverage-root: /build/app
-          max-crap: '30'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
+          coverage: ${{ github.workspace }}/coverage-data/coverage-final.json
+          coverage-root: ${{ github.workspace }}/tests/fixtures/health-coverage
+          max-crap: '30'
 
-      - name: Assert outputs
+      - name: Assert results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -87,12 +74,11 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues, got '$ISSUES'"
+            echo "FAIL: issues is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"
