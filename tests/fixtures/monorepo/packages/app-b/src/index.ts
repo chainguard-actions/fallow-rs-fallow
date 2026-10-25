@@ -1,5 +1,3 @@
-export function greetB(name: string): string {
-  return `hello ${name} from b`;
-}
+export const valueB = 2;
 
-console.log(greetB("world"));
+console.log(valueB);

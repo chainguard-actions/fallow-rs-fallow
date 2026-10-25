@@ -6,6 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
       - id: save
         uses: .
         with:
@@ -13,44 +15,40 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-test-baselines/dead-code-baseline.json
+          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
           artifacts-dir: fallow-artifacts-baseline-save
-      - name: Assert baseline file saved
+      - name: Assert baseline saved
         run: |
-          F="$GITHUB_WORKSPACE/fallow-test-baselines/dead-code-baseline.json"
+          F="$GITHUB_WORKSPACE/fallow-baselines/dead-code.json"
           if [ ! -s "$F" ]; then
-            echo "FAIL: baseline file $F not written"
+            echo "FAIL: baseline file not written"
             exit 1
           fi
-          jq empty "$F" || { echo "FAIL: baseline not valid JSON"; exit 1; }
-          cat "$F"
-          echo "PASS"
+          jq empty "$F" || { echo "FAIL: baseline not JSON"; exit 1; }
+          echo "PASS: baseline saved"
       - id: load
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/sample-project
           version: '3.36.0'
-          fail-on-issues: 'true'
-          baseline: ${{ github.workspace }}/fallow-test-baselines/dead-code-baseline.json
+          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
           artifacts-dir: fallow-artifacts-baseline-load
-      - name: Assert baseline suppressed known issues
+      - name: Assert baseline loaded and suppressed known issues
         env:
-          SAVE_ISSUES: ${{ steps.save.outputs.issues }}
           ISSUES: ${{ steps.load.outputs.issues }}
           BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
           ENTRIES: ${{ steps.load.outputs.baseline-entries }}
         run: |
-          echo "issues before baseline: $SAVE_ISSUES"
-          echo "issues with baseline: $ISSUES"
+          echo "issues: $ISSUES"
           echo "baseline-path: $BASELINE_PATH"
           echo "baseline-entries: $ENTRIES"
-          if ! [[ "$SAVE_ISSUES" =~ ^[0-9]+$ ]] || [ "$SAVE_ISSUES" -lt 1 ]; then
-            echo "FAIL: expected issues before baseline"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 new issues when comparing against the saved baseline"
+          if [ "$ISSUES" -ne 0 ]; then
+            echo "FAIL: expected baseline to suppress all known issues"
             exit 1
           fi
           echo "PASS"

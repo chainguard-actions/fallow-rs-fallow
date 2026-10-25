@@ -1,4 +1,4 @@
-name: Test changed-workspaces git-derived scoping
+name: Test dead-code scoped by changed-workspaces
 on:
   workflow_dispatch:
 jobs:
@@ -17,7 +17,7 @@ jobs:
           fail-on-issues: 'false'
           changed-workspaces: HEAD
           artifacts-dir: fallow-artifacts-changed-workspaces
-      - name: Assert changed-workspaces run produced results
+      - name: Assert run produced a numeric issue count
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |

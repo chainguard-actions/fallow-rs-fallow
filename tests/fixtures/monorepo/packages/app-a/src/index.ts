@@ -1,5 +1,3 @@
-export function greetA(name: string): string {
-  return `hello ${name} from a`;
-}
+import { greet } from "./greet";
 
-console.log(greetA("world"));
+console.log(greet("a"));

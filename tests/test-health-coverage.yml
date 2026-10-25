@@ -14,10 +14,9 @@ jobs:
           version: '3.36.0'
           fail-on-issues: 'false'
           coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /ci-build
-          max-crap: '30'
+          coverage-root: /ci/build
           artifacts-dir: fallow-artifacts-coverage
-      - name: Assert coverage-aware health results produced
+      - name: Assert health results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

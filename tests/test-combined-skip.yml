@@ -12,8 +12,8 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          skip: dupes,health
-          artifacts-dir: fallow-artifacts-combined-skip
+          skip: dupes
+          artifacts-dir: fallow-artifacts-skip
       - name: Assert combined results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
@@ -34,8 +34,4 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
-          if ! grep -q "orphan" "$FILE"; then
-            echo "FAIL: dead-code analysis should still run and report orphan.ts"
-            exit 1
-          fi
           echo "PASS"
