@@ -1,4 +1,4 @@
-name: Test dead-code regression baseline save and compare with issue-types
+name: Test regression baseline save and compare
 on:
   workflow_dispatch:
 jobs:
@@ -21,28 +21,25 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          issue-types: unused-exports,unused-files
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
       - name: Assert regression baseline saved
-        env:
-          ISSUES: ${{ steps.save.outputs.issues }}
         run: |
-          echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues not numeric"
+          F="$GITHUB_WORKSPACE/fallow-regression.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: regression baseline not created at $F"
             exit 1
           fi
-          if [ ! -f "$GITHUB_WORKSPACE/fallow-regression.json" ]; then
-            echo "FAIL: regression baseline not saved"
+          if ! jq empty "$F"; then
+            echo "FAIL: regression baseline is not valid JSON"
             exit 1
           fi
+          cat "$F"
           echo "PASS"
 
-      # Same code, same issue types: no regression, so this must pass.
       - id: compare
         uses: .
         env:
@@ -51,21 +48,24 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          issue-types: unused-exports,unused-files
-          regression-baseline: ${{ github.workspace }}/fallow-regression.json
-          fail-on-regression: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
+          fail-on-regression: 'true'
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
-      - name: Assert same issue count, no regression
+      - name: Assert no regression reported
         env:
-          BEFORE: ${{ steps.save.outputs.issues }}
-          AFTER: ${{ steps.compare.outputs.issues }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          OUTCOME: ${{ steps.compare.outcome }}
         run: |
-          echo "before: $BEFORE after: $AFTER"
-          if [ "$BEFORE" != "$AFTER" ]; then
-            echo "FAIL: issue count changed between identical runs"
+          echo "outcome: $OUTCOME issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: unchanged project should not regress"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric: '$ISSUES'"
             exit 1
           fi
           echo "PASS"

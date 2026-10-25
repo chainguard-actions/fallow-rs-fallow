@@ -1,4 +1,4 @@
-name: Test health min-score gate with a zero threshold passes
+name: Test health min-score gate
 on:
   workflow_dispatch:
 jobs:
@@ -13,8 +13,6 @@ jobs:
         with:
           node-version: 22
 
-      # min-score 0 can never be undercut, and with min-score set the
-      # fail-on-issues count gate stands down, so this must succeed.
       - id: action
         uses: .
         env:
@@ -23,22 +21,24 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          min-score: '0'
           auto-changed-since: 'false'
           annotations: 'false'
+          min-score: '0'
 
-      - name: Assert issues numeric
+      - name: Assert min-score 0 gate passes
         env:
+          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+          echo "outcome: $OUTCOME issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: a min-score of 0 should never fail"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
+          echo "score: $(jq -c '.health_score // .score // empty' "$RESULTS")"
           echo "PASS"

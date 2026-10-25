@@ -1,4 +1,4 @@
-name: Test changed-since scoping to HEAD
+name: Test changed-since scoping
 on:
   workflow_dispatch:
 jobs:
@@ -21,23 +21,23 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          changed-since: HEAD
           fail-on-issues: 'false'
           annotations: 'false'
+          changed-since: HEAD
 
-      - name: Assert outputs
+      - name: Assert scoped run completed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          UNAVAIL: ${{ steps.action.outputs.changed-files-unavailable }}
+          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
           echo "issues: $ISSUES"
-          echo "changed-files-unavailable: $UNAVAIL"
+          echo "changed-files-unavailable: $UNAVAILABLE"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues not numeric: '$ISSUES'"
             exit 1
           fi
-          if [ "$UNAVAIL" != "true" ] && [ "$UNAVAIL" != "false" ]; then
-            echo "FAIL: changed-files-unavailable must be true/false"
+          if [ "$UNAVAILABLE" != "false" ]; then
+            echo "FAIL: expected changed-files-unavailable=false"
             exit 1
           fi
           echo "PASS"

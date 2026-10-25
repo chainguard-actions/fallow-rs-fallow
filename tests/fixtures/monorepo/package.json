@@ -1,6 +1,8 @@
 {
-  "name": "fallow-test-monorepo",
-  "private": true,
+  "name": "monorepo-fixture",
   "version": "1.0.0",
-  "workspaces": ["packages/*"]
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ]
 }
