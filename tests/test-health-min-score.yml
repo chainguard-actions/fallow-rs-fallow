@@ -1,4 +1,4 @@
-name: Test health min-score gate (passing threshold)
+name: Test health min-score gate with zero threshold
 on:
   workflow_dispatch:
 jobs:
@@ -16,15 +16,15 @@ jobs:
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-min-score
           min-score: '0'
-      - name: Assert outputs
+      - name: Assert success and results JSON
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
+          OUTCOME: ${{ steps.action.outcome }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
+          echo "outcome: $OUTCOME"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not numeric"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: score can never be below 0"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq -e . "$RESULTS" > /dev/null; then

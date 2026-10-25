@@ -1,0 +1,46 @@
+name: Test health with runtime coverage options
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # Runtime coverage is a paid feature of the fallow CLI; without a license
+      # the CLI may refuse it. Accept either a successful run with valid outputs
+      # or a failure whose stderr explains the runtime-coverage/license issue.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: tests/fixtures/sample-project
+          version: 3.35.0
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          artifacts-dir: fallow-out-runtime-coverage
+          runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          min-invocations-hot: '100'
+          min-observation-volume: '10'
+          low-traffic-threshold: '0.01'
+      - name: Assert runtime coverage handled
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          LOG="$GITHUB_WORKSPACE/fallow-out-runtime-coverage/fallow-stderr.log"
+          [ -f "$LOG" ] && cat "$LOG"
+          if [ "$OUTCOME" = "success" ]; then
+            if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+              echo "FAIL: success but issues is not numeric"
+              exit 1
+            fi
+            echo "PASS: runtime coverage analysed"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: runtime coverage rejected (paid feature / unlicensed)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

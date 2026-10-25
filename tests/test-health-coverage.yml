@@ -1,4 +1,4 @@
-name: Test health with Istanbul coverage input
+name: Test health with Istanbul coverage and CRAP threshold
 on:
   workflow_dispatch:
 jobs:
@@ -16,14 +16,20 @@ jobs:
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-coverage
           coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: ${{ github.workspace }}/tests/fixtures/sample-project
+          coverage-root: /ci-build
+          max-crap: '30'
       - name: Assert outputs
         env:
+          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
+            exit 1
+          fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1

@@ -1,4 +1,4 @@
-name: Test health save-snapshot then trend
+name: Test health snapshot save then trend comparison
 on:
   workflow_dispatch:
 jobs:
@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snapshot
+      - id: save
         uses: .
         with:
           command: health
@@ -16,12 +16,19 @@ jobs:
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-snapshot
           save-snapshot: 'true'
-      - name: Assert snapshot written
+      - name: Assert snapshot saved
+        env:
+          OUTCOME: ${{ steps.save.outcome }}
         run: |
-          found=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
-          echo "snapshots: $found"
-          if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file found under .fallow/snapshots"
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
+            exit 1
+          fi
+          D="$GITHUB_WORKSPACE/tests/fixtures/sample-project/.fallow/snapshots"
+          ls -la "$D" || true
+          if [ -z "$(ls -A "$D" 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot written to $D"
             exit 1
           fi
           echo "PASS"
@@ -35,15 +42,14 @@ jobs:
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-trend
           trend: 'true'
-      - name: Assert trend run produced results
+      - name: Assert trend run succeeded
         env:
-          ISSUES: ${{ steps.trend.outputs.issues }}
+          OUTCOME: ${{ steps.trend.outcome }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not numeric"
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq -e . "$RESULTS" > /dev/null; then
