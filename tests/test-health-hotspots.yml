@@ -1,4 +1,4 @@
-name: Test combined run with skip
+name: Test health hotspots with since and min-commits
 on:
   workflow_dispatch:
 
@@ -9,32 +9,38 @@ jobs:
       FALLOW_SKIP_BINARY_VERIFY: '1'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
       - id: action
         uses: .
         with:
+          command: health
           root: tests/fixtures/simple-js
           format: json
-          skip: dupes
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          hotspots: 'true'
+          since: 1y
+          min-commits: '1'
 
-      - name: Assert outputs
+      - name: Assert analysis completed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"

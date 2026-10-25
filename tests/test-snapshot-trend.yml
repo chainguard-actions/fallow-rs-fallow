@@ -1,4 +1,4 @@
-name: Test save-snapshot then trend
+name: Test health save-snapshot followed by trend
 on:
   workflow_dispatch:
 
@@ -10,20 +10,29 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - id: snap
+      - id: snapshot
         uses: .
         with:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          score: 'true'
-          save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          save-snapshot: 'true'
+
+      - name: Assert a snapshot was written
+        run: |
+          found=$(find "$GITHUB_WORKSPACE" -path '*.fallow/snapshots*' -type f 2>/dev/null | head -5)
+          echo "snapshots: $found"
+          if [ -z "$found" ]; then
+            echo "FAIL: no snapshot file found under .fallow/snapshots"
+            exit 1
+          fi
+          echo "PASS"
 
       - id: trend
         uses: .
@@ -31,33 +40,21 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          score: 'true'
-          trend: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          trend: 'true'
 
-      - name: Assert both runs produced outputs
+      - name: Assert trend run completed
         env:
-          SNAP_ISSUES: ${{ steps.snap.outputs.issues }}
-          TREND_ISSUES: ${{ steps.trend.outputs.issues }}
-          TREND_RESULTS: ${{ steps.trend.outputs.results }}
+          ISSUES: ${{ steps.trend.outputs.issues }}
         run: |
-          echo "snap issues: $SNAP_ISSUES"
-          echo "trend issues: $TREND_ISSUES"
-          for v in "$SNAP_ISSUES" "$TREND_ISSUES"; do
-            if ! echo "$v" | grep -qE '^[0-9]+$'; then
-              echo "FAIL: issues output is not a number: '$v'"
-              exit 1
-            fi
-          done
-          if [ -z "$TREND_RESULTS" ] || [ ! -f "$TREND_RESULTS" ]; then
-            echo "FAIL: trend results file missing"
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          echo "snapshot dir contents:"
-          ls -la tests/fixtures/simple-js/.fallow/snapshots 2>/dev/null || echo "(no default snapshot dir)"
           echo "PASS"

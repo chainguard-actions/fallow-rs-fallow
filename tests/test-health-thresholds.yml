@@ -1,4 +1,4 @@
-name: Test health thresholds, sorting and hotspot window
+name: Test health with complexity thresholds, sort, top, min-severity and min-score
 on:
   workflow_dispatch:
 
@@ -9,8 +9,6 @@ jobs:
       FALLOW_SKIP_BINARY_VERIFY: '1'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
 
       - id: action
         uses: .
@@ -18,23 +16,21 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          max-cyclomatic: '10'
-          max-cognitive: '8'
-          max-crap: '25.5'
-          top: '5'
-          sort: cognitive
-          hotspots: 'true'
-          since: '1y'
-          min-commits: '1'
-          threads: '2'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          max-cyclomatic: '20'
+          max-cognitive: '15'
+          max-crap: '30.0'
+          top: '5'
+          sort: cognitive
+          min-severity: critical
+          min-score: '0'
 
-      - name: Assert outputs
+      - name: Assert issues output is a number and results file exists
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

@@ -1,4 +1,4 @@
-name: Test changed-since scoping
+name: Test dead-code scoped with changed-since
 on:
   workflow_dispatch:
 
@@ -18,15 +18,15 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          changed-since: HEAD
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          changed-since: HEAD
 
-      - name: Assert outputs
+      - name: Assert scoped analysis completed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}

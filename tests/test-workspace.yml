@@ -1,4 +1,4 @@
-name: Test workspace scoping in a monorepo
+name: Test dead-code scoped to a single workspace
 on:
   workflow_dispatch:
 
@@ -16,26 +16,27 @@ jobs:
           command: dead-code
           root: tests/fixtures/monorepo
           format: json
-          workspace: pkg-a
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          workspace: app
 
-      - name: Assert outputs
+      - name: Assert analysis completed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"
