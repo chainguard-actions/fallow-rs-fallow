@@ -1,0 +1,416 @@
+# Extraction internals
+
+Use this reference for parsing, AST facts, embedded languages, source mapping,
+and parse-cache changes.
+
+## Ownership
+
+- `crates/extract/src/lib.rs`: parse entry points, parallel dispatch, and
+  cache-aware file processing.
+- `crates/extract/src/parse.rs`: Oxc parser and semantic setup.
+- `crates/extract/src/visitor/`: JavaScript and TypeScript import, export,
+  member, call, and framework facts.
+- `crates/extract/src/cache/`: cache types, conversion, storage, and tests.
+- `crates/extract/src/complexity.rs`: JavaScript and TypeScript complexity,
+  including the synthetic `<module>` unit for module-scope branching.
+- `crates/extract/src/template_complexity/`: synthetic `<template>` complexity
+  for Angular, Vue, Svelte, and Astro, over a shared JS-expression engine.
+- `crates/extract/src/sfc.rs`, `astro.rs`, `glimmer.rs`, `mdx.rs`, and
+  `graphql.rs`: component and embedded-language extraction.
+- `crates/extract/src/sfc_template/`: template-visible usage for supported
+  component formats.
+- `crates/extract/src/css.rs`, `css_metrics.rs`, `css_classes.rs`, and
+  `css_in_js/`: CSS, CSS-in-JS, token, and styling facts.
+- `crates/extract/src/source_map.rs`: source-map normalization and mapping.
+
+Shared extraction result types live in `crates/types/src/extract.rs`.
+
+## Invariants
+
+- Keep extraction syntactic and tolerant of incomplete source.
+- Preserve byte offsets and line numbers when lifting embedded code or styles.
+- Return partial information and diagnostics when one input cannot be read or
+  parsed. Do not abort unrelated files.
+- The Oxc parser and the AST visitors recurse once per nesting level without a
+  limit, and a stack overflow aborts the whole process. Run every parse of
+  user source, and the walks over its AST, inside
+  `fallow_extract::parse_bounded` (`crates/extract/src/nesting.rs`).
+  `scripts/check-parse-sites.mjs` lists each production parser call and
+  fails on a new one.
+  - `parse_bounded` first scans the bracket depth. A file past
+    `MAX_NESTING_DEPTH` returns `None`. Extraction turns it into a failed
+    parse (`parse_panicked`) with no facts, and the other callers skip it.
+    Brackets in strings, comments and template text do not count, and a
+    literal that does not end on its line is scanned again as code. A CSS,
+    Sass or Less file is scanned with stylesheet rules: strings, escapes,
+    `/* */` comments and unquoted `url()` only, because `//` in
+    `url(//host/a.png)` is not a comment.
+  - It then runs the parse on a stack of
+    `256 KiB + 1024 * source length + 4096 * bracket depth`
+    (`crates/extract/src/stack.rs`). A need over 64 GiB (a source over 64 MB in
+    a 64-bit release build) is refused like a too-deep file, so no file parses
+    on too small a stack. Each nesting level uses at least one
+    source byte. A shape without brackets (generics, JSX elements,
+    `class extends`, ternaries, arrows, assignment, member and call chains)
+    uses at most about 570 stack bytes per source byte in a release build. An
+    unclosed `(` uses about 1900 per level, which the bracket term covers. So
+    a parse cannot overflow. A debug build reserves 2048 per source byte,
+    because its frames are larger.
+  - The parse runs on the current thread when that thread has enough stack
+    left. Analysis pool workers register their stack in the Rayon
+    `start_handler` (`fallow_extract::register_thread_stack`). The CLI
+    registers its main thread when it builds the global pool
+    (`crates/cli/src/rayon_pool.rs`), from the soft `RLIMIT_STACK` on Unix
+    and from `GetCurrentThreadStackLimits` on Windows. The LSP and MCP
+    Tokio threads register in `on_thread_start`
+    (`fallow_api::register_thread_stack`). Any other thread counts as having
+    no stack to spare, so its parse runs on a scoped thread
+    of the needed size. When that thread cannot start, the parse runs on the
+    current thread.
+  - A parse of part of a file inside `parse_bounded` runs on the same stack
+    and needs no second call. The CSS comment mask counts per thread, so
+    `parse_source_to_module_with_flags` carries its count back from the
+    sized thread.
+  - A pool worker keeps a parse of a file up to about 15 KB on its own stack.
+    A larger file parses on a scoped thread.
+  - The fuzz build (`cfg(fuzzing)`) reserves 8 times the debug stack per byte
+    and per bracket level, because AddressSanitizer pads every frame.
+- Run every lightningcss parse of stylesheet source through
+  `fallow_extract::parse_style_bounded`. Past the cap, CSS Modules class
+  extraction falls back to the plain class scan, and CSS analytics and color
+  parsing return `None`.
+- A walk that the visitor runs at each link of a member or call chain stops
+  after `MAX_RECORDED_CHAIN_LINKS` links
+  (`crates/extract/src/visitor/visit_impl_chain_names.rs`). Past the cap, the
+  walk gives no name, so the visitor records no member access, no binding key
+  and no projection for that link. Binding keys and member accesses use the
+  same builders, so both sides stop at the same link. Without this cap, the
+  time and the output for one chain grow with the square of its length. A new
+  per-link walk must use the same cap. The taint source paths
+  (`visit_impl_source_paths.rs`), the JSX tag receivers, the interface
+  heritage names, and the dotted tags of the Astro and MDX text scans
+  (`push_member_tag_accesses`) use it too.
+- Build a dotted path in a loop and join it once (`join_member_path`). A
+  recursive `format!` copies the whole path at each link, so one path of N
+  links costs O(N^2) bytes. Unwrap a run of wrappers (`await`, parentheses,
+  TS assertions) before a scan, not at each layer.
+- A function with more than `MAX_HASHED_FUNCTION_HEIGHT` (64) levels of nested
+  functions below it gets no `source_hash`
+  (`crates/extract/src/function_hash.rs`). Each function hashes its whole
+  span, so without the cap a chain of nested arrows hashes a quadratic number
+  of bytes. The complexity walk and the inventory apply the same rule, so the
+  hashes that join them stay the same. The deepest real function measured has
+  10 levels below it. The inventory computes columns with separate cursors for
+  span starts and span ends, so nested functions on one line stay linear.
+- A fluent chain gives one fact, at its outermost call, with each step name
+  once in first-call order. The walk marks the inner calls, so they do not walk
+  again. The consumer credits each step up to and including the first step
+  that does not return `this`. A fact for each call would hold the steps before
+  it, which is quadratic in the chain length. A cap would drop the credit for
+  the steps past it.
+- `crates/extract/src/tests/linear_cost.rs` extracts each chain shape at 1000
+  and 4000 links and checks that the work grows by at most 5 times. Linear
+  work grows by 4 times and quadratic work by 16 times. The test reads two
+  meters from `crates/extract/src/cost.rs`: the bytes that the test allocator
+  gives to the thread, and the calls to `cost::walk_step`. A loop that walks a
+  chain, or that scans a list that grows with a chain, must call
+  `cost::walk_step` once for each step. A walk that does not allocate and does
+  not call it is not visible to the test. Add a shape for each new chain
+  context.
+- Bind framework heuristics to imported symbols or other provenance. A local
+  function with the same name must not activate library-specific behavior.
+- Avoid filesystem and graph policy inside AST visitors.
+- Change the cache version in `crates/extract/src/cache/types.rs` whenever a
+  cached fact or its meaning changes. Do not document the current numeric value
+  as a durable contract.
+- Keep cache serialization deterministic and backwards failure safe.
+- A concise arrow body (`() => expr`) is an `ArrowFunctionBody` expression
+  since Oxc 0.151. Helpers that read function and arrow bodies take
+  `BodyRef` (`crates/extract/src/function_body.rs`), so a concise body keeps
+  the shape of the old single-statement body. The duplication token visitor
+  keeps the old tokens for concise bodies, `import.meta`, `new.target` and
+  qualified interface heritage names.
+- String literal values, `static_property_name()` and
+  `PropertyKey::static_name()` are `JSStr` (WTF-8) since Oxc 0.155. `JSStr`
+  has no `Display`. Convert it with `fallow_extract::JsText::text()`
+  (`crates/extract/src/js_text.rs`) at the point of use. A well-formed value
+  stays borrowed, and a lone surrogate is written as `\uXXXX`.
+- `visit_formal_parameter` also visits the parameters of type-only
+  signatures: function types, overloads, `declare function`, and interface
+  or abstract methods. Code in these signatures never runs. A parameter hook
+  that credits a member read must run from `visit_function` when the function
+  has a body, or from `visit_arrow_function_expression`.
+- `SemanticBuilder` builds `AstNodes` only with `with_build_nodes(true)`.
+  Set it on each pass that reads `semantic.nodes()`.
+- A `TSExternalModuleDeclaration` body (`declare module '<specifier>'`, a
+  module augmentation or ambient module declaration) contributes no file-level export surface. Its
+  body is still walked for `typeof import()` and type-space references, and a
+  named re-export inside it becomes one type-space import per specifier so the
+  target keeps its export credit. A star re-export inside it (`export *` or
+  `export * as ns`) becomes one type-space namespace import with an empty
+  local name and never a file-level star re-export; the graph credits the
+  target's full ES star surface for that shape (see
+  `docs/reference/detection-internals.md`). The `export * as ns` form adds one
+  type-space default import because `ns.default` reaches the target's default
+  export. `export type *` and `export type * as ns` record the same shape with
+  the import's type-only-star flag set, so the graph credits the same star
+  surface in the type namespace alone. Because ambient bodies are erased at
+  runtime, a re-export from a bare specifier inside one counts as type-only
+  package usage. Exported namespaces and `declare global` keep their existing
+  behavior.
+- A namespace declared without the `export` keyword (`namespace Foo {}`,
+  `declare namespace Foo {}`, legacy `module Foo {}`, dotted
+  `namespace A.B.C {}`, and namespaces nested in those or in `declare global`)
+  is a local binding. Its inner `export` declarations are members of that
+  binding, not file-level exports, and are attached to no owner because a
+  local namespace cannot merge with an exported one. The body is still walked
+  so imports referenced inside it keep their credit. `export namespace Foo`
+  keeps recording one export with the inner declarations as members.
+- An `export namespace Foo` (or `module Foo`, or dotted `A.B.C`) export is
+  type-only when TypeScript emits no JavaScript for it.
+  `namespace_is_instantiated` in `crates/extract/src/visitor/declarations.rs`
+  applies the TypeScript rule: interfaces, type aliases, `declare`
+  declarations, `import type` aliases, empty bodies and nested non-instantiated
+  namespaces emit nothing. Any other statement, exported or not, makes it a
+  value. A `const enum` and a non-type import alias count as values, which
+  keeps the rule conservative. When such a namespace merges with a value
+  export of the same name in the file, its entry stays a value, because a
+  value import of the merged name must credit it. `is_type_only` is cached in
+  the extraction cache and in the persisted graph, so a change to this rule
+  bumps both `CACHE_VERSION` and `GRAPH_CACHE_VERSION`.
+- A template pipeline that records member accesses for an import binding must
+  make narrowing safe structurally, not shape by shape. Namespace-import
+  narrowing (and CSS module, enum, and class member crediting) trusts the
+  stream: one recorded access from a non-entry consumer narrows the target to
+  the accessed members, so any mention the pipeline did not classify would
+  turn a used sibling into an `unused-export` finding. Astro and MDX apply a
+  completeness guard (`record_unexplained_mentions` in
+  `crates/extract/src/template_expression_scan.rs`): every structured pass
+  reports the byte spans it classified (Astro: component tag roots outside the
+  masked `<script>` / `<style>` / comment ranges, and `{ ... }` regions the
+  parser accepted; MDX: prose lines outside fenced code and inline code
+  spans), and every identifier-boundary mention of an import binding outside
+  those spans (a `define:vars` or `set:html` directive on a masked tag, an
+  HTML comment, an attribute string, text content, a rejected region, a code
+  sample, a template literal mistaken for a code span) records a whole-object
+  use, which keeps the graph on mark-all for entry-point and non-entry
+  consumers alike. The script side the visitor parsed (Astro frontmatter, MDX
+  `import` / `export` lines) is guarded too
+  (`record_unexplained_script_mentions`), because the text scan cannot see
+  what the parser resolved: for the bindings the graph narrows exports for
+  (namespace imports and CSS module default imports) a mention outside the
+  import declaration is explained only by a static dotted access whose
+  `(root, member)` pair the visitor recorded or by a JSX tag root, so
+  `NS['Moon']` and `NS?.Moon`, which the visitor resolves exactly, record a
+  whole-object use there. On the CSS-module side the guard is also what
+  covers `const N = styles`, `pick(styles)`, `[styles]`, and
+  `{ all: styles }`. Class and enum bindings
+  are not script-guarded (a type annotation or `new` expression names them
+  bare in ordinary code), so their member crediting stays at visitor parity
+  with `.tsx` on the script side while the markup guard covers them. Narrowing
+  applies only when every mention of the binding in the whole file was
+  structurally understood; otherwise every export is credited, which for the
+  dead-code crediting consumers degrades to over-credit. Member accesses also
+  feed the security secret-source index, so MDX prose records a dotted chain
+  only when its root is an import local of the file: prose never creates
+  member accesses on foreign roots such as `process.env`.
+- A reference to an `import * as NS` local that the visitor cannot resolve to
+  one member is a whole-object use, so the graph credits every export of the
+  target instead of narrowing to the dotted accesses
+  (`record_bare_namespace_reference` in
+  `crates/extract/src/visitor/visit_impl.rs`). The resolved positions are the
+  exclusions: the object of a static or string-computed access, the root of a
+  JSX member tag, the left side of a dotted type name, a destructure
+  initializer, a re-export specifier local (which the graph credits through
+  its own rule), and a placement in an object literal bound to a local, whose
+  `api.NS.member` path the object-binding resolver follows. A test spy call
+  with a static member name (`vi.spyOn(NS, 'm')`, `jest.spyOn`, a
+  test-framework or global `spyOn`, the `mock.method` of `node:test`) is also
+  an exclusion and records `NS.m` (`visit_impl_spy_calls.rs`). The spy API
+  names are pre-registered from the program's statement list, so a top-level
+  binding of the same name removes the global meaning. A bare reference
+  to that local hands the namespace on in turn. The locals are pre-registered
+  from the program's statement list, because an import declaration is legal
+  after the code that reads it. Namespace objects bound by `require` or a
+  dynamic import keep the older allow-list.
+- The MDX line scan hands the statement lines of the whole file to the parser
+  as one program, and a rejected program is an empty program, so one
+  misclassified line would drop every import of the file. A line opens a
+  statement only when it carries a shape a real statement has: a source
+  clause, a brace specifier list, a star specifier, a string-literal
+  side-effect import, or, after `export`, a brace list, a star, or a
+  declaration keyword. Prose that merely opens with the word "import" or
+  "export" stays prose. The shape list is a fast path, not the definition of
+  the language: a line that opens with the keyword and matches nothing in it
+  is handed to the parser on its own, and a line that parses is a statement
+  whatever its shape, which keeps heads the list does not enumerate
+  (`import /* c */ './x'`, a spaced dynamic `import ('./x')`) out of prose. A
+  sentence cannot slip through that probe, because a sentence does not parse.
+  Classification is backed by a parse fallback in the other direction: the
+  scan keeps statement blocks (an opening line plus the continuation lines a
+  multi-line specifier list collected), and when the parser rejects the body,
+  every block it also rejects on its own is demoted to prose and the rest is
+  re-parsed, so a rejected line costs only itself. Demoted lines feed the
+  prose scan like any other body line, so the completeness guard above still
+  sees their mentions. A source clause is a `from` bounded by whitespace on
+  the left and followed by its specifier quote on the right, immediately or
+  after whitespace, so every whitespace form JavaScript accepts (`from\t'./x'`,
+  a no-break space, a multi-space run) names a source, while a `from` inside a
+  word or inside a string does not, and a multi-line block is never ended one
+  line early by prose in an object literal.
+- The parse fallback covers the dead-code path only. The duplication tokenizer
+  reads MDX through `extract_mdx_statements`, which returns the classified
+  statement body without a retry, so a line the classifier accepts and the
+  parser then rejects still costs that MDX file its whole token stream there.
+  Duplication findings inside such a file are missing rather than wrong, and
+  the classifier is what keeps the common prose sentence out of that path.
+- Complexity extraction opens a root frame per program, so decision points
+  outside every function are counted instead of dropped by the
+  `stack.last_mut()` guard every counter writer uses. The frame is emitted as a
+  synthetic `<module>` unit only when it actually branched, anchored at its
+  first contributing construct and sized from its first to its last
+  contribution, with `source_hash: None`. A file with no module-scope decision
+  point produces no unit, so its numbers are unchanged. The unit is
+  aggregate-only downstream: vital signs, file-score totals, and branching
+  conservation count it, while findings, large functions, CRAP, the component
+  rollup, the runtime-coverage static payload, and the editor code lens all
+  exclude it.
+
+A callback returning a dynamic import reads only `default` when its callee has a
+proven component-loader contract: React `lazy`, Vue `defineAsyncComponent`, or
+Next.js `next/dynamic`. Runtime import bindings are registered before the walk,
+and lexical shadowing removes that meaning. Exported namespaces abstain while
+namespace-local import provenance is unavailable. Only the first loader argument
+uses this contract. Unknown wrappers, including configurable module resolvers such as
+`@loadable/component`, retain whole-module credit through the escaping-value or
+local-loader fallback. Ordinary awaited loader calls still credit their accessed
+members; discarded imports and unread promise bindings credit no export. Changes
+to these cached import facts invalidate both extraction and graph caches.
+
+## Embedded-source and import regression boundaries
+
+Asset references in HTML, JSX and HTML tagged templates must come from literal
+markup with the required element or tag context. Remote URLs, unrelated
+components and unproven interpolated paths must not invent local graph edges.
+Keep comment and source-offset handling aligned across `html.rs`, the visitor
+and SFC extraction. CSS masking replaces excluded regions with equal-length
+whitespace; selector spans must still index the original source. Cascade-layer
+and import preludes are not class selectors, while real scope selectors remain
+visible.
+
+Vue setup bindings and Svelte instance-script bindings have different template
+visibility from ordinary Vue scripts and Svelte module scripts. External script
+and style references remain graph edges. SFC style imports carry their style
+context into resolution so a stylesheet cannot resolve to a same-named
+component through the JavaScript extension order. Preserve template-local
+bindings, whole-object credit and framework metadata when changing scanners.
+
+Import facts also come from JSDoc type references, import-then-export syntax,
+namespace destructuring and proven Node child-process entry calls. These paths
+must retain import provenance, type/value meaning and lexical binding identity.
+Do not replace their source tests with tests of a parallel scanner. Angular
+metadata and injection-token/interface bridging must stay provenance-gated;
+unknown framework behavior must not invent member-use evidence.
+
+A per-file `@jsxImportSource <source>` pragma is an import fact too. With the
+automatic JSX runtime, the compiler imports `jsx`, `jsxs` and `Fragment` from
+`<source>/jsx-runtime`, so the visitor records these three named imports with
+no local binding. The visitor records them only when the file has a JSX
+element or fragment, as the compiler does. Only comments before the first
+statement hold the pragma, as in TypeScript, so a `@jsxImportSource` line in a
+later doc comment adds no edge. Inside those comments, the Oxc rules apply: the
+last value wins, and `@jsxRuntime classic` cancels the pragma.
+The dev runtime (`<source>/jsx-dev-runtime`) is not recorded, because a build
+can omit it and a missing relative dev runtime would be a false unresolved
+import. The tsconfig `jsxImportSource` option only credits the package as a
+referenced dependency.
+
+A Vitest config can set the source for a group of files with
+`oxc.jsx.importSource` (or the older `esbuild.jsxImportSource`). Vitest runs
+the transform in dev mode, so such a file imports `jsxDEV` and `Fragment`
+from `<source>/jsx-dev-runtime`. Extraction stays config-blind: the visitor
+sets `jsx_runtime_from_config` on a file with JSX and with no
+`@jsxImportSource` or `@jsxRuntime classic` pragma. The Vitest plugin reads
+the source, the `test.include` globs and the `test.exclude` globs of each test
+project into a `JsxImportSourceRule`.
+
+The plugin follows the Vitest 5 project model:
+
+- Without `test.projects`, the config is the only test project. With
+  `test.projects`, the root config gives no rule, because it is then not a
+  test project.
+- An inline project merges the declaring config unless `extends` is `false`.
+  Vitest 4 merged it only with `extends: true`. The plugin reads the Vitest
+  major from `node_modules/vitest/package.json`, else from the declared
+  `vitest` range, in the directories from the config up to the root. On a
+  major below 5, a project without `extends` merges nothing. When no major is
+  known, or a range has no upper major (`>=4`, `latest`), the plugin follows
+  Vitest 5.
+- `extends: '<path>'` merges the named config file instead. The plugin reads
+  that file one level deep and credits it as used. A path to the declaring
+  config is the same as `extends: true`.
+- A merge concatenates `include` and `exclude`, with the base values first,
+  as Vite `mergeConfig` does. Other values of the project replace the base
+  values.
+- A project without `include` uses the Vitest default include. A project
+  without `exclude` uses the Vitest default exclude
+  (`**/node_modules/**`, `**/.git/**`). A config `exclude` replaces the
+  default.
+- A negated `include` entry is an exclude. Vitest ignores a negated `exclude`
+  entry, so the plugin ignores it too. An exclude pattern that names a
+  directory also excludes the files in it.
+- The globs are relative to `test.dir`, else to `test.root` or the Vite
+  `root`, else to the config directory. The plugin stores them relative to the
+  config directory. A project directory outside the config directory gives no
+  rule.
+- A `test.projects` string that names a config file with a name such as
+  `vitest.e2e.config.ts` is read for its rules, which match relative to the
+  directory of that file. The config patterns already find a file with a
+  standard name. A glob entry is expanded on disk, without `node_modules`.
+  A glob that starts with `**` is not followed, because it walks the whole
+  tree on each run.
+  A glob with a brace group is not followed, because the glob matcher has no
+  brace support.
+- Vitest does not load a `vite.config.*` when a `vitest.config.*` is in the
+  same directory. Such a vite config gives no rule, unless the vitest config
+  imports it, for example to pass it to `mergeConfig`.
+
+The classic runtime, `jsx: 'preserve'` and `oxc: false` give no rule. A
+package source gives no rule and only credits the package. A synthetic edge
+from test files alone would make a runtime dependency of the app look
+test-only.
+
+A project that sets no import source uses the `react` runtime, because Vite
+uses `react` by default. The plugin records this as a credit rule in
+`jsx_package_credits`, not as an edge rule. The analysis credits `react` as used
+only when a flagged module matches the rule, so a project without JSX test
+files still reports an unused `react`. The credit goes to one
+manifest only, as for an import: the nearest manifest of the module
+(its workspace, the ancestor workspaces, then the root) that declares the
+package. A JSX test file in one workspace thus does not hide an unused
+`react` in a different workspace. When a
+tsconfig sets `jsxImportSource` or a `jsx` mode without an automatic runtime
+import, Vite uses the tsconfig settings for TypeScript files. The analysis
+then skips the credit rule for TypeScript files below the directory of that
+tsconfig. The check uses the directory only, not the `include` of the
+tsconfig.
+
+The resolver adds the edge to each flagged module that an include glob
+matches and no exclude glob matches, relative to the config directory. A
+relative source resolves from the module first and then from the config
+directory, as in Vite. A source that resolves from neither place adds no
+edge, so a config value never causes an unresolved import. The edge rules,
+with their include and exclude globs, are part of the graph cache key. The
+credit rules add no edge, so they are not part of it.
+
+## Verification
+
+Add the smallest parser or visitor test for the syntax boundary. Add an
+integration fixture when the extracted fact changes reachability or a reported
+issue. Include malformed input for parser recovery changes.
+
+```bash
+cargo test -p fallow-extract
+cargo test -p fallow-core
+npm run verify:fast
+```

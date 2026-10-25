@@ -1,0 +1,169 @@
+[package]
+name = "fallow-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "CLI for fallow, codebase intelligence for TypeScript and JavaScript"
+readme = "../../README.md"
+
+[[bin]]
+name = "fallow"
+path = "src/main.rs"
+
+[[bin]]
+name = "stub_sidecar"
+path = "src/bin/stub_sidecar.rs"
+required-features = ["test-sidecar-key"]
+
+[[bin]]
+name = "fallow-schema-emit"
+path = "src/bin/schema_emit.rs"
+required-features = ["schema-emit"]
+
+[features]
+default = []
+# Test-only feature that swaps the sidecar binary-signing verify key and the
+# license JWT verify key for deterministic keypairs derived from fixed seeds.
+# Used by the end-to-end runtime-coverage integration tests. MUST NOT be
+# enabled in release builds; a compile_error! at
+# crates/cli/src/health/coverage.rs guards against that.
+test-sidecar-key = []
+# Library feature that enables `JsonSchema` derives across the API, output, and
+# base type crates so the schema-emit binary can derive one document covering
+# the complete output contract. Non-schema builds pay zero compile cost because
+# every derive is gated behind `#[cfg_attr(feature = "schema", ...)]`.
+schema = ["dep:schemars", "fallow-api/schema", "fallow-output/schema", "fallow-types/schema"]
+# Build-only feature that enables the `fallow-schema-emit` binary, which
+# regenerates `docs/output-schema.json` from the Rust source of truth. Pulls in
+# schemars across the workspace via the per-crate `schema` features. Not part
+# of the published CLI; used by the schema drift gate and contributors editing
+# result types.
+schema-emit = [
+    "schema",
+    "fallow-types/schema",
+]
+
+[dependencies]
+fallow-api = { workspace = true }
+fallow-engine = { workspace = true }
+fallow-mutation = { workspace = true }
+fallow-config = { workspace = true }
+fallow-output = { workspace = true }
+# `tokio` matches the feature that fallow-mcp enables. Without it the
+# fallow-process, fallow-api, and fallow-cli units differ between a
+# package-scoped build and a workspace build, so cargo compiles both variants
+# after each edit. The CLI does not call the async helpers.
+fallow-process = { workspace = true, features = ["tokio"] }
+fallow-security = { workspace = true }
+fallow-types = { workspace = true }
+fallow-v8-coverage = { version = "3.36.0", path = "../v8-coverage" }
+fallow-cov-protocol = "0.8"
+fallow-license = { version = "3.36.0", path = "../license" }
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+clap = { workspace = true }
+dunce = { workspace = true }
+globset = { workspace = true }
+ignore = { workspace = true }
+colored = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+flate2 = { workspace = true }
+semver = { workspace = true }
+bitcode = { workspace = true }
+jsonc-parser = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+notify = { workspace = true }
+rayon = { workspace = true }
+tempfile = { workspace = true }
+miette = { workspace = true, features = ["fancy"] }
+rustc-hash = { workspace = true }
+open = { workspace = true }
+oxc_coverage_instrument = { workspace = true }
+srcmap-sourcemap = "0.3.9"
+httpdate = { workspace = true }
+ureq = { workspace = true }
+url = "2"
+http = "1"
+xxhash-rust = { workspace = true }
+sha2 = { workspace = true }
+similar = { version = "3", default-features = false, features = ["text"] }
+
+# Schema-emit support: pulled in only when the `schema-emit` feature is active
+# (via the dedicated bin target above). Keeps schemars out of the default
+# release binary.
+schemars = { workspace = true, optional = true }
+# Feature-only deps. Other workspace members (fallow-lsp, fallow-mcp, fallow-node)
+# enable these features on shared third-party crates. Without them here,
+# `cargo build -p fallow-cli` and `cargo build --workspace` resolve different
+# feature sets, and each switch rebuilds the dependents.
+# `npm run check:cargo-features` fails when a feature is missing here.
+chrono = { version = "0.4", default-features = false, features = ["alloc", "now", "serde", "std"] }
+hashbrown = { version = "0.17", features = ["default"] }
+httparse = { version = "1", features = ["std"] }
+
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+rustix = { workspace = true }
+signal-hook = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
+[build-dependencies]
+flate2 = { workspace = true }
+# Feature-only build dep: unifies the proc-macro `syn` features that
+# napi-derive and darling enable in a workspace build (see the note above).
+syn = { version = "3", default-features = false, features = ["extra-traits", "fold"] }
+
+[lib]
+name = "fallow_cli"
+path = "src/lib.rs"
+doctest = false
+
+[dev-dependencies]
+insta = { workspace = true }
+jsonschema = { workspace = true }
+fallow-types = { workspace = true }
+proptest = { workspace = true }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+syn = { version = "3", features = ["full"] }
+base64 = "0.23"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+fallow-cov-protocol = "0.8"
+
+[package.metadata.cargo-shear]
+ignored = [
+    "chrono",       # feature-only dep: unifies features with a workspace build
+    "hashbrown",    # feature-only dep: unifies features with a workspace build
+    "httparse",     # feature-only dep: unifies features with a workspace build
+    "miette",       # feature-only dep: activates fancy rendering for fallow-config's miette::Report
+    "proc-macro2",  # feature-only dep: activates `span-locations` so syn-returned `.span().start().line` reports real source positions in the schema-drift gate (crates/cli/tests/integration/schema_tests.rs); no explicit import
+]
+# tests/integration/main.rs includes this file with `#[path = "../common/http_stub.rs"]`.
+# cargo-shear does not follow a `#[path]` module in a test target that lives in a subdirectory.
+ignored-paths = ["tests/common/http_stub.rs"]
+
+[package.metadata.cargo-machete]
+ignored = [
+    "chrono", # feature-only dep: unifies features with a workspace build
+    "hashbrown", # feature-only dep: unifies features with a workspace build
+    "httparse", # feature-only dep: unifies features with a workspace build
+    "syn", # feature-only build dep: unifies features with a workspace build
+    "miette", # feature-only dep: activates fancy rendering for fallow-config's miette::Report
+    "proc-macro2", # feature-only dev-dep: activates `span-locations` for schema drift source-position tests
+]
+
+[lints]
+workspace = true

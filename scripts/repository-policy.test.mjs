@@ -1,0 +1,880 @@
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { test } from "node:test";
+import {
+  BACKENDS,
+  QUERY_OPERATIONS,
+  WIRE_PROTOCOL_VERSION,
+} from "../tools/type-aware-sidecar/src/generated-protocol.mjs";
+import {
+  COMPARED_TOOLS,
+  FRAGMENT_DIR,
+  changelogFragments,
+  fragmentNames,
+} from "./changelog-fragments.mjs";
+import { releasedSkillNames } from "./released-skills.mjs";
+
+const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
+
+/** The published release this branch evolves from. */
+const RELEASED_TAG = "v3.35.0";
+
+const markdownFilesUnder = (root) =>
+  readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      return markdownFilesUnder(path);
+    }
+    return entry.name.endsWith(".md") ? [path] : [];
+  });
+
+const dependabotUpdate = (config, ecosystem, directory) => {
+  const update = config
+    .split(/(?=^  - package-ecosystem: )/mu)
+    .find(
+      (candidate) =>
+        candidate.includes(`package-ecosystem: ${ecosystem}`) &&
+        candidate.includes(`directory: ${directory}`),
+    );
+  assert.ok(update, `missing Dependabot update for ${ecosystem} in ${directory}`);
+  return update;
+};
+
+const documentedFields = (guide, heading) => {
+  const marker = `### ${heading}`;
+  const start = guide.indexOf(marker);
+  assert.notEqual(start, -1, `missing ${heading} section`);
+
+  const remaining = guide.slice(start + marker.length);
+  const nextHeading = remaining.indexOf("\n### ");
+  const section = nextHeading === -1 ? remaining : remaining.slice(0, nextHeading);
+
+  return [...section.matchAll(/^\|\s*`([^`]+)`\s*\|/gm)].map((match) => match[1]);
+};
+
+const markdownSection = (document, heading) => {
+  const marker = `## ${heading}`;
+  const start = document.indexOf(marker);
+  assert.notEqual(start, -1, `missing ${heading} section`);
+
+  const remaining = document.slice(start + marker.length);
+  const nextHeading = remaining.indexOf("\n## ");
+  return nextHeading === -1 ? remaining : remaining.slice(0, nextHeading);
+};
+
+const exportedNodeFunctions = (declarations) =>
+  [...declarations.matchAll(/^export function ([A-Za-z_$][\w$]*)\(/gmu)].map((match) => match[1]);
+
+const missingDocumentedNodeFunctions = (declarations, readme) => {
+  const section = markdownSection(readme, "Editors and integrations");
+  return exportedNodeFunctions(declarations).filter(
+    (functionName) => !section.includes(`\`${functionName}\``),
+  );
+};
+
+/** Durations and speedup ratios. Each pattern requires a unit so prose
+ * numbers ("0 to 100") are not mistaken for measurements. */
+const BENCHMARK_NUMBER_PATTERNS = [/\b\d+(?:\.\d+)?(?:ms|s)\b/gu, /\b\d+(?:\.\d+)?x\b/gu];
+
+const quotedBenchmarkNumbers = (document) => [
+  ...new Set(
+    BENCHMARK_NUMBER_PATTERNS.flatMap((pattern) =>
+      [...document.matchAll(pattern)].map((match) => match[0]),
+    ),
+  ),
+];
+
+test("fuzz Dependabot updates stay scoped to its registry dependency", () => {
+  const config = readFileSync(".github/dependabot.yml", "utf8");
+  const update = dependabotUpdate(config, "cargo", "/fuzz");
+  const allowedDependencies = [...update.matchAll(/^\s+- dependency-name: ([^\s]+)$/gmu)].map(
+    (match) => match[1],
+  );
+
+  assert.deepEqual(allowedDependencies, ["libfuzzer-sys"]);
+});
+
+/** README prose outside fenced code blocks. Sample output keeps its own numbers. */
+const readmeProse = (readme) => readme.replace(/^```[\s\S]*?^```$/gmu, "");
+
+/** Other analysis tools. The README states fallow's own results only. */
+
+const missingBenchmarkNumbers = (readme, benchmarks) =>
+  quotedBenchmarkNumbers(readmeProse(readme)).filter((value) => !benchmarks.includes(value));
+
+/** Prose lines that quote a timing and also name another tool. */
+const comparisonLines = (readme) =>
+  readmeProse(readme)
+    .split("\n")
+    .filter((line) => quotedBenchmarkNumbers(line).length > 0 && COMPARED_TOOLS.test(line));
+
+/** The fallow version the README names as the vintage of the numbers it quotes. */
+const readmeBenchmarkVintage = (readme) =>
+  readmeProse(readme).match(/Measured on fallow (\d+\.\d+\.\d+)/u)?.[1];
+
+/** The fallow version in the environment line under Reference Results. */
+const benchmarksEnvironmentVersion = (benchmarks) =>
+  benchmarks.match(/^Environment:.*?\bfallow (\d+\.\d+\.\d+)/mu)?.[1];
+
+test("README quotes only fallow's own benchmark results", () => {
+  const readme = readFileSync("README.md", "utf8");
+  const benchmarks = readFileSync("BENCHMARKS.md", "utf8");
+
+  const missing = missingBenchmarkNumbers(readme, benchmarks);
+  assert.deepEqual(
+    missing,
+    [],
+    `README quotes numbers absent from BENCHMARKS.md: ${missing.join(", ")}`,
+  );
+  assert.deepEqual(comparisonLines(readme), [], "README must not compare timings with other tools");
+  if (quotedBenchmarkNumbers(readmeProse(readme)).length > 0) {
+    assert.equal(
+      readmeBenchmarkVintage(readme),
+      benchmarksEnvironmentVersion(benchmarks),
+      "README benchmark vintage must match the BENCHMARKS.md environment line",
+    );
+  }
+
+  // Mutation controls: an unknown timing and a comparison are both reported.
+  assert.deepEqual(missingBenchmarkNumbers(`${readme}\nfallow takes 9999ms.`, benchmarks), [
+    "9999ms",
+  ]);
+  assert.equal(comparisonLines("fallow takes 74ms, where knip 6 takes 2.01s.\n").length, 1);
+  assert.deepEqual(missingBenchmarkNumbers("```\n9999ms\n```\n", benchmarks), []);
+});
+
+test("package marketplace metadata does not name other analysis tools", () => {
+  // npm, the VS Code Marketplace, and the GitHub Marketplace show these fields as fallow's own pitch.
+  const manifests = [
+    "npm/fallow/package.json",
+    "editors/vscode/package.json",
+    "crates/napi/package.json",
+  ];
+  const offenders = manifests.flatMap((path) => {
+    const { description = "", keywords = [] } = JSON.parse(readFileSync(path, "utf8"));
+    return [description, ...keywords]
+      .filter((value) => COMPARED_TOOLS.test(value))
+      .map((value) => `${path}: ${value}`);
+  });
+  const actionDescription =
+    readFileSync("action.yml", "utf8").match(/^description:.*$/mu)?.[0] ?? "";
+  if (COMPARED_TOOLS.test(actionDescription)) {
+    offenders.push(`action.yml: ${actionDescription}`);
+  }
+
+  assert.deepEqual(offenders, []);
+  assert.ok(COMPARED_TOOLS.test("knip"), "mutation control: the tool pattern must match");
+});
+
+/** The entries under `## [Unreleased]`, which become the next release notes. */
+const unreleasedChangelog = (changelog) =>
+  changelog.match(/^## \[Unreleased\]\n([\s\S]*?)(?=^## \[)/mu)?.[1] ?? "";
+
+/** The changelog fragments, which become `[Unreleased]` at the release. */
+const changelogFragmentText = () =>
+  fragmentNames(FRAGMENT_DIR)
+    .map((name) => readFileSync(join(FRAGMENT_DIR, name), "utf8"))
+    .join("\n");
+
+test("unreleased changelog entries do not name other analysis tools", () => {
+  const offenders = [
+    unreleasedChangelog(readFileSync("CHANGELOG.md", "utf8")),
+    changelogFragmentText(),
+  ]
+    .join("\n")
+    .split("\n")
+    .filter((line) => COMPARED_TOOLS.test(line));
+
+  assert.deepEqual(offenders, [], "describe what fallow does, without naming another tool");
+  assert.equal(
+    unreleasedChangelog("## [Unreleased]\n\n- Matches knip.\n\n## [1.0.0]\n\n- Old knip note.\n"),
+    "\n- Matches knip.\n\n",
+    "mutation control: only the Unreleased section is checked",
+  );
+});
+
+test("changelog fragments are valid", () => {
+  assert.equal(
+    changelogFragments(["check"], process.cwd(), () => {}),
+    0,
+  );
+});
+
+test("root Node API overview follows the published declarations", () => {
+  const declarations = readFileSync("crates/napi/types/index.d.ts", "utf8");
+  const readme = readFileSync("README.md", "utf8");
+  const missing = missingDocumentedNodeFunctions(declarations, readme);
+
+  assert.deepEqual(missing, [], `root Node API overview is missing: ${missing.join(", ")}`);
+  assert.match(
+    markdownSection(readme, "Editors and integrations"),
+    /\[package API reference\]\(crates\/napi\/README\.md\)/u,
+  );
+
+  const firstFunction = exportedNodeFunctions(declarations)[0];
+  const neuteredReadme = readme.replace(`\`${firstFunction}\``, "`removedFunction`");
+  assert.deepEqual(missingDocumentedNodeFunctions(declarations, neuteredReadme), [firstFunction]);
+});
+
+test("canonical Fallow skill follows the published Node API", () => {
+  const declarations = readFileSync("crates/napi/types/index.d.ts", "utf8");
+  const skill = readFileSync(".agents/skills/fallow/SKILL.md", "utf8");
+  assert.match(
+    skill,
+    /references\/node-bindings\.md/u,
+    "canonical skill must point at the Node reference",
+  );
+  const reference = readFileSync(".agents/skills/fallow/references/node-bindings.md", "utf8");
+  const missing = exportedNodeFunctions(declarations).filter(
+    (functionName) => !reference.includes(`\`${functionName}\``),
+  );
+
+  assert.deepEqual(missing, [], `canonical Node reference is missing: ${missing.join(", ")}`);
+});
+
+test("Fallow skills preserve exit status and avoid volatile plugin counts", () => {
+  const skillEntrypoints = [".agents/skills/fallow/SKILL.md", "npm/fallow/skills/fallow/SKILL.md"];
+
+  for (const path of skillEntrypoints) {
+    const skill = readFileSync(path, "utf8");
+    assert.doesNotMatch(
+      skill,
+      /always append `\|\| true`|append `\|\| true` to every/iu,
+      `${path} must preserve the Fallow exit status`,
+    );
+    assert.match(
+      skill,
+      /do not force a successful status/iu,
+      `${path} must reject blanket suppression`,
+    );
+    assert.doesNotMatch(skill, /2>\/dev\/null/u, `${path} must preserve stderr diagnostics`);
+  }
+
+  const skillPaths = [
+    ".agents/skills/fallow",
+    ".agents/skills/fallow-setup",
+    "npm/fallow/skills/fallow",
+    "npm/fallow/skills/fallow-setup",
+  ].flatMap(markdownFilesUnder);
+  for (const path of skillPaths) {
+    const skill = readFileSync(path, "utf8");
+    assert.doesNotMatch(
+      skill,
+      /\b\d+\s+(?:(?:auto-detecting|built-in)\s+)?(?:framework\s+)?plugins\b/iu,
+      `${path} must resolve the current plugin count from fallow schema`,
+    );
+    assert.doesNotMatch(skill, /\|\| true/u, `${path} must preserve the Fallow exit status`);
+    assert.doesNotMatch(skill, /2>\/dev\/null/u, `${path} must preserve stderr diagnostics`);
+  }
+});
+
+test("Fallow skills preserve similar-code agent safety rules", () => {
+  const skillEntrypoints = [".agents/skills/fallow/SKILL.md", "npm/fallow/skills/fallow/SKILL.md"];
+
+  for (const path of skillEntrypoints) {
+    const skill = readFileSync(path, "utf8");
+    for (const required of [
+      "discovery only",
+      "Agents must not authorize setup",
+      "Inspect a candidate before judging it",
+      "candidate_worthy",
+      "behaviorally_equivalent",
+      "refactor_safe",
+      "--candidates similar-code.json",
+      "typed `snapshot`",
+      "fails closed on stale source",
+      "abstain when evidence is incomplete",
+    ]) {
+      assert.match(skill, new RegExp(required, "u"), `${path} is missing: ${required}`);
+    }
+  }
+
+  const releasedSkill = readFileSync("npm/fallow/skills/fallow/SKILL.md", "utf8");
+  for (const required of [
+    "compare semantically similar functions",
+    "find_similar_code",
+    "inspect_similar_code",
+    "paths:",
+    "fallow similar-code review",
+    'completion.status: "complete"',
+    "needs-human-review",
+  ]) {
+    assert.match(
+      releasedSkill,
+      new RegExp(required, "u"),
+      `released skill is missing: ${required}`,
+    );
+  }
+
+  const mcpGuides = [
+    ".agents/skills/fallow/SKILL.md",
+    ".agents/rules/mcp-server.md",
+    "npm/fallow/skills/fallow/SKILL.md",
+  ];
+  for (const path of mcpGuides) {
+    const line = readFileSync(path, "utf8")
+      .split("\n")
+      .find(
+        (candidate) =>
+          candidate.includes("find_similar_code") &&
+          (candidate.includes("Scope") ||
+            candidate.includes("Supports") ||
+            candidate.includes("paths:")),
+      );
+    assert.ok(line, `${path} must document find_similar_code`);
+    assert.match(line, /(?:`paths`|paths:)/u, `${path} must use the live MCP paths parameter`);
+    assert.doesNotMatch(
+      line,
+      /find_similar_code[^.\n]*(?:`files`|files:)/u,
+      `${path} must not advertise the unknown MCP files parameter`,
+    );
+  }
+});
+
+test("released Node reference follows the published declarations", () => {
+  const declarations = readFileSync("crates/napi/types/index.d.ts", "utf8");
+  const reference = readFileSync("npm/fallow/skills/fallow/references/node-bindings.md", "utf8");
+  const missing = exportedNodeFunctions(declarations).filter(
+    (functionName) => !reference.includes(`\`${functionName}\``),
+  );
+
+  assert.deepEqual(missing, [], `released Node reference is missing: ${missing.join(", ")}`);
+  assert.match(reference, /precisely typed `SimilarCodeReport`/u);
+});
+
+test("NAPI similar-code declarations and compile fixture stay precise", () => {
+  const declarations = readFileSync("crates/napi/types/index.d.ts", "utf8");
+  const fixture = readFileSync("crates/napi/tests/types/similar-code.compile.ts", "utf8");
+  const similarCodeSection = declarations.slice(
+    declarations.indexOf("export type SimilarCodeProvider"),
+    declarations.indexOf("export interface HealthFinding"),
+  );
+
+  assert.doesNotMatch(similarCodeSection, /Record<string, unknown>/u);
+  assert.match(similarCodeSection, /embedding_semantics_version: number/u);
+  assert.match(similarCodeSection, /completion: SimilarCodeCompletion/u);
+  assert.match(fixture, /generation\.embedding_semantics_version/u);
+});
+
+test("similar-code sidecar docs follow the canonical protocol versions", () => {
+  const manifest = readJson("crates/api/similar-code-protocol.json");
+  const readme = readFileSync("tools/similar-code-sidecar/README.md", "utf8");
+
+  assert.match(readme, new RegExp(`Wire protocol v${manifest.wire_protocol_version}\\b`, "u"));
+  assert.match(
+    readme,
+    new RegExp(`embedding\\s+semantics v${manifest.embedding_semantics_version}\\b`, "u"),
+  );
+  assert.match(readme, new RegExp(`"protocol_version": ${manifest.wire_protocol_version}\\b`, "u"));
+  assert.match(
+    readme,
+    new RegExp(`"embedding_semantics_version": ${manifest.embedding_semantics_version}\\b`, "u"),
+  );
+});
+
+test("NAPI declarations have one canonical public source", () => {
+  const packageJson = readJson("crates/napi/package.json");
+  const entry = readFileSync("crates/napi/index.d.ts", "utf8");
+  const declarations = readFileSync("crates/napi/types/index.d.ts", "utf8");
+
+  assert.equal(packageJson.types, "index.d.ts");
+  assert.ok(packageJson.files.includes("types"));
+  assert.equal(entry, 'export * from "./types/index";\n');
+  assert.match(declarations, /export interface AnalysisOptions/u);
+  assert.match(declarations, /export function detectDeadCode/u);
+});
+
+test("published Node packages and Action smoke tests use Node 22", () => {
+  const packagePaths = ["npm/fallow/package.json", "crates/napi/package.json"];
+
+  for (const path of packagePaths) {
+    assert.equal(readJson(path).engines.node, ">=22", path);
+  }
+
+  const napiLock = readJson("crates/napi/package-lock.json");
+  assert.equal(napiLock.packages[""].engines.node, ">=22", "NAPI lock root metadata");
+
+  const actionWorkflow = readFileSync(".github/workflows/test-action.yml", "utf8");
+  const versions = [...actionWorkflow.matchAll(/^\s+node-version:\s*['"]?(\d+)['"]?\s*$/gm)].map(
+    (match) => match[1],
+  );
+  assert.ok(versions.length > 0, "Action workflow must select a Node runtime");
+  assert.deepEqual([...new Set(versions)], ["22"]);
+});
+
+test("root repository tooling declares its exact Node floor", () => {
+  const rootPackage = readJson("package.json");
+  const rootLock = readJson("package-lock.json");
+  const contributing = readFileSync("CONTRIBUTING.md", "utf8");
+
+  assert.equal(rootPackage.engines.node, ">=22.12.0");
+  assert.equal(rootLock.packages[""].engines.node, ">=22.12.0");
+  assert.match(contributing, /Repository tooling requires Node\.js 22\.12\.0 or later\./);
+});
+
+test("type-aware manifest keeps every runtime and package surface in parity", () => {
+  const cargo = readFileSync("Cargo.toml", "utf8");
+  const workspaceVersion = cargo.match(/^\[workspace\.package\]\nversion = "([^"]+)"/mu)?.[1];
+  assert.ok(workspaceVersion, "Cargo.toml must declare workspace.package.version");
+
+  const manifest = readJson("crates/api/type-aware-protocol.json");
+  const sidecarPackage = readJson("tools/type-aware-sidecar/package.json");
+  const sidecarLock = readJson("tools/type-aware-sidecar/package-lock.json");
+  const generated = readFileSync("tools/type-aware-sidecar/src/generated-protocol.mjs", "utf8");
+  const vscodePackager = readFileSync("editors/vscode/scripts/package-type-aware.mjs", "utf8");
+  const vscodePackageVerifier = readFileSync(
+    "editors/vscode/scripts/verify-packaged-type-aware.mjs",
+    "utf8",
+  );
+  const vscodeTargets = readFileSync("editors/vscode/scripts/vsix-targets.mjs", "utf8");
+  const vscodeWorkspace = readFileSync("editors/vscode/pnpm-workspace.yaml", "utf8");
+  const vscodePackage = readJson("editors/vscode/package.json");
+  const windowsCandidateSmoke = readFileSync(
+    "scripts/type-aware-windows-candidate-smoke.mjs",
+    "utf8",
+  );
+  const bundledBackends = [
+    "@typescript/typescript-darwin-arm64",
+    "@typescript/typescript-darwin-x64",
+    "@typescript/typescript-linux-arm64",
+    "@typescript/typescript-linux-x64",
+    "@typescript/typescript-win32-arm64",
+    "@typescript/typescript-win32-x64",
+  ];
+
+  assert.equal(manifest.schema_version, 1);
+  assert.equal(manifest.wire_protocol_version, 7);
+  assert.equal(manifest.semantic_schema_version, 3);
+  assert.equal(manifest.analysis_operation, "semantic-queries");
+  assert.equal(manifest.status_operation, "status");
+  assert.equal(manifest.mutant_typecheck_operation, "mutant-typecheck");
+  assert.deepEqual(manifest.query_operations, [
+    "symbol-use",
+    "symbol-trace",
+    "api-surface",
+    "symbol-impact",
+    "type-coupling",
+  ]);
+  assert.deepEqual(manifest.session_envelope_types, ["analyze", "shutdown"]);
+  assert.equal(manifest.sidecar.package, sidecarPackage.name);
+  assert.equal(manifest.sidecar.version_source, "workspace-package");
+  assert.equal(sidecarPackage.version, workspaceVersion);
+  assert.equal(sidecarLock.version, workspaceVersion);
+  assert.equal(sidecarLock.packages[""].version, workspaceVersion);
+  const { backend: defaultBackend, experimental_backends: optionalBackends } = manifest;
+  assert.equal(defaultBackend.package, "typescript");
+  assert.equal(sidecarPackage.dependencies.typescript, defaultBackend.version);
+  for (const backend of optionalBackends) {
+    assert.equal(sidecarPackage.peerDependencies[backend.package], backend.version);
+    assert.equal(sidecarPackage.peerDependenciesMeta[backend.package].optional, true);
+    assert.equal(sidecarPackage.devDependencies[backend.package], backend.version);
+    assert.equal(sidecarLock.packages[`node_modules/${backend.package}`].version, backend.version);
+  }
+  assert.equal(vscodePackage.devDependencies.typescript, defaultBackend.version);
+  assert.match(vscodePackage.scripts.prepackage, /scripts\/copy-license\.mjs/u);
+  assert.match(vscodePackage.scripts["verify:vsix"], /verify-packaged-type-aware\.mjs/u);
+  assert.equal(sidecarLock.packages[""].dependencies.typescript, defaultBackend.version);
+  assert.equal(sidecarLock.packages["node_modules/typescript"].version, defaultBackend.version);
+  assert.deepEqual(sidecarPackage.bin, {
+    "fallow-type-aware": "fallow-type-aware.mjs",
+  });
+  assert.deepEqual(sidecarLock.packages[""].bin, sidecarPackage.bin);
+  assert.ok(sidecarPackage.files.includes("fallow-type-aware.mjs"));
+  assert.ok(sidecarPackage.files.includes("src"));
+  assert.match(generated, /Generated from crates\/api\/type-aware-protocol\.json/u);
+  assert.match(vscodePackager, /cpSync\(join\(sourceRoot, "src"\)/u);
+  for (const packageName of bundledBackends) {
+    assert.match(vscodeTargets, new RegExp(packageName.replace("/", "\\/"), "u"));
+  }
+  assert.match(vscodePackageVerifier, /getVsixVariant/u);
+  assert.match(vscodeTargets, /tsc(?:\\\\\.exe)?/u);
+  assert.match(vscodeTargets, /maxBytes/u);
+  assert.match(vscodeWorkspace, /supportedArchitectures:/u);
+  assert.match(vscodeWorkspace, /- win32/u);
+  assert.match(vscodeWorkspace, /- darwin/u);
+  assert.match(vscodeWorkspace, /- linux/u);
+  assert.match(windowsCandidateSmoke, /platformPackage\.replace\("@fallow-cli\/", ""\)/u);
+  assert.match(windowsCandidateSmoke, /join\(temporaryRoot, platformPack\)/u);
+});
+
+test("VS Code public release verification stays exact and credential-free", () => {
+  const vscodePackage = readJson("editors/vscode/package.json");
+  const verifier = readFileSync("scripts/vscode-public-verify.mjs", "utf8");
+  const releaseSecurity = readFileSync("docs/development/release-security.md", "utf8");
+  const releaseProcedure = readFileSync("docs/development/release-procedure.md", "utf8");
+  assert.equal(vscodePackage.devDependencies["@vscode/vsce"], "4.0.0");
+  assert.equal(vscodePackage.devDependencies.ovsx, "1.2.0");
+  assert.match(verifier, /from "\.\.\/editors\/vscode\/scripts\/vsix-targets\.mjs"/u);
+  assert.match(verifier, /VSIX_VARIANTS\.map\(\(\{ target \}\) => target\)/u);
+  assert.match(verifier, /marketplace\.visualstudio\.com\/.*extensionquery/u);
+  assert.match(verifier, /open-vsx\.org\/api/u);
+  assert.match(verifier, /DEFAULT_METADATA_ATTEMPTS = 120/u);
+  assert.match(verifier, /DEFAULT_PAYLOAD_ATTEMPTS = 24/u);
+  assert.doesNotMatch(verifier, /VSCE_PAT|OVSX_PAT|secrets\./u);
+  assert.match(releaseSecurity, /vscode-public-verify/u);
+  assert.match(releaseProcedure, /Verify public VS Code registry\s+targets/u);
+  assert.match(releaseSecurity, /release-verified.*similar-code-conformance/u);
+  assert.match(releaseProcedure, /similar-code-conformance.*release-verified/su);
+});
+
+test("type-aware public surfaces expose only the stable protocol", () => {
+  const protocol = readFileSync("tools/type-aware-sidecar/src/protocol.mjs", "utf8");
+  const cli = readFileSync("tools/type-aware-sidecar/src/cli.mjs", "utf8");
+  const guide = readFileSync("docs/type-aware-analysis.md", "utf8");
+  const readme = readFileSync("tools/type-aware-sidecar/README.md", "utf8");
+
+  assert.doesNotMatch(protocol, /class-member-uses|operation === "batch"/u);
+  assert.doesNotMatch(cli, /class-member-uses|operation === "batch"/u);
+  assert.match(guide, /first stable semantic wire contract is version 6/u);
+  for (const operation of QUERY_OPERATIONS) {
+    assert.ok(
+      readme.includes(`\`${operation}\``),
+      `README must name the ${operation} query the sidecar accepts`,
+    );
+  }
+  for (const [, version] of readme.matchAll(/\bprotocol\s+v?(\d+)/giu)) {
+    assert.equal(
+      Number(version),
+      WIRE_PROTOCOL_VERSION,
+      "README states a protocol version the sidecar no longer accepts",
+    );
+  }
+
+  for (const surface of [guide, readme, readFileSync("README.md", "utf8")]) {
+    assert.doesNotMatch(surface, /proof[- ]of[- ]concept|\bpoc\b/iu);
+  }
+});
+
+const SIDECAR_ROOT = "tools/type-aware-sidecar";
+// These modules select and load the backend package. Every other sidecar
+// module must take the TypeScript API from `src/backend.mjs`, so that the
+// selected backend and the TypeScript 7.1 path changes apply everywhere.
+const BACKEND_LOADERS = new Set([
+  "src/backend.mjs",
+  "src/backend-preflight.mjs",
+  "src/backend-selection.mjs",
+]);
+const MODULE_SPECIFIER = /\b(?:from|import|require)\s*\(?\s*(["'`])((?:(?!\1)[^\\\n])+)\1/gu;
+
+const directBackendImports = (source) => {
+  const packages = BACKENDS.map((backend) => backend.package);
+  return [...source.matchAll(MODULE_SPECIFIER)]
+    .map((match) => match[2])
+    .filter((specifier) =>
+      packages.some((name) => specifier === name || specifier.startsWith(`${name}/`)),
+    );
+};
+
+test("type-aware sidecar imports the TypeScript API only through backend.mjs", () => {
+  assert.deepEqual(
+    directBackendImports(
+      [
+        'import { SyntaxKind } from "typescript/unstable/ast";',
+        "const ts = await import(`typescript/sync`);",
+        'const { version } = require("tsrs/package.json");',
+        'import "typescript";',
+        'import { sync } from "./backend.mjs";',
+        'import ts from "typescript-eslint";',
+      ].join("\n"),
+    ),
+    ["typescript/unstable/ast", "typescript/sync", "tsrs/package.json", "typescript"],
+  );
+
+  const violations = [];
+  for (const dir of ["src", "test"]) {
+    for (const name of readdirSync(join(SIDECAR_ROOT, dir))) {
+      const file = `${dir}/${name}`;
+      if (!/\.[cm]?js$/u.test(name) || BACKEND_LOADERS.has(file)) continue;
+      for (const specifier of directBackendImports(
+        readFileSync(join(SIDECAR_ROOT, file), "utf8"),
+      )) {
+        violations.push(
+          `${SIDECAR_ROOT}/${file} imports "${specifier}"; use ./backend.mjs (src/backend.mjs) instead`,
+        );
+      }
+    }
+  }
+  assert.deepEqual(violations, [], violations.join("\n"));
+});
+
+test("CONTRIBUTING uses the root contract generation commands", () => {
+  const contributing = readFileSync("CONTRIBUTING.md", "utf8");
+
+  assert.match(contributing, /^npm run generate:contracts$/m);
+  assert.match(contributing, /^npm run generate:contracts:check$/m);
+});
+
+test("plugin authoring guide documents every top-level schema field", () => {
+  const guide = readFileSync("docs/plugin-authoring.md", "utf8");
+  const schema = readJson("plugin-schema.json");
+  const documented = [
+    ...documentedFields(guide, "Required"),
+    ...documentedFields(guide, "Optional"),
+  ].toSorted();
+  const schemaFields = Object.keys(schema.properties).toSorted();
+
+  assert.deepEqual(documented, schemaFields);
+});
+
+test("FALLOW_FORMAT docs include every GitHub-native format", () => {
+  const formatSource = readFileSync("crates/cli/src/cli_format.rs", "utf8");
+  const githubFormats = [...formatSource.matchAll(/#\[value\(name = "(github-[^"]+)"\)\]/g)].map(
+    (match) => match[1],
+  );
+  assert.ok(githubFormats.length > 0, "Rust format catalog must include GitHub-native formats");
+
+  const docs = readFileSync("docs/environment-variables.md", "utf8");
+  const row = docs.match(/^\| `FALLOW_FORMAT` \| ([^|]+)\|/m);
+  assert.ok(row, "environment variable docs must contain a FALLOW_FORMAT row");
+  const documentedFormats = new Set([...row[1].matchAll(/`([^`]+)`/g)].map((match) => match[1]));
+
+  for (const format of githubFormats) {
+    assert.ok(documentedFormats.has(format), `FALLOW_FORMAT docs are missing ${format}`);
+  }
+});
+
+test("the analysis clock env var is documented where users look for it", () => {
+  const clock = readFileSync("crates/engine/src/clock.rs", "utf8");
+  const name = clock.match(/pub const CLOCK_EPOCH_ENV: &str = "([^"]+)";/u);
+  assert.ok(name, "clock.rs must declare the reference-epoch environment variable");
+
+  const docs = readFileSync("docs/environment-variables.md", "utf8");
+  const row = new RegExp(`^\\| \`${name[1]}\` \\|`, "mu");
+  assert.match(docs, row, `environment variable docs are missing a ${name[1]} row`);
+  assert.doesNotMatch(
+    docs.slice(docs.indexOf("## Internal markers")),
+    new RegExp(name[1], "u"),
+    `${name[1]} is a user knob, not an internal marker`,
+  );
+});
+
+test("narrator comment guard runs for commits, Claude, and CI", () => {
+  const preCommit = readFileSync("hk.pkl", "utf8");
+  const claudeSettings = readFileSync(".claude/settings.json", "utf8");
+  const ci = readFileSync(".github/workflows/ci.yml", "utf8");
+
+  assert.match(preCommit, /check-comment-quality\.mjs --staged/u);
+  assert.match(claudeSettings, /check-comment-quality\.mjs.*--working-tree.*--claude-hook/u);
+  assert.match(ci, /node scripts\/check-comment-quality\.mjs --all/u);
+});
+
+test("Miri cfg guard runs for commits and on every pull request", () => {
+  const preCommit = readFileSync("hk.pkl", "utf8");
+  const ci = readFileSync(".github/workflows/ci.yml", "utf8");
+  const jsLint = /\n  js-lint:\n[\s\S]*?(?=\n  [\w-]+:\n)/u.exec(ci)?.[0] ?? "";
+
+  assert.match(preCommit, /node scripts\/check-miri-cfg\.mjs/u);
+  // The Miri job is path-filtered. The script tests hold the repository-level
+  // Miri cfg test, so they must stay in a job with no path filter.
+  assert.doesNotMatch(jsLint.split("steps:")[0], /^\s+if:/mu);
+  assert.match(jsLint, /node --test scripts\/\*\.test\.mjs/u);
+});
+
+test("file-size guard runs for commits and on every pull request", () => {
+  const preCommit = readFileSync("hk.pkl", "utf8");
+  const ci = readFileSync(".github/workflows/ci.yml", "utf8");
+  const jsLint = /\n  js-lint:\n[\s\S]*?(?=\n  [\w-]+:\n)/u.exec(ci)?.[0] ?? "";
+
+  assert.match(preCommit, /node scripts\/check-file-size\.mjs --staged/u);
+  // A path filter on the job would let a pull request skip the step.
+  assert.doesNotMatch(jsLint.split("steps:")[0], /^\s+if:/mu);
+  assert.match(jsLint, /node scripts\/check-file-size\.mjs --base "origin\/\$BASE_REF"/u);
+});
+
+/**
+ * The envelope named `name` and every envelope embedding it, mapped to the numeric
+ * `schema_version` it publishes. An envelope is a definition whose
+ * `schema_version` property carries a `const` (or an `enum` of the closed
+ * numeric set a shared CLI/programmatic shape uses).
+ */
+const envelopesEmbedding = (definitions, name) => {
+  const parents = new Map();
+  const collect = (node, owner) => {
+    if (Array.isArray(node)) {
+      for (const item of node) collect(item, owner);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    const ref = node.$ref;
+    if (typeof ref === "string" && ref.startsWith("#/definitions/")) {
+      const child = ref.slice("#/definitions/".length);
+      if (!parents.has(child)) parents.set(child, new Set());
+      parents.get(child).add(owner);
+    }
+    for (const value of Object.values(node)) collect(value, owner);
+  };
+  for (const [owner, schema] of Object.entries(definitions)) collect(schema, owner);
+
+  const reached = new Set([name]);
+  const stack = [name];
+  while (stack.length > 0) {
+    for (const parent of parents.get(stack.pop()) ?? []) {
+      if (!reached.has(parent)) {
+        reached.add(parent);
+        stack.push(parent);
+      }
+    }
+  }
+
+  const versions = new Map();
+  for (const owner of reached) {
+    const property = definitions[owner]?.properties?.schema_version;
+    if (!property) continue;
+    const target = property.$ref
+      ? (definitions[property.$ref.slice("#/definitions/".length)] ?? {})
+      : property;
+    const version = target.const ?? target.enum;
+    if (version !== undefined) versions.set(owner, JSON.stringify(version));
+  }
+  return versions;
+};
+
+test("schema policy includes a standalone envelope when its own fields change", () => {
+  const definitions = {
+    Report: { properties: { schema_version: { const: 1 } }, required: ["result"] },
+  };
+  const before = envelopesEmbedding(definitions, "Report");
+  const after = envelopesEmbedding({ Report: { ...definitions.Report, required: [] } }, "Report");
+  assert.equal(before.get("Report"), "1");
+  assert.equal(after.get("Report"), before.get("Report"));
+});
+
+test("a required output field cannot be dropped at a frozen schema_version", (t) => {
+  const previous = spawnSync("git", ["show", `${RELEASED_TAG}:docs/output-schema.json`], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (previous.status !== 0) {
+    // A clone without the released tag cannot answer this. Report it as
+    // skipped rather than passing: a green line here would say the schema was
+    // compared when nothing was.
+    t.skip(`${RELEASED_TAG} is not in this clone, so the schema baseline is unreachable`);
+    return;
+  }
+
+  const before = JSON.parse(previous.stdout).definitions;
+  const after = readJson("docs/output-schema.json").definitions;
+
+  const breaks = [];
+  for (const [name, schema] of Object.entries(before)) {
+    if (!(name in after)) continue;
+    const lost = (schema.required ?? []).filter(
+      (field) => !(after[name].required ?? []).includes(field),
+    );
+    if (lost.length === 0) continue;
+
+    const oldVersions = envelopesEmbedding(before, name);
+    const newVersions = envelopesEmbedding(after, name);
+    for (const [envelope, version] of newVersions) {
+      if (oldVersions.get(envelope) === version) {
+        breaks.push(
+          `${envelope} still publishes schema_version ${version} while ${name} dropped required ${lost.join(", ")}`,
+        );
+      }
+    }
+  }
+
+  assert.deepEqual(
+    breaks,
+    [],
+    `docs/backwards-compatibility.md requires a bump when an existing wire field is removed, ` +
+      `and every envelope that embeds the changed contract bumps with it:\n  ${breaks.join("\n  ")}`,
+  );
+});
+
+/**
+ * The compatibility entry and the changelog both count the dead-code arrays that
+ * may carry `reachability_caveats[]`. The count drifted once already: a commit
+ * added the ninth array and updated only the compatibility doc, leaving the
+ * changelog telling readers that eight carry it and that the ninth stays out.
+ */
+test("the caveat array count in the docs matches the findings that carry one", () => {
+  const findings = readFileSync("crates/types/src/output_dead_code.rs", "utf8");
+  const carriers = [...findings.matchAll(/pub reachability_caveats: Vec<ReachabilityCaveat>,/gu)]
+    .length;
+  assert.ok(carriers > 0, "output_dead_code.rs must declare caveat-carrying findings");
+
+  const numberWords = new Map([
+    ["seven", 7],
+    ["eight", 8],
+    ["nine", 9],
+    ["ten", 10],
+    ["eleven", 11],
+  ]);
+  const counted = (source, pattern, label) => {
+    const match = source.match(pattern);
+    assert.ok(match, `${label} must state how many arrays can carry the caveat`);
+    const spelled = numberWords.get(match[1].toLowerCase());
+    assert.ok(spelled, `${label} spells an unrecognized count: ${match[1]}`);
+    return spelled;
+  };
+
+  assert.equal(
+    counted(
+      readFileSync("docs/backwards-compatibility.md", "utf8"),
+      /carry `reachability_caveats\[\]`\*\*: (\w+) arrays/u,
+      "docs/backwards-compatibility.md",
+    ),
+    carriers,
+  );
+  assert.equal(
+    counted(readFileSync("CHANGELOG.md", "utf8"), /(\w+) arrays carry it:/u, "CHANGELOG.md"),
+    carriers,
+  );
+});
+
+/** Every file of a released skill tree, relative to the tree, sorted. */
+const releasedSkillFiles = (name) => {
+  const root = join("npm/fallow/skills", name);
+  const walk = (dir) =>
+    readdirSync(join(root, dir), { withFileTypes: true }).flatMap((entry) => {
+      const path = dir ? `${dir}/${entry.name}` : entry.name;
+      return entry.isDirectory() ? walk(path) : [path];
+    });
+  return walk("").toSorted();
+};
+
+test("released skills agree across the npm package, the CLI embed, and agent install", () => {
+  const released = releasedSkillNames(".");
+  assert.deepEqual(released, ["fallow", "fallow-setup"]);
+
+  const buildScript = readFileSync("crates/cli/build.rs", "utf8");
+  const embedded = [...buildScript.matchAll(/^ {8}"([a-z-]+)",\n {8}&\[\n([\s\S]*?)^ {8}\],/gmu)];
+  assert.deepEqual(
+    embedded.map(([, name]) => name),
+    released,
+    "crates/cli/build.rs must embed every released skill in the same order",
+  );
+  for (const [, name, list] of embedded) {
+    const files = [...list.matchAll(/"([^"]+)"/gu)].map(([, path]) => path).toSorted();
+    assert.deepEqual(files, releasedSkillFiles(name), `build.rs file list for ${name}`);
+  }
+
+  const install = readFileSync("crates/cli/src/agent_install/skill.rs", "utf8");
+  const installed = [...install.matchAll(/^ {8}name: "([a-z-]+)",$/gmu)].map(([, name]) => name);
+  assert.deepEqual(installed, released, "RELEASED_SKILLS in agent_install/skill.rs");
+});
+
+test("fallow-setup skill keeps its trigger and the responsibility split", () => {
+  const skill = readFileSync("npm/fallow/skills/fallow-setup/SKILL.md", "utf8");
+  const description = skill.match(/^description: (.+)$/mu)?.[1] ?? "";
+  assert.equal(
+    description,
+    "Set up or modernize code-quality tooling for JavaScript and TypeScript projects. Use when creating a project, adding code-health or CI quality checks, making a repository agent-ready, or consolidating dead-code, duplication, architecture, dependency, and changed-code analysis. Do not use for formatting-only, lint-rule-only, or TypeScript type-error tasks. Do not use to run an analysis of a project that is already set up; use the fallow skill for that.",
+  );
+  // Claude Code caps the description plus `when_to_use` at 1,536 characters.
+  assert.ok(description.length <= 1536, `description has ${description.length} characters`);
+  assert.ok(skill.split("\n").length < 500, "SKILL.md must stay short; detail goes to references");
+  for (const required of [
+    "fallow recommend --format json --quiet",
+    "fallow agent install --dry-run",
+    "Oxfmt",
+    "Oxlint",
+    "tsc --noEmit",
+    "parity check",
+  ]) {
+    assert.ok(skill.includes(required), `fallow-setup SKILL.md is missing: ${required}`);
+  }
+});

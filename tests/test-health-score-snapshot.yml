@@ -1,0 +1,55 @@
+name: Test health score, snapshot and trend
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: snapshot
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          min-score: '0'
+          save-snapshot: 'true'
+          artifacts-dir: fallow-artifacts-snapshot
+      - id: trend
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          score: 'true'
+          trend: 'true'
+          artifacts-dir: fallow-artifacts-trend
+      - name: Assert both runs produced results
+        env:
+          ISSUES1: ${{ steps.snapshot.outputs.issues }}
+          RESULTS1: ${{ steps.snapshot.outputs.results }}
+          ISSUES2: ${{ steps.trend.outputs.issues }}
+          RESULTS2: ${{ steps.trend.outputs.results }}
+        run: |
+          echo "snapshot issues: $ISSUES1 results: $RESULTS1"
+          echo "trend issues: $ISSUES2 results: $RESULTS2"
+          for v in "$ISSUES1" "$ISSUES2"; do
+            if ! [[ "$v" =~ ^[0-9]+$ ]]; then
+              echo "FAIL: issues output '$v' is not a number"
+              exit 1
+            fi
+          done
+          for r in "$RESULTS1" "$RESULTS2"; do
+            case "$r" in
+              /*) FILE="$r" ;;
+              *) FILE="$GITHUB_WORKSPACE/$r" ;;
+            esac
+            if [ -z "$r" ] || [ ! -s "$FILE" ]; then
+              echo "FAIL: results file '$r' missing"
+              exit 1
+            fi
+            jq empty "$FILE" || { echo "FAIL: invalid JSON in $FILE"; exit 1; }
+          done
+          echo "PASS"
