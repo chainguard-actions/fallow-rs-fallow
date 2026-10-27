@@ -1,4 +1,4 @@
-name: Test saving and loading baseline and regression baseline
+name: Test baseline save and load
 on:
   workflow_dispatch:
 
@@ -23,18 +23,18 @@ jobs:
           comment: 'false'
           no-cache: 'true'
           save-baseline: ${{ github.workspace }}/fallow-baseline.json
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
       - name: Assert baseline files were saved
         run: |
-          ls -la "$GITHUB_WORKSPACE"/fallow-*baseline.json || true
-          for f in fallow-baseline.json fallow-regression-baseline.json; do
+          ls -la "$GITHUB_WORKSPACE" | grep fallow || true
+          for f in fallow-baseline.json fallow-regression.json; do
             if [ ! -s "$GITHUB_WORKSPACE/$f" ]; then
-              echo "FAIL: $f was not saved"
+              echo "FAIL: $f not saved"
               exit 1
             fi
           done
-          echo "PASS"
+          echo "PASS: baselines saved"
 
       - id: load
         uses: .
@@ -49,17 +49,15 @@ jobs:
           comment: 'false'
           no-cache: 'true'
           baseline: ${{ github.workspace }}/fallow-baseline.json
-          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
-      - name: Assert baseline run completed
+      - name: Assert load run succeeded
         env:
           ISSUES: ${{ steps.load.outputs.issues }}
           BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
-          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
         run: |
           echo "issues: $ISSUES"
           echo "baseline-path: $BASELINE_PATH"
-          echo "baseline-entries: $ENTRIES"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1

@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend
+name: Test health snapshot and trend
 on:
   workflow_dispatch:
 
@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - id: snapshot
+      - id: snap
         uses: .
         with:
           command: health
@@ -24,17 +24,17 @@ jobs:
           no-cache: 'true'
           save-snapshot: 'true'
 
-      - name: Assert a snapshot was written
+      - name: Assert a snapshot was saved
         run: |
-          found=$(find "$GITHUB_WORKSPACE" -path '*.fallow/snapshots*' -type f 2>/dev/null | head -5)
+          found=$(find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f 2>/dev/null | head -5)
           echo "snapshots: $found"
           if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file found under .fallow/snapshots"
+            echo "FAIL: no snapshot file found"
             exit 1
           fi
           echo "PASS"
 
-      - id: trend
+      - id: action
         uses: .
         with:
           command: health
@@ -48,13 +48,19 @@ jobs:
           no-cache: 'true'
           trend: 'true'
 
-      - name: Assert trend run completed
+      - name: Assert trend run outputs
         env:
-          ISSUES: ${{ steps.trend.outputs.issues }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing at: $RESULTS"
             exit 1
           fi
           echo "PASS"

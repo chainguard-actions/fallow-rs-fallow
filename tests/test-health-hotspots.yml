@@ -1,4 +1,4 @@
-name: Test health hotspots with since and min-commits
+name: Test health hotspots with since/min-commits
 on:
   workflow_dispatch:
 
@@ -28,7 +28,7 @@ jobs:
           since: 1y
           min-commits: '1'
 
-      - name: Assert analysis completed
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -40,7 +40,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: '$RESULTS'"
+            echo "FAIL: results file missing at: $RESULTS"
             exit 1
           fi
           echo "PASS"

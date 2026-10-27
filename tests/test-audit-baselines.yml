@@ -1,0 +1,99 @@
+name: Test audit with gate and per-analysis baselines
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FALLOW_SKIP_BINARY_VERIFY: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - id: dc
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+          save-baseline: ${{ github.workspace }}/dc-baseline.json
+
+      - id: hl
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/simple-js
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+          save-baseline: ${{ github.workspace }}/health-baseline.json
+
+      - id: dp
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/simple-js
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+          save-baseline: ${{ github.workspace }}/dupes-baseline.json
+
+      - name: Show saved baselines
+        run: ls -la "$GITHUB_WORKSPACE"/*-baseline.json
+
+      - id: action
+        uses: .
+        with:
+          command: audit
+          root: tests/fixtures/simple-js
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+          changed-since: HEAD
+          gate: all
+          dead-code-baseline: ${{ github.workspace }}/dc-baseline.json
+          health-baseline: ${{ github.workspace }}/health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/dupes-baseline.json
+
+      - name: Assert audit outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+          esac
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all', got '$GATE'"
+            exit 1
+          fi
+          echo "PASS"

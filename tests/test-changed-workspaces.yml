@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-since
+name: Test changed-workspaces scoping
 on:
   workflow_dispatch:
 
@@ -16,7 +16,7 @@ jobs:
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/simple-js
+          root: tests/fixtures/monorepo
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -24,17 +24,21 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          changed-since: HEAD
+          changed-workspaces: HEAD
 
-      - name: Assert scoped analysis completed
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "changed-files-unavailable: $UNAVAILABLE"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing at: $RESULTS"
             exit 1
           fi
           echo "PASS"

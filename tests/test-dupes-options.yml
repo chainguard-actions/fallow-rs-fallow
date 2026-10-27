@@ -1,4 +1,4 @@
-name: Test dupes with min-tokens, min-lines, threshold and top
+name: Test dupes tuning options
 on:
   workflow_dispatch:
 
@@ -24,10 +24,10 @@ jobs:
           no-cache: 'true'
           min-tokens: '30'
           min-lines: '3'
-          threshold: '0'
+          threshold: '100'
           top: '10'
 
-      - name: Assert analysis completed
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -39,7 +39,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: '$RESULTS'"
+            echo "FAIL: results file missing at: $RESULTS"
             exit 1
           fi
           echo "PASS"

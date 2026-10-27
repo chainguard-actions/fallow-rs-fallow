@@ -1,4 +1,4 @@
-name: Test dead-code scoped to a single workspace
+name: Test workspace scoping
 on:
   workflow_dispatch:
 
@@ -22,9 +22,9 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          workspace: app
+          workspace: app-a
 
-      - name: Assert analysis completed
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -36,7 +36,11 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: '$RESULTS'"
+            echo "FAIL: results file missing at: $RESULTS"
+            exit 1
+          fi
+          if grep -q 'app-b/index.js' "$RESULTS"; then
+            echo "FAIL: results include files outside the app-a workspace"
             exit 1
           fi
           echo "PASS"

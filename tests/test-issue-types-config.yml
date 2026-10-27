@@ -1,4 +1,4 @@
-name: Test dead-code with issue-types, explicit config and threads
+name: Test dead-code issue-types with explicit config
 on:
   workflow_dispatch:
 
@@ -15,7 +15,7 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
+          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -23,10 +23,9 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          issue-types: unused-exports, unused-files
-          threads: '2'
+          issue-types: unused-files, unused-exports
 
-      - name: Assert analysis completed
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -38,7 +37,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: '$RESULTS'"
+            echo "FAIL: results file missing at: $RESULTS"
             exit 1
           fi
           echo "PASS"

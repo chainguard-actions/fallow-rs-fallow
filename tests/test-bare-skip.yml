@@ -1,4 +1,4 @@
-name: Test combined run with skip
+name: Test combined run with skip selector
 on:
   workflow_dispatch:
 
@@ -21,9 +21,9 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          skip: dupes,health
+          skip: dupes
 
-      - name: Assert analysis completed
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -35,7 +35,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: '$RESULTS'"
+            echo "FAIL: results file missing at: $RESULTS"
             exit 1
           fi
           echo "PASS"
