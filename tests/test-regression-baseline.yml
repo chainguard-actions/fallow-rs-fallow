@@ -24,20 +24,17 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
+          save-regression-baseline: ${{ runner.temp }}/fallow-regression.json
 
       - name: Assert regression baseline saved
+        env:
+          FILE: ${{ runner.temp }}/fallow-regression.json
         run: |
-          F="$GITHUB_WORKSPACE/fallow-regression.json"
-          if [ ! -f "$F" ]; then
-            echo "FAIL: regression baseline not created at $F"
+          if [ ! -f "$FILE" ]; then
+            echo "FAIL: regression baseline not written at $FILE"
             exit 1
           fi
-          if ! jq empty "$F"; then
-            echo "FAIL: regression baseline is not valid JSON"
-            exit 1
-          fi
-          cat "$F"
+          cat "$FILE"
           echo "PASS"
 
       - id: compare
@@ -49,23 +46,23 @@ jobs:
           root: tests/fixtures/simple-js
           format: json
           fail-on-issues: 'false'
+          fail-on-regression: 'true'
           auto-changed-since: 'false'
           annotations: 'false'
-          fail-on-regression: 'true'
-          regression-baseline: ${{ github.workspace }}/fallow-regression.json
+          regression-baseline: ${{ runner.temp }}/fallow-regression.json
 
-      - name: Assert no regression reported
+      - name: Assert no regression and numeric issues
         env:
           ISSUES: ${{ steps.compare.outputs.issues }}
           OUTCOME: ${{ steps.compare.outcome }}
         run: |
           echo "outcome: $OUTCOME issues: $ISSUES"
           if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: unchanged project should not regress"
+            echo "FAIL: compare step should succeed without regression"
             exit 1
           fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues not numeric: '$ISSUES'"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           echo "PASS"

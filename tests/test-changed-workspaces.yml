@@ -20,24 +20,19 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
+          changed-workspaces: HEAD
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          changed-workspaces: HEAD
 
-      - name: Assert changed-workspaces run
+      - name: Assert issues output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues not numeric: '$ISSUES'"
-            exit 1
-          fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"

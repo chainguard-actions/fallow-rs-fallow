@@ -1,0 +1,54 @@
+name: Test health with runtime coverage options
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      # Runtime coverage is a paid (license-gated) fallow feature; without a
+      # license the CLI may refuse it. Accept either a successful run with a
+      # valid result or a clean failure, but never a skipped step.
+      - id: action
+        uses: .
+        continue-on-error: true
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: health
+          root: tests/fixtures/simple-js
+          runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /build/project
+          min-invocations-hot: '10'
+          min-observation-volume: '1'
+          low-traffic-threshold: '0.01'
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+
+      - name: Assert action ran
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME issues: $ISSUES"
+          if [ "$OUTCOME" = "success" ]; then
+            if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+              echo "FAIL: succeeded but issues is not numeric"
+              exit 1
+            fi
+            echo "PASS: runtime coverage analysis succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: runtime coverage rejected (license-gated feature)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
