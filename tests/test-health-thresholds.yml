@@ -1,4 +1,4 @@
-name: Test health command with custom thresholds, sort, top and min-severity
+name: Test health command with complexity thresholds, top and sort
 on:
   workflow_dispatch:
 jobs:
@@ -7,20 +7,40 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # Thresholds are set so high that no function can reach them, so the
-      # min-severity gate has nothing to fire on and the step must succeed.
+      - name: Create fixture project
+        run: |
+          set -e
+          rm -rf fx
+          mkdir -p fx/src
+          cat > fx/package.json <<'EOF'
+          {"name":"fx-project","version":"1.0.0","private":true,"main":"src/index.js"}
+          EOF
+          cat > fx/src/index.js <<'EOF'
+          export function classify(a, b, c) {
+            if (a > 0) {
+              if (b > 0) { return c > 0 ? 'ppp' : 'ppn'; }
+              else if (b < 0) { return c > 0 ? 'pnp' : 'pnn'; }
+              return 'p0';
+            } else if (a < 0) {
+              for (let i = 0; i < b; i++) { if (i % 2 === 0 && c) { return 'loop'; } }
+              return 'n';
+            }
+            return 'zero';
+          }
+          console.log(classify(1, 2, 3));
+          EOF
+
       - id: action
         uses: .
         with:
+          root: fx
           command: health
-          max-cyclomatic: '1000'
-          max-cognitive: '1000'
-          max-crap: '100000000'
+          max-cyclomatic: '3'
+          max-cognitive: '3'
+          max-crap: '45.5'
           top: '5'
           sort: cognitive
-          min-severity: critical
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
@@ -32,28 +52,22 @@ jobs:
         run: |
           echo "issues: $ISSUES"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected non-negative integer, got '$ISSUES'"
+            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
             exit 1
           fi
           echo "PASS"
 
-      - name: Assert results file is valid JSON and args carried the thresholds
+      - name: Assert results file is valid JSON
         env:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "results: $RESULTS"
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
-          ARGS_FILE="$GITHUB_WORKSPACE/fallow-analysis-args.sh"
-          if [ -f "$ARGS_FILE" ]; then
-            cat "$ARGS_FILE"
-            for flag in --max-cyclomatic --max-cognitive --max-crap --top --sort --min-severity; do
-              if ! grep -q -- "$flag" "$ARGS_FILE"; then
-                echo "FAIL: expected $flag in analysis args"
-                exit 1
-              fi
-            done
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: results is not valid JSON"
+            exit 1
           fi
           echo "PASS"

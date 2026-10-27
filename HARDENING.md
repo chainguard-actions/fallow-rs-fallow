@@ -16,18 +16,18 @@ Action **fallow-rs--fallow/v3.34.0** was hardened automatically. 1 finding(s) we
 
 ### script-injection (severity: high)
 
-Sub-rule (a): a GitHub Actions expression is placed directly in the `run:` shell command in 8 composite steps. The 8 steps are Install fallow, Fallow branded token, Run analysis, Check Code Scanning availability, Post PR comment, Emit inline annotations, Job summary and Post review comments. Example offending line: `run: bash ${{ github.action_path }}/action/scripts/install.sh` (the same pattern is used for broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh and review.sh). Fix: use the runner-provided env var instead, quoted: `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
+Sub-rule (a): all 8 shell steps in the composite action put a GitHub Actions expression directly into the run: command. For example, the 'Install fallow' step has `run: bash ${{ github.action_path }}/action/scripts/install.sh`. The same pattern appears in the steps 'Fallow branded token' (broker-token.sh), 'Run analysis' (analyze.sh), 'Check Code Scanning availability' (check-code-scanning.sh), 'Post PR comment' (comment.sh), 'Emit inline annotations' (annotate.sh), 'Job summary' (summary.sh) and 'Post review comments' (review.sh). The value is substituted into the script before the shell parses it, and it is not quoted. Fix: use the runner-provided env var and quote it, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
-- `action.yml:411`
-- `action.yml:419`
-- `action.yml:532`
-- `action.yml:545`
-- `action.yml:592`
-- `action.yml:614`
-- `action.yml:640`
-- `action.yml:673`
+- `action.yml:485`
+- `action.yml:489`
+- `action.yml:589`
+- `action.yml:596`
+- `action.yml:631`
+- `action.yml:648`
+- `action.yml:677`
+- `action.yml:704`
 
 ## Iteration Notes
 
@@ -37,5 +37,5 @@ Locations:
 
 **Notes:**
 
-In action.yml, I changed all 8 composite steps from `run: bash ${{ github.action_path }}/action/scripts/X.sh` to `run: bash "$GITHUB_ACTION_PATH"/action/scripts/X.sh`. The scripts are install.sh, broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh and review.sh. Each step still runs the same script, and the path is now quoted so it can't be split into separate words. Two ACTION_JQ_DIR values in env: blocks still use github.action_path. That is safe because env: values are never parsed by the shell, so I left them unchanged. Nothing was run to test this.
+In all 8 shell steps of action.yml (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review), I changed `bash ${{ github.action_path }}/action/scripts/X.sh` to `bash "$GITHUB_ACTION_PATH"/action/scripts/X.sh`. The runner sets that variable to the same directory, and it is now quoted. All steps use shell: bash, so this syntax is correct. A search afterwards found no `${{ }}` expressions left in any run: line of action.yml. Expressions in env: blocks were not changed.
 

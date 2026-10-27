@@ -7,14 +7,28 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Create fixture project
+        run: |
+          set -e
+          rm -rf fx
+          mkdir -p fx/src
+          echo '{"name":"fx-project","version":"1.0.0","private":true,"main":"src/index.js"}' > fx/package.json
+          cat > fx/src/index.js <<'EOF'
+          export function sign(x) {
+            if (x > 0) { return 1; }
+            if (x < 0) { return -1; }
+            return 0;
+          }
+          console.log(sign(3));
+          EOF
+
       - id: snapshot
         uses: .
         with:
+          root: fx
           command: health
-          score: 'true'
           save-snapshot: 'true'
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
@@ -22,11 +36,10 @@ jobs:
 
       - name: Assert a snapshot was saved
         run: |
-          ls -la "$GITHUB_WORKSPACE/.fallow/snapshots" || true
-          COUNT=$(find "$GITHUB_WORKSPACE/.fallow/snapshots" -type f 2>/dev/null | wc -l)
-          echo "snapshot files: $COUNT"
-          if [ "$COUNT" -lt 1 ]; then
-            echo "FAIL: expected at least one snapshot file"
+          FOUND="$(find fx/.fallow/snapshots .fallow/snapshots -type f 2>/dev/null || true)"
+          echo "snapshot files: $FOUND"
+          if [ -z "$FOUND" ]; then
+            echo "FAIL: no snapshot file under fx/.fallow/snapshots or .fallow/snapshots"
             exit 1
           fi
           echo "PASS"
@@ -34,11 +47,10 @@ jobs:
       - id: trend
         uses: .
         with:
+          root: fx
           command: health
-          score: 'true'
           trend: 'true'
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
@@ -46,16 +58,18 @@ jobs:
 
       - name: Assert trend run produced results
         env:
-          RESULTS: ${{ steps.trend.outputs.results }}
           ISSUES: ${{ steps.trend.outputs.issues }}
+          RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "results: $RESULTS issues: $ISSUES"
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
-            exit 1
-          fi
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not a number"
+            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
             exit 1
           fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

@@ -7,36 +7,71 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create an empty Istanbul coverage file
+      - name: Create fixture project and coverage data
         run: |
-          mkdir -p fallow-test-coverage
-          echo '{}' > fallow-test-coverage/coverage-final.json
+          set -e
+          rm -rf fx fx-cov
+          mkdir -p fx/src fx-cov
+          cat > fx/package.json <<'EOF'
+          {"name":"fx-project","version":"1.0.0","private":true,"main":"src/index.js"}
+          EOF
+          cat > fx/src/index.js <<'EOF'
+          export function add(a, b) {
+            return a + b;
+          }
+          console.log(add(1, 2));
+          EOF
+          cat > fx-cov/coverage-final.json <<'EOF'
+          {
+            "/ci-build/src/index.js": {
+              "path": "/ci-build/src/index.js",
+              "statementMap": {
+                "0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 15}},
+                "1": {"start": {"line": 4, "column": 0}, "end": {"line": 4, "column": 23}}
+              },
+              "fnMap": {
+                "0": {
+                  "name": "add",
+                  "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}},
+                  "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 3, "column": 1}},
+                  "line": 1
+                }
+              },
+              "branchMap": {},
+              "s": {"0": 1, "1": 1},
+              "f": {"0": 1},
+              "b": {}
+            }
+          }
+          EOF
 
       - id: action
         uses: .
         with:
+          root: fx
           command: health
-          coverage: fallow-test-coverage/coverage-final.json
-          coverage-root: .
+          coverage: ${{ github.workspace }}/fx-cov/coverage-final.json
+          coverage-root: /ci-build
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert results valid
+      - name: Assert action produced results
         env:
-          RESULTS: ${{ steps.action.outputs.results }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "results: $RESULTS issues: $ISSUES"
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
-            exit 1
-          fi
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not a number"
+            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
             exit 1
           fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

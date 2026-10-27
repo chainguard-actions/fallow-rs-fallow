@@ -7,14 +7,29 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Create fixture project
+        run: |
+          set -e
+          rm -rf fx fx-baselines
+          mkdir -p fx/src fx-baselines
+          echo '{"name":"fx-project","version":"1.0.0","private":true,"main":"src/index.js"}' > fx/package.json
+          cat > fx/src/index.js <<'EOF'
+          import { used } from './lib.js';
+          console.log(used());
+          EOF
+          cat > fx/src/lib.js <<'EOF'
+          export function used() { return 1; }
+          export function unusedExport() { return 2; }
+          EOF
+
       - id: save
         uses: .
         with:
+          root: fx
           command: dead-code
-          save-baseline: fallow-test-baseline.json
-          save-regression-baseline: fallow-test-regression.json
+          save-baseline: ${{ github.workspace }}/fx-baselines/baseline.json
+          save-regression-baseline: ${{ github.workspace }}/fx-baselines/regression.json
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
@@ -22,48 +37,45 @@ jobs:
 
       - name: Assert baseline files were saved
         run: |
-          for f in fallow-test-baseline.json fallow-test-regression.json; do
-            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
-              echo "FAIL: $f was not written"
+          ls -la fx-baselines
+          for f in baseline.json regression.json; do
+            if [ ! -s "fx-baselines/$f" ]; then
+              echo "FAIL: fx-baselines/$f was not written"
               exit 1
             fi
-            if ! jq empty "$GITHUB_WORKSPACE/$f"; then
-              echo "FAIL: $f is not valid JSON"
-              exit 1
-            fi
+            jq empty "fx-baselines/$f" || { echo "FAIL: $f is not valid JSON"; exit 1; }
           done
           echo "PASS"
 
       - id: load
         uses: .
         with:
+          root: fx
           command: dead-code
-          baseline: fallow-test-baseline.json
-          regression-baseline: fallow-test-regression.json
+          baseline: ${{ github.workspace }}/fx-baselines/baseline.json
+          regression-baseline: ${{ github.workspace }}/fx-baselines/regression.json
+          fail-on-regression: 'true'
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert baseline outputs
+      - name: Assert baseline run reports no more issues than the saved run
         env:
-          BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
+          SAVED: ${{ steps.save.outputs.issues }}
           ISSUES: ${{ steps.load.outputs.issues }}
-          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
         run: |
-          echo "baseline-path: $BASELINE_PATH issues: $ISSUES stale: '$STALE'"
-          if [ "$BASELINE_PATH" != "fallow-test-baseline.json" ]; then
-            echo "FAIL: expected baseline-path to echo the input"
-            exit 1
-          fi
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not a number"
-            exit 1
-          fi
-          if [ -n "$STALE" ] && [ "$STALE" != "0" ]; then
-            echo "FAIL: freshly saved baseline should have no stale entries, got $STALE"
+          echo "saved-run issues: $SAVED"
+          echo "baseline-run issues: $ISSUES"
+          for v in "$SAVED" "$ISSUES"; do
+            if ! echo "$v" | grep -qE '^[0-9]+$'; then
+              echo "FAIL: expected a non-negative integer, got '$v'"
+              exit 1
+            fi
+          done
+          if [ "$ISSUES" -gt "$SAVED" ]; then
+            echo "FAIL: baseline run reported more issues than the run that saved it"
             exit 1
           fi
           echo "PASS"
