@@ -1,4 +1,4 @@
-name: Test runtime-coverage inputs reject a non-integer min-invocations-hot
+name: Test runtime-coverage with an invalid threshold is rejected
 on:
   workflow_dispatch:
 jobs:
@@ -7,44 +7,38 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a minimal JS project
+      - name: Create a placeholder V8 coverage directory
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/tests/fixtures/rc-project/src"
-          echo '{"name":"rc-project","version":"1.0.0","type":"module","scripts":{"start":"node src/index.js"}}' \
-            > "$GITHUB_WORKSPACE/tests/fixtures/rc-project/package.json"
-          echo 'export const x = 1;' > "$GITHUB_WORKSPACE/tests/fixtures/rc-project/src/index.js"
-          mkdir -p "$GITHUB_WORKSPACE/rc-data"
-          echo '{}' > "$GITHUB_WORKSPACE/rc-data/coverage-final.json"
+          mkdir -p "$GITHUB_WORKSPACE/fx-rtcov/v8"
+          echo '{"result": []}' > "$GITHUB_WORKSPACE/fx-rtcov/v8/coverage-1.json"
 
       - id: action
         uses: .
         continue-on-error: true
         with:
           command: health
-          root: tests/fixtures/rc-project
-          format: json
+          runtime-coverage: ${{ github.workspace }}/fx-rtcov/v8
+          min-invocations-hot: '100'
+          min-observation-volume: lots
+          low-traffic-threshold: '0.1'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
-          runtime-coverage: rc-data/coverage-final.json
-          min-invocations-hot: 'not-a-number'
-          min-observation-volume: '10'
-          low-traffic-threshold: '0.01'
 
-      - name: Assert action failed validation
+      - name: Assert non-integer min-observation-volume is rejected
         env:
           OUTCOME: ${{ steps.action.outcome }}
-          RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "outcome: $OUTCOME"
-          echo "results: $RESULTS"
+          echo "issues: $ISSUES"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for invalid min-invocations-hot"
+            echo "FAIL: expected min-observation-volume=lots to be rejected"
             exit 1
           fi
-          if [ -n "$RESULTS" ]; then
-            echo "FAIL: expected no results output when validation fails"
+          if [ -n "$ISSUES" ]; then
+            echo "FAIL: validation should stop before analysis produces issues"
             exit 1
           fi
           echo "PASS"

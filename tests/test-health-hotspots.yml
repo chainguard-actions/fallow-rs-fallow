@@ -9,54 +9,64 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create a minimal JS project
+      - name: Create project with git history
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/health-hotspots/src"
-          mkdir -p "$P"
-          cat > "$GITHUB_WORKSPACE/tests/fixtures/health-hotspots/package.json" <<'EOF'
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          P="$GITHUB_WORKSPACE/fx-hotspots-proj"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
           {
-            "name": "health-hotspots",
+            "name": "fx-hotspots-proj",
             "version": "1.0.0",
             "type": "module",
-            "scripts": { "start": "node src/index.js" }
+            "main": "src/index.js"
           }
           EOF
-          cat > "$P/index.js" <<'EOF'
-          export function add(a, b) {
-            if (a > b) { return a - b; }
-            return a + b;
+          for i in 1 2 3; do
+            cat > "$P/src/index.js" <<EOF
+          export function f(a, b) {
+            if (a > $i) {
+              if (b > $i) { return a + b + $i; }
+              return a - $i;
+            }
+            return b;
           }
-          add(1, 2);
+          console.log(f(1, 2));
           EOF
+            git add fx-hotspots-proj
+            git commit -q -m "hotspot change $i"
+          done
+          git log --oneline -n 3
 
       - id: action
         uses: .
         with:
           command: health
-          root: tests/fixtures/health-hotspots
+          root: fx-hotspots-proj
+          hotspots: 'true'
+          since: 1y
+          min-commits: '1'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
-          hotspots: 'true'
-          since: 1y
-          min-commits: '1'
 
-      - name: Assert results
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number: '$ISSUES'"
+            echo "FAIL: issues is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"

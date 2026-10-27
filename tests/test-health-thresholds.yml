@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds, sort and top
+name: Test health with complexity thresholds, sort and top
 on:
   workflow_dispatch:
 jobs:
@@ -7,63 +7,67 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a JS project with a complex function
+      - name: Create project with a complex function
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/health-thresholds/src"
-          mkdir -p "$P"
-          cat > "$GITHUB_WORKSPACE/tests/fixtures/health-thresholds/package.json" <<'EOF'
+          P="$GITHUB_WORKSPACE/fx-health-thr"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
           {
-            "name": "health-thresholds",
+            "name": "fx-health-thr",
             "version": "1.0.0",
             "type": "module",
-            "scripts": { "start": "node src/index.js" }
+            "main": "src/index.js"
           }
           EOF
-          cat > "$P/index.js" <<'EOF'
+          cat > "$P/src/index.js" <<'EOF'
           export function complexFunction(a, b, c, d, e) {
             if (a > 0) {
               if (b > 0) {
                 if (c > 0) {
                   if (d > 0) {
-                    if (e > 0) { return 5; } else { return 4; }
-                  } else { return 3; }
-                } else { return 2; }
-              } else { return 1; }
+                    if (e > 0) { return a + b + c + d + e; } else { return a + b + c + d; }
+                  } else { return a + b + c; }
+                } else { return a + b; }
+              } else { return a; }
             } else { return 0; }
           }
-          complexFunction(1, 2, 3, 4, 5);
+          console.log(complexFunction(1, 2, 3, 4, 5));
           EOF
 
       - id: action
         uses: .
         with:
           command: health
-          root: tests/fixtures/health-thresholds
+          root: fx-health-thr
+          max-cyclomatic: '2'
+          max-cognitive: '2'
+          max-crap: '1000'
+          sort: cognitive
+          top: '10'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
-          max-cyclomatic: '2'
-          max-cognitive: '2'
-          max-crap: '30.0'
-          sort: cognitive
-          top: '5'
 
-      - name: Assert issues output is a number and results are valid JSON
+      - name: Assert low thresholds flag the complex function
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number: '$ISSUES'"
+            echo "FAIL: issues is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected max-cyclomatic=2 to flag complexFunction"
+            cat "$RESULTS"
             exit 1
           fi
           echo "PASS"
