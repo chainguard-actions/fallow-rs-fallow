@@ -1,4 +1,4 @@
-name: Test dupes with min-tokens, min-lines and threshold
+name: Test dupes with token/line limits and threshold
 on:
   workflow_dispatch:
 jobs:
@@ -13,10 +13,11 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          min-tokens: '30'
-          min-lines: '3'
+          min-tokens: '10'
+          min-lines: '2'
           threshold: '100'
-          artifacts-dir: fallow-artifacts-dupes-thresholds
+          top: '5'
+          artifacts-dir: fallow-artifacts-dupes-options
       - name: Assert dupes results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}

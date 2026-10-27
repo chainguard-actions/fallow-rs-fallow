@@ -1,4 +1,4 @@
-name: Test dead-code scoped by changed-workspaces
+name: Test changed-workspaces scoping
 on:
   workflow_dispatch:
 jobs:
@@ -13,17 +13,28 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
+          changed-workspaces: HEAD
           version: '3.36.0'
           fail-on-issues: 'false'
-          changed-workspaces: HEAD
           artifacts-dir: fallow-artifacts-changed-workspaces
-      - name: Assert run produced a numeric issue count
+      - name: Assert changed-workspaces run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
+          case "$RESULTS" in
+            /*) FILE="$RESULTS" ;;
+            *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
+          esac
+          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

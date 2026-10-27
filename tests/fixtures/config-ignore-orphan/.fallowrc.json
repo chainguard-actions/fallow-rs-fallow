@@ -1,0 +1,3 @@
+{
+  "ignorePatterns": ["src/orphan.ts", "**/orphan.ts"]
+}

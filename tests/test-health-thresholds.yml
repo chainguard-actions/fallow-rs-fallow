@@ -1,4 +1,4 @@
-name: Test health thresholds and tuning inputs
+name: Test health thresholds and hotspot options
 on:
   workflow_dispatch:
 jobs:
@@ -6,6 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: action
         uses: .
         with:
@@ -13,13 +15,15 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          max-cyclomatic: '10'
-          max-cognitive: '8'
+          max-cyclomatic: '5'
+          max-cognitive: '5'
           max-crap: '30'
-          top: '5'
           sort: cognitive
-          min-severity: critical
+          top: '5'
           threads: '2'
+          hotspots: 'true'
+          since: 1y
+          min-commits: '1'
           artifacts-dir: fallow-artifacts-health-thresholds
       - name: Assert health results produced
         env:
