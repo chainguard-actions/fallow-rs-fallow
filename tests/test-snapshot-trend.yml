@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend comparison
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,46 +6,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
-      - name: Create project
+      - name: Create a minimal JS project
         run: |
-          P="$GITHUB_WORKSPACE/fx-snapshot-proj"
+          P="$GITHUB_WORKSPACE/act-fixtures/snapshot"
           mkdir -p "$P/src"
-          cat > "$P/package.json" <<'EOF'
-          {
-            "name": "fx-snapshot-proj",
-            "version": "1.0.0",
-            "type": "module",
-            "main": "src/index.js"
-          }
-          EOF
+          echo '{"name":"snapshot","version":"1.0.0","type":"module","scripts":{"start":"node src/index.js"}}' > "$P/package.json"
           cat > "$P/src/index.js" <<'EOF'
           export function add(a, b) {
-            return a > b ? a + b : b - a;
+            if (a > b) { return a - b; }
+            return a + b;
           }
-          console.log(add(1, 2));
+          add(1, 2);
           EOF
 
-      - id: snapshot
+      - id: save
         uses: .
         with:
           command: health
-          root: fx-snapshot-proj
-          score: 'true'
-          save-snapshot: 'true'
+          root: act-fixtures/snapshot
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
+          save-snapshot: 'true'
 
-      - name: Assert a snapshot was saved
+      - name: Assert a snapshot was written
         run: |
-          found=$(find "$GITHUB_WORKSPACE/fx-snapshot-proj" "$GITHUB_WORKSPACE/.fallow" -path '*snapshots*' -type f 2>/dev/null | head -5)
-          echo "snapshots: $found"
-          if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file found"
+          FOUND=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
+          echo "snapshots: $FOUND"
+          if [ -z "$FOUND" ]; then
+            echo "FAIL: no snapshot file found under .fallow/snapshots"
             exit 1
           fi
           echo "PASS"
@@ -54,15 +49,14 @@ jobs:
         uses: .
         with:
           command: health
-          root: fx-snapshot-proj
-          score: 'true'
-          trend: 'true'
+          root: act-fixtures/snapshot
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
+          trend: 'true'
 
       - name: Assert trend run produced results
         env:
@@ -70,12 +64,13 @@ jobs:
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not a number"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

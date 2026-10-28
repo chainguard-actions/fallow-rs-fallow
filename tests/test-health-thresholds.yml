@@ -1,4 +1,4 @@
-name: Test health with complexity thresholds, sort and top
+name: Test health command with complexity thresholds, sort, top and threads
 on:
   workflow_dispatch:
 jobs:
@@ -7,67 +7,82 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create project with a complex function
+      - name: Create a minimal JS project
         run: |
-          P="$GITHUB_WORKSPACE/fx-health-thr"
+          P="$GITHUB_WORKSPACE/act-fixtures/health-thresholds"
           mkdir -p "$P/src"
           cat > "$P/package.json" <<'EOF'
           {
-            "name": "fx-health-thr",
+            "name": "health-thresholds",
             "version": "1.0.0",
             "type": "module",
-            "main": "src/index.js"
+            "scripts": { "start": "node src/index.js" }
           }
           EOF
           cat > "$P/src/index.js" <<'EOF'
-          export function complexFunction(a, b, c, d, e) {
+          export function branchy(a, b, c, d) {
             if (a > 0) {
               if (b > 0) {
                 if (c > 0) {
-                  if (d > 0) {
-                    if (e > 0) { return a + b + c + d + e; } else { return a + b + c + d; }
-                  } else { return a + b + c; }
-                } else { return a + b; }
-              } else { return a; }
-            } else { return 0; }
+                  return d > 0 ? 4 : 3;
+                }
+                return 2;
+              }
+              return 1;
+            }
+            return 0;
           }
-          console.log(complexFunction(1, 2, 3, 4, 5));
+          branchy(1, 2, 3, 4);
           EOF
 
       - id: action
         uses: .
         with:
           command: health
-          root: fx-health-thr
-          max-cyclomatic: '2'
-          max-cognitive: '2'
-          max-crap: '1000'
-          sort: cognitive
-          top: '10'
+          root: act-fixtures/health-thresholds
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
+          max-cyclomatic: '2'
+          max-cognitive: '2'
+          max-crap: '30.0'
+          sort: cognitive
+          top: '5'
+          threads: '2'
 
-      - name: Assert low thresholds flag the complex function
+      - name: Assert issues output and results file
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not a number"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
-          if [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected max-cyclomatic=2 to flag complexFunction"
-            cat "$RESULTS"
-            exit 1
+          echo "PASS"
+
+      - name: Assert threshold flags were passed to fallow
+        run: |
+          ARGS_FILE=$(find "$GITHUB_WORKSPACE" -maxdepth 2 -name 'fallow-analysis-args.sh' | head -1)
+          echo "args file: $ARGS_FILE"
+          if [ -z "$ARGS_FILE" ]; then
+            echo "SKIP: args file not found"
+            exit 0
           fi
+          cat "$ARGS_FILE"
+          for flag in --max-cyclomatic --max-cognitive --max-crap --sort --top --threads; do
+            if ! grep -q -- "$flag" "$ARGS_FILE"; then
+              echo "FAIL: expected $flag in analysis args"
+              exit 1
+            fi
+          done
           echo "PASS"

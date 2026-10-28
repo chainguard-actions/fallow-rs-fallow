@@ -1,0 +1,80 @@
+name: Test dead-code save-baseline then baseline comparison
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a minimal JS project
+        run: |
+          P="$GITHUB_WORKSPACE/act-fixtures/baseline"
+          mkdir -p "$P/src"
+          echo '{"name":"baseline","version":"1.0.0","type":"module","scripts":{"start":"node src/index.js"}}' > "$P/package.json"
+          cat > "$P/src/index.js" <<'EOF'
+          export function used() { return 1; }
+          export function unused() { return 2; }
+          used();
+          EOF
+
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: act-fixtures/baseline
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+          save-baseline: ${{ github.workspace }}/act-fixtures/baseline-out/fallow-baseline.json
+
+      - name: Assert baseline file was saved
+        run: |
+          F="$GITHUB_WORKSPACE/act-fixtures/baseline-out/fallow-baseline.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: baseline file not saved at $F"
+            exit 1
+          fi
+          cat "$F"
+          if ! jq empty "$F"; then
+            echo "FAIL: baseline is not valid JSON"
+            exit 1
+          fi
+          echo "PASS"
+
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: act-fixtures/baseline
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+          baseline: ${{ github.workspace }}/act-fixtures/baseline-out/fallow-baseline.json
+
+      - name: Assert baseline suppressed known issues
+        env:
+          ISSUES: ${{ steps.load.outputs.issues }}
+          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
+          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+        run: |
+          echo "issues (with baseline): $ISSUES"
+          echo "issues (saving run): $SAVED_ISSUES"
+          echo "baseline-entries: $ENTRIES"
+          echo "baseline-stale-entries: $STALE"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || ! [[ "$SAVED_ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues outputs are not numbers"
+            exit 1
+          fi
+          if [ "$ISSUES" -gt "$SAVED_ISSUES" ]; then
+            echo "FAIL: baseline run reported more issues than the run that saved it"
+            exit 1
+          fi
+          echo "PASS"

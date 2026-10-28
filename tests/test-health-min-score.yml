@@ -1,0 +1,57 @@
+name: Test health with min-score gate (passing)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a minimal JS project
+        run: |
+          P="$GITHUB_WORKSPACE/act-fixtures/health-min-score"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
+          {
+            "name": "health-min-score",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": { "start": "node src/index.js" }
+          }
+          EOF
+          cat > "$P/src/index.js" <<'EOF'
+          export function add(a, b) {
+            return a + b;
+          }
+          add(1, 2);
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: act-fixtures/health-min-score
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+          min-score: '0'
+
+      - name: Assert results
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          echo "PASS"
