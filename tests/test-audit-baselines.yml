@@ -1,0 +1,86 @@
+name: Test audit command with per-analysis baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/.fallow-baselines"
+      - name: Save dead-code baseline
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean-project
+          version: '3.37.0'
+          save-baseline: ${{ github.workspace }}/.fallow-baselines/dead-code.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Save health baseline
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.37.0'
+          save-baseline: ${{ github.workspace }}/.fallow-baselines/health.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Save dupes baseline
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/clean-project
+          version: '3.37.0'
+          save-baseline: ${{ github.workspace }}/.fallow-baselines/dupes.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Assert baselines exist
+        run: |
+          for f in dead-code health dupes; do
+            if [ ! -f "$GITHUB_WORKSPACE/.fallow-baselines/$f.json" ]; then
+              echo "FAIL: $f baseline missing"
+              exit 1
+            fi
+          done
+          echo "PASS"
+      - id: action
+        uses: .
+        with:
+          command: audit
+          root: tests/fixtures/clean-project
+          version: '3.37.0'
+          changed-since: HEAD
+          gate: all
+          worsened: warn
+          dead-code-baseline: ${{ github.workspace }}/.fallow-baselines/dead-code.json
+          health-baseline: ${{ github.workspace }}/.fallow-baselines/health.json
+          dupes-baseline: ${{ github.workspace }}/.fallow-baselines/dupes.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Assert audit verdict
+        env:
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "verdict: $VERDICT gate: $GATE issues: $ISSUES"
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+          esac
+          if [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all'"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          echo "PASS"

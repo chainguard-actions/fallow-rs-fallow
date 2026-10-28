@@ -1,0 +1,53 @@
+name: Test regression baseline save and compare
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/.fallow-baselines"
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dead-code-project
+          version: '3.37.0'
+          save-regression-baseline: ${{ github.workspace }}/.fallow-baselines/regression.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Assert regression baseline saved
+        run: |
+          F="$GITHUB_WORKSPACE/.fallow-baselines/regression.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: regression baseline not written"
+            exit 1
+          fi
+          cat "$F"
+          echo "PASS"
+      # Same project, same counts: fail-on-regression must not trip.
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dead-code-project
+          version: '3.37.0'
+          regression-baseline: ${{ github.workspace }}/.fallow-baselines/regression.json
+          fail-on-regression: 'true'
+          tolerance: '0'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Assert no regression
+        env:
+          BEFORE: ${{ steps.save.outputs.issues }}
+          AFTER: ${{ steps.compare.outputs.issues }}
+        run: |
+          echo "before: $BEFORE after: $AFTER"
+          if [ "$AFTER" != "$BEFORE" ]; then
+            echo "FAIL: issue counts should be identical"
+            exit 1
+          fi
+          echo "PASS"

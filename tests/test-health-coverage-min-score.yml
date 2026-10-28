@@ -1,0 +1,59 @@
+name: Test health command with Istanbul coverage and min-score
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create Istanbul coverage file
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.cov"
+          cat > "$GITHUB_WORKSPACE/.cov/coverage-final.json" <<'EOF'
+          {
+            "/ci/build/src/math.js": {
+              "path": "/ci/build/src/math.js",
+              "statementMap": {"0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 15}}},
+              "fnMap": {"0": {"name": "add", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}}, "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 3, "column": 1}}, "line": 1}},
+              "branchMap": {},
+              "s": {"0": 1},
+              "f": {"0": 1},
+              "b": {}
+            }
+          }
+          EOF
+          jq -e . "$GITHUB_WORKSPACE/.cov/coverage-final.json" > /dev/null
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.37.0'
+          coverage: ${{ github.workspace }}/.cov/coverage-final.json
+          coverage-root: /ci/build
+          min-score: '0'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Assert health output
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          F="$RESULTS"
+          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: results file not found"
+            exit 1
+          fi
+          if ! jq -e . "$F" > /dev/null; then
+            echo "FAIL: results not valid JSON"
+            exit 1
+          fi
+          echo "PASS"

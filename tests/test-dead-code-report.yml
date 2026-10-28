@@ -1,0 +1,52 @@
+name: Test dead-code report (no fail)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dead-code-project
+          version: '3.37.0'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Assert issues detected
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one dead-code issue (orphan.js / unusedHelper)"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ]; then
+            echo "FAIL: results output empty"
+            exit 1
+          fi
+          F="$RESULTS"
+          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: results file not found at $RESULTS"
+            exit 1
+          fi
+          if ! jq -e . "$F" > /dev/null; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
+          if ! grep -qE 'orphan|unusedHelper' "$F"; then
+            echo "FAIL: expected orphan.js or unusedHelper in results"
+            head -c 3000 "$F"
+            exit 1
+          fi
+          echo "PASS"

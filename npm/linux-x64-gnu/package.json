@@ -1,0 +1,22 @@
+{
+  "name": "@fallow-cli/linux-x64-gnu",
+  "version": "3.37.0",
+  "description": "Fallow CLI binary for Linux x64 (GNU)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fallow-rs/fallow.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "fallow",
+    "fallow.sig",
+    "fallow-similar-code",
+    "fallow-similar-code.sig"
+  ]
+}

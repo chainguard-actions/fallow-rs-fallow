@@ -1,0 +1,27 @@
+name: Test clean project passes
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean-project
+          version: '3.37.0'
+          fail-on-issues: 'true'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Assert zero issues
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues for clean project"
+            exit 1
+          fi
+          echo "PASS"
