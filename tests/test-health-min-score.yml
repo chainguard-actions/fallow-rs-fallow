@@ -1,4 +1,4 @@
-name: Test health min-score and min-severity gates
+name: Test health min-score and min-severity gates pass
 on:
   workflow_dispatch:
 jobs:
@@ -15,18 +15,16 @@ jobs:
           fail-on-issues: 'false'
           min-score: '0'
           min-severity: critical
-          artifacts-dir: fallow-artifacts-health-min-score
-      - name: Assert gates passed with permissive thresholds
+          artifacts-dir: fallow-artifacts-health-score
+      - name: Assert gates passed and results produced
         env:
-          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
-          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          echo "gates-failed: $GATES_FAILED"
+          echo "gates-failed: $FAILED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1

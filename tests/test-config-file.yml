@@ -1,4 +1,4 @@
-name: Test combined run with skip
+name: Test explicit config file
 on:
   workflow_dispatch:
 jobs:
@@ -9,20 +9,21 @@ jobs:
       - id: action
         uses: .
         with:
+          command: dead-code
           root: tests/fixtures/sample-project
+          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
           version: '3.36.0'
           fail-on-issues: 'false'
-          skip: dupes
-          artifacts-dir: fallow-artifacts-skip
-      - name: Assert combined results produced
+          artifacts-dir: fallow-artifacts-config
+      - name: Assert analysis ran with config
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one issue (orphan.ts)"
             exit 1
           fi
           case "$RESULTS" in

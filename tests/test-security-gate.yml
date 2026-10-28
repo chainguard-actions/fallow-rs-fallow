@@ -18,19 +18,18 @@ jobs:
           changed-since: HEAD
           security-gate: new
           artifacts-dir: fallow-artifacts-security
-      - name: Assert security results
+      - name: Assert security gate applied
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
         run: |
-          echo "issues: $ISSUES"
-          echo "gate: $GATE"
+          echo "issues: $ISSUES  gate: $GATE"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
           if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new'"
+            echo "FAIL: expected gate 'new' but got '$GATE'"
             exit 1
           fi
           echo "PASS"
