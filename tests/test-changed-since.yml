@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-since
+name: Test changed-since scoping
 on:
   workflow_dispatch:
 jobs:
@@ -20,20 +20,27 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          changed-since: HEAD
           format: json
+          changed-since: HEAD
           fail-on-issues: 'false'
           annotations: 'false'
 
-      - name: Assert issues output
+      - name: Assert scoped run produced numeric output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
           UNAPPLIED: ${{ steps.action.outputs.requests-unapplied }}
         run: |
           echo "issues: $ISSUES"
-          echo "requests-unapplied: '$UNAPPLIED'"
+          echo "changed-files-unavailable: $UNAVAILABLE"
+          echo "requests-unapplied: $UNAPPLIED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"

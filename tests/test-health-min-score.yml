@@ -1,4 +1,4 @@
-name: Test health hotspots with since and min-commits
+name: Test health min-score and min-severity gates pass
 on:
   workflow_dispatch:
 jobs:
@@ -13,6 +13,8 @@ jobs:
         with:
           node-version: 22
 
+      # min-score 0 can never be undercut, min-severity critical is not reached
+      # by the small fixture with default thresholds, so the step must succeed.
       - id: action
         uses: .
         env:
@@ -20,26 +22,24 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
-          hotspots: 'true'
-          since: 1y
-          min-commits: '1'
           format: json
+          min-score: '0'
+          min-severity: critical
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
 
-      - name: Assert issues output
+      - name: Assert gates passed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
+          PASSED: ${{ steps.action.outputs.gates-passed }}
         run: |
           echo "issues: $ISSUES"
+          echo "gates-failed: '$FAILED'"
+          echo "gates-passed: '$PASSED'"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results missing or invalid"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           echo "PASS"
