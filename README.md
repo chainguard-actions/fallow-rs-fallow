@@ -16,6 +16,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 | v3.34.1 | [`v3.34.1`](https://github.com/chainguard-actions/fallow-rs-fallow/tree/v3.34.1) | [`6605f96`](https://github.com/fallow-rs/fallow/commit/6605f96806787f85124bfc144124ff7e44733b06) | [`HARDENING.md`](https://github.com/chainguard-actions/fallow-rs-fallow/blob/v3.34.1/HARDENING.md) |
 | v3.35.0 | [`v3.35.0`](https://github.com/chainguard-actions/fallow-rs-fallow/tree/v3.35.0) | [`1f5a08d`](https://github.com/fallow-rs/fallow/commit/1f5a08d9addde37d81aefcf10407600307da393b) | [`HARDENING.md`](https://github.com/chainguard-actions/fallow-rs-fallow/blob/v3.35.0/HARDENING.md) |
 | v3.36.0 | [`v3.36.0`](https://github.com/chainguard-actions/fallow-rs-fallow/tree/v3.36.0) | [`3c6e45b`](https://github.com/fallow-rs/fallow/commit/3c6e45b55ae60a52caa2b586ea3fae44f3e5a44e) | [`HARDENING.md`](https://github.com/chainguard-actions/fallow-rs-fallow/blob/v3.36.0/HARDENING.md) |
+| v3.37.0 | [`v3.37.0`](https://github.com/chainguard-actions/fallow-rs-fallow/tree/v3.37.0) | [`85fa327`](https://github.com/fallow-rs/fallow/commit/85fa32733e951df85966842f2bb6a3f2720a940c) | [`HARDENING.md`](https://github.com/chainguard-actions/fallow-rs-fallow/blob/v3.37.0/HARDENING.md) |
 
 ## Privacy
 
