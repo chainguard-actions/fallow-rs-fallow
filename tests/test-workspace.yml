@@ -1,4 +1,4 @@
-name: Test workspace scoping
+name: Test workspace scoping in a monorepo
 on:
   workflow_dispatch:
 
@@ -15,6 +15,7 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
+          workspace: pkg-a
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -22,25 +23,23 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          workspace: app-a
 
-      - name: Assert outputs
+      - name: Assert scoped results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
+            echo "FAIL: results file missing"
             exit 1
           fi
-          if grep -q 'app-b/index.js' "$RESULTS"; then
-            echo "FAIL: results include files outside the app-a workspace"
+          if grep -q 'pkg-b/' "$RESULTS"; then
+            echo "FAIL: results include findings from pkg-b outside the workspace scope"
             exit 1
           fi
           echo "PASS"

@@ -10,13 +10,13 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 8 finding(s) were identified and resolved across 2 iteration(s).
+Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 8 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Rule (a): step 'Install fallow' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Fix: pass the path through env (e.g. ACTION_PATH: ${{ github.action_path }}) and run `bash "$ACTION_PATH/action/scripts/install.sh"`, or use the runner-provided "$GITHUB_ACTION_PATH".
+Sub-rule (a): a GitHub Actions expression is placed directly inside run: in the 'Install fallow' step: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Move it into env (e.g. ACTION_PATH: ${{ github.action_path }}) and reference "$ACTION_PATH", or use the $GITHUB_ACTION_PATH env var.
 
 Locations:
 
@@ -24,7 +24,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): step 'Fallow branded token' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`. Fix: use the quoted "$GITHUB_ACTION_PATH" instead.
+Sub-rule (a): a GitHub Actions expression is placed directly inside run: in the 'Fallow branded token' step: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`.
 
 Locations:
 
@@ -32,7 +32,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): step 'Run analysis' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`. Fix: use the quoted "$GITHUB_ACTION_PATH" instead.
+Sub-rule (a): a GitHub Actions expression is placed directly inside run: in the 'Run analysis' step: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`.
 
 Locations:
 
@@ -40,7 +40,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): step 'Check Code Scanning availability' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`. Fix: use the quoted "$GITHUB_ACTION_PATH" instead.
+Sub-rule (a): a GitHub Actions expression is placed directly inside run: in the 'Check Code Scanning availability' step: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`.
 
 Locations:
 
@@ -48,7 +48,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): step 'Post PR comment' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`. Fix: use the quoted "$GITHUB_ACTION_PATH" instead.
+Sub-rule (a): a GitHub Actions expression is placed directly inside run: in the 'Post PR comment' step: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`.
 
 Locations:
 
@@ -56,7 +56,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): step 'Emit inline annotations' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`. Fix: use the quoted "$GITHUB_ACTION_PATH" instead.
+Sub-rule (a): a GitHub Actions expression is placed directly inside run: in the 'Emit inline annotations' step: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`.
 
 Locations:
 
@@ -64,7 +64,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): step 'Job summary' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`. Fix: use the quoted "$GITHUB_ACTION_PATH" instead.
+Sub-rule (a): a GitHub Actions expression is placed directly inside run: in the 'Job summary' step: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`.
 
 Locations:
 
@@ -72,7 +72,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a): step 'Post review comments' puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/review.sh`. Fix: use the quoted "$GITHUB_ACTION_PATH" instead.
+Sub-rule (a): a GitHub Actions expression is placed directly inside run: in the 'Post review comments' step: `run: bash ${{ github.action_path }}/action/scripts/review.sh`.
 
 Locations:
 
@@ -86,13 +86,5 @@ Locations:
 
 **Notes:**
 
-In action.yml, the 8 'bash ${{ github.action_path }}/action/scripts/<x>.sh' run lines (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review) now read 'bash "$GITHUB_ACTION_PATH/action/scripts/<x>.sh"'. Every one of these steps uses shell: bash, so the shell syntax holds. No other changes were needed. The github.action_path references left in env: blocks (ACTION_JQ_DIR) are safe there.
-
-### Iteration 2
-
-**Fixes applied:** script-injection, invalid-yaml
-
-**Notes:**
-
-action.yml: the Install fallow, Fallow branded token and Check Code Scanning availability steps now run bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh" (quoted env var, no expression). Repaired corrupted YAML from the previous pass: the annotate.sh, summary.sh and check-code-scanning.sh run: lines had been merged with the following '- name:' line (bad indentation / stray 'ru' fragment), causing 'mapping values are not allowed'. Each is now a correctly indented run: line followed by its own step entry. Script paths verified to exist under action/scripts.
+I fixed all 8 script-injection findings in action.yml. Each `run:` line had `bash ${{ github.action_path }}/action/scripts/<name>.sh`, and each now reads `bash "$GITHUB_ACTION_PATH"/action/scripts/<name>.sh`. `$GITHUB_ACTION_PATH` is an environment variable the runner sets for every step in a composite action, so no new `env:` entries were needed. All these steps use `shell: bash`, so the `$VAR` syntax is correct. Nothing was run to test this. Two `ACTION_JQ_DIR` lines still use `${{ github.action_path }}`, but they sit in `env:` blocks rather than in `run:`, so they don't count as script injection. I left them unchanged.
 

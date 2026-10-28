@@ -1,4 +1,4 @@
-name: Test runtime coverage input validation
+name: Test runtime coverage inputs reject invalid low-traffic-threshold
 on:
   workflow_dispatch:
 
@@ -16,6 +16,10 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
+          runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          min-invocations-hot: '100'
+          min-observation-volume: '1000'
+          low-traffic-threshold: 'not-a-number'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -23,12 +27,8 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          min-invocations-hot: '100'
-          min-observation-volume: '10'
-          low-traffic-threshold: 'not-a-number'
 
-      - name: Assert action rejected invalid low-traffic-threshold
+      - name: Assert action rejected invalid input
         env:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
@@ -40,7 +40,7 @@ jobs:
             exit 1
           fi
           if [ -n "$ISSUES" ]; then
-            echo "FAIL: expected no issues output when validation fails"
+            echo "FAIL: analysis should not have run"
             exit 1
           fi
           echo "PASS"

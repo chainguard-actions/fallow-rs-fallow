@@ -1,4 +1,4 @@
-name: Test health thresholds
+name: Test health thresholds, sort, top and min-severity
 on:
   workflow_dispatch:
 
@@ -15,6 +15,12 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
+          max-cyclomatic: '10'
+          max-cognitive: '8'
+          max-crap: '25.5'
+          sort: cognitive
+          top: '5'
+          min-severity: critical
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -22,12 +28,6 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          max-cyclomatic: '25'
-          max-cognitive: '20'
-          max-crap: '40.5'
-          top: '5'
-          sort: cognitive
-          min-severity: critical
 
       - name: Assert outputs
         env:
@@ -35,13 +35,12 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
+            echo "FAIL: results file missing"
             exit 1
           fi
           echo "PASS"

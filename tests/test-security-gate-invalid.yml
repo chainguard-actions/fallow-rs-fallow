@@ -1,4 +1,4 @@
-name: Test security-gate input validation
+name: Test security command rejects invalid security-gate
 on:
   workflow_dispatch:
 
@@ -16,6 +16,7 @@ jobs:
         with:
           command: security
           root: tests/fixtures/simple-js
+          security-gate: bogus-gate
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -23,9 +24,8 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          security-gate: bogus
 
-      - name: Assert action rejected invalid security-gate
+      - name: Assert invalid gate rejected
         env:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
@@ -37,7 +37,7 @@ jobs:
             exit 1
           fi
           if [ -n "$ISSUES" ]; then
-            echo "FAIL: expected no issues output when validation fails"
+            echo "FAIL: analysis should not have run"
             exit 1
           fi
           echo "PASS"

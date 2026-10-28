@@ -14,6 +14,7 @@ jobs:
         uses: .
         with:
           root: tests/fixtures/simple-js
+          skip: dupes,architecture
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -21,7 +22,6 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          skip: dupes
 
       - name: Assert outputs
         env:
@@ -29,13 +29,12 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
+            echo "FAIL: results file missing"
             exit 1
           fi
           echo "PASS"
