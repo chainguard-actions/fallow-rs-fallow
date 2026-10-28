@@ -1,4 +1,4 @@
-name: Test combined run restricted with only
+name: Test combined run limited with only
 on:
   workflow_dispatch:
 jobs:
@@ -20,8 +20,7 @@ jobs:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1
