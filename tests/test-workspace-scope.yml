@@ -1,0 +1,65 @@
+name: Test workspace scoping in a monorepo
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a small npm-workspaces monorepo
+        run: |
+          rm -rf ws-sample
+          mkdir -p ws-sample/packages/pkg-a ws-sample/packages/pkg-b
+          cat > ws-sample/package.json <<'EOF'
+          {"name": "ws-sample", "private": true, "workspaces": ["packages/*"]}
+          EOF
+          cat > ws-sample/packages/pkg-a/package.json <<'EOF'
+          {"name": "pkg-a", "version": "1.0.0", "type": "module", "main": "index.js"}
+          EOF
+          cat > ws-sample/packages/pkg-a/index.js <<'EOF'
+          export function used() { return 1; }
+          export function unusedInA() { return 2; }
+          EOF
+          cat > ws-sample/packages/pkg-b/package.json <<'EOF'
+          {"name": "pkg-b", "version": "1.0.0", "type": "module", "main": "index.js"}
+          EOF
+          cat > ws-sample/packages/pkg-b/index.js <<'EOF'
+          export function alsoUsed() { return 3; }
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: ws-sample
+          workspace: pkg-a
+          fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+          artifacts-dir: fallow-out-workspace
+
+      - name: Assert workspace-scoped run
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES results: $RESULTS"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
+            exit 1
+          fi
+          cat fallow-out-workspace/fallow-analysis-args.sh
+          grep -qF -- "--workspace pkg-a" fallow-out-workspace/fallow-analysis-args.sh || { echo "FAIL: --workspace not forwarded"; exit 1; }
+          echo "PASS"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf ws-sample fallow-out-workspace

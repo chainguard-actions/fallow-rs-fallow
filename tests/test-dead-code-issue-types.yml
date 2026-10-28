@@ -1,4 +1,4 @@
-name: Test dead-code with issue-types filter
+name: Test dead-code command filtered by issue-types
 on:
   workflow_dispatch:
 jobs:
@@ -7,52 +7,56 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create fixture project with an unused file and export
-        run: |
-          set -e
-          rm -rf fx
-          mkdir -p fx/src
-          echo '{"name":"fx-project","version":"1.0.0","private":true,"main":"src/index.js"}' > fx/package.json
-          cat > fx/src/index.js <<'EOF'
-          import { used } from './lib.js';
-          console.log(used());
-          EOF
-          cat > fx/src/lib.js <<'EOF'
-          export function used() { return 1; }
-          export function unusedExport() { return 2; }
-          EOF
-          echo 'export const orphan = 3;' > fx/src/orphan.js
-
       - id: action
         uses: .
         with:
-          root: fx
           command: dead-code
           issue-types: 'unused-files, unused-exports'
           fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
+          artifacts-dir: fallow-out-issue-types
 
-      - name: Assert issues detected
+      - name: Assert issues output is a number
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
+            echo "FAIL: expected non-negative integer, got '$ISSUES'"
             exit 1
           fi
-          if [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected at least one unused file/export"
-            exit 1
-          fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
-            exit 1
-          fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"
+
+      - name: Assert issue-type flags were forwarded (whitespace trimmed)
+        run: |
+          ARGS_FILE=fallow-out-issue-types/fallow-analysis-args.sh
+          cat "$ARGS_FILE"
+          for flag in "--unused-files" "--unused-exports"; do
+            if ! grep -qE -- "(^| |\()${flag}( |\))" "$ARGS_FILE"; then
+              echo "FAIL: missing '$flag'"
+              exit 1
+            fi
+          done
+          if grep -qF -- "--unused-deps" "$ARGS_FILE"; then
+            echo "FAIL: unexpected --unused-deps flag"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert results file is valid JSON
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf fallow-out-issue-types

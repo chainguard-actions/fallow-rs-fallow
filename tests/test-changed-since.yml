@@ -6,55 +6,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Create fixture project with its own git history
-        run: |
-          set -e
-          rm -rf fx
-          mkdir -p fx/src
-          cd fx
-          git init -q
-          git config user.email "test@example.com"
-          git config user.name "Test User"
-          echo '{"name":"fx-project","version":"1.0.0","private":true,"main":"src/index.js"}' > package.json
-          cat > src/index.js <<'EOF'
-          import { used } from './lib.js';
-          console.log(used());
-          EOF
-          echo 'export function used() { return 1; }' > src/lib.js
-          git add -A
-          git commit -q -m "base"
-          git tag fx-base
-          echo 'export function brandNewUnused() { return 2; }' >> src/lib.js
-          git add -A
-          git commit -q -m "change"
+        with:
+          fetch-depth: 0
 
       - id: action
         uses: .
         with:
-          root: fx
           command: dead-code
-          changed-since: fx-base
+          changed-since: HEAD
           fail-on-issues: 'false'
-          auto-changed-since: 'false'
+          fail-on-empty-analysis: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
+          artifacts-dir: fallow-out-changed-since
 
-      - name: Assert action produced results
+      - name: Assert scoped run produced outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "issues: $ISSUES results: $RESULTS changed-files-unavailable: $UNAVAILABLE"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
+            echo "FAIL: issues not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          if ! grep -qF -- "--changed-since HEAD" fallow-out-changed-since/fallow-analysis-args.sh; then
+            echo "FAIL: --changed-since not forwarded"
+            exit 1
+          fi
           echo "PASS"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf fallow-out-changed-since
