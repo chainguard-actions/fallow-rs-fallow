@@ -2,6 +2,6 @@ export function greet(name: string): string {
   return `hello ${name}`;
 }
 
-export function unusedWebHelper(): number {
+export function unusedHelper(): number {
   return 42;
 }

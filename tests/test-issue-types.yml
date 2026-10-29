@@ -1,4 +1,4 @@
-name: Test dupes with token/line minimums and threshold
+name: Test dead-code with issue-types filter
 on:
   workflow_dispatch:
 jobs:
@@ -9,16 +9,13 @@ jobs:
       - id: action
         uses: .
         with:
-          command: dupes
+          command: dead-code
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          min-tokens: '10'
-          min-lines: '2'
-          threshold: '100'
-          top: '3'
-          artifacts-dir: fallow-artifacts-dupes-thr
-      - name: Assert dupes results produced
+          issue-types: unused-files
+          artifacts-dir: fallow-artifacts-issue-types
+      - name: Assert only unused files reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -27,6 +24,10 @@ jobs:
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected orphan.ts to be reported as an unused file"
             exit 1
           fi
           case "$RESULTS" in
@@ -38,4 +39,8 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
+          if ! grep -q "orphan" "$FILE"; then
+            echo "FAIL: orphan.ts not in results"
+            exit 1
+          fi
           echo "PASS"

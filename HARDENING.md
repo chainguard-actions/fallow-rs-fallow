@@ -10,24 +10,73 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.36.0** was hardened automatically. 1 finding(s) were identified and resolved across 2 iteration(s).
+Action **fallow-rs--fallow/v3.36.0** was hardened automatically. 8 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Rule (a): 8 composite steps (Install fallow, Fallow branded token, Run analysis, Check Code Scanning availability, Post PR comment, Emit inline annotations, Job summary, Post review comments) put a GitHub expression directly into the run: string, e.g. `run: bash ${{ github.action_path }}/action/scripts/install.sh`. The expression is substituted into the shell text before bash parses it, and the path is unquoted. Fix: use the runner-provided env var instead, quoted: `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`. Do the same for broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh and review.sh.
+Rule (a) broken in step 'Install fallow': `run: bash ${{ github.action_path }}/action/scripts/install.sh` puts a ${{ }} expression straight into the run: script. Move it into env (e.g. ACTION_PATH: ${{ github.action_path }}) and use "$ACTION_PATH/action/scripts/install.sh", or use the quoted "$GITHUB_ACTION_PATH". Byte offset 29127.
 
 Locations:
 
-- `action.yml:420`
-- `action.yml:433`
-- `action.yml:547`
-- `action.yml:560`
-- `action.yml:607`
-- `action.yml:629`
-- `action.yml:655`
-- `action.yml:688`
+- `action.yml:350`
+
+### script-injection (severity: high)
+
+Rule (a) broken in step 'Fallow branded token': `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh` puts an expression straight into the run: script. Byte offset 29587.
+
+Locations:
+
+- `action.yml:362`
+
+### script-injection (severity: high)
+
+Rule (a) broken in step 'Run analysis': `run: bash ${{ github.action_path }}/action/scripts/analyze.sh` puts an expression straight into the run: script. Byte offset 35506.
+
+Locations:
+
+- `action.yml:470`
+
+### script-injection (severity: high)
+
+Rule (a) broken in step 'Check Code Scanning availability': `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh` puts an expression straight into the run: script. Byte offset 35901.
+
+Locations:
+
+- `action.yml:482`
+
+### script-injection (severity: high)
+
+Rule (a) broken in step 'Post PR comment': `run: bash ${{ github.action_path }}/action/scripts/comment.sh` puts an expression straight into the run: script. Byte offset 37987.
+
+Locations:
+
+- `action.yml:530`
+
+### script-injection (severity: high)
+
+Rule (a) broken in step 'Emit inline annotations': `run: bash ${{ github.action_path }}/action/scripts/annotate.sh` puts an expression straight into the run: script. Byte offset 39014.
+
+Locations:
+
+- `action.yml:552`
+
+### script-injection (severity: high)
+
+Rule (a) broken in step 'Job summary': `run: bash ${{ github.action_path }}/action/scripts/summary.sh` puts an expression straight into the run: script. Byte offset 40712.
+
+Locations:
+
+- `action.yml:580`
+
+### script-injection (severity: high)
+
+Rule (a) broken in step 'Post review comments': `run: bash ${{ github.action_path }}/action/scripts/review.sh` puts an expression straight into the run: script. Byte offset 42273.
+
+Locations:
+
+- `action.yml:612`
 
 ## Iteration Notes
 
@@ -37,13 +86,5 @@ Locations:
 
 **Notes:**
 
-In action.yml, I changed all 8 composite run: lines from `bash ${{ github.action_path }}/action/scripts/<x>.sh` to `bash "$GITHUB_ACTION_PATH/action/scripts/<x>.sh"`. This covers install, broker-token, analyze, check-code-scanning, comment, annotate, summary and review. The scripts and the env: blocks are unchanged; the ACTION_JQ_DIR env value still uses github.action_path, which is safe because it is set in env: rather than written into the shell text. Three of the first parallel edits didn't take effect, so I made them again one at a time and then searched the file to confirm all 8 lines are changed.
-
-### Iteration 2
-
-**Fixes applied:** invalid-yaml
-
-**Notes:**
-
-I fixed the invalid YAML in action.yml. In the 'Job summary' step, the line `run: bash "$GITHUB_ACTION_PATH/action/scripts/summary.sh"` was indented too far, and the next step's `- name: Post review comments` had been run onto the end of that same line. I put the `run:` back at the step's indentation and moved 'Post review comments' to its own line as a separate step. I checked every other single-line `run:` in the file and they look well-formed. I haven't run a YAML parser or act against the file to confirm it loads now.
+In action.yml, I replaced `bash ${{ github.action_path }}/action/scripts/<x>.sh` with `bash "$GITHUB_ACTION_PATH"/action/scripts/<x>.sh` in 8 steps: install, broker-token, analyze, check-code-scanning, comment, annotate, summary and review. Every one of these steps uses shell: bash, so the quoted variable works there. The runner sets `$GITHUB_ACTION_PATH` to the same directory the expression gave. Two steps still have `${{ github.action_path }}` in their env: blocks (ACTION_JQ_DIR). I left those alone because env: values are not run as shell code. Nothing was run or tested after the edit.
 

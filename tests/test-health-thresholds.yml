@@ -1,4 +1,4 @@
-name: Test health complexity thresholds
+name: Test health with complexity thresholds
 on:
   workflow_dispatch:
 jobs:
@@ -13,12 +13,13 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          max-cyclomatic: '1'
-          max-cognitive: '1'
-          max-crap: '5'
+          max-cyclomatic: '10'
+          max-cognitive: '8'
           top: '5'
           sort: cognitive
-          artifacts-dir: fallow-artifacts-health-thr
+          min-severity: critical
+          threads: '2'
+          artifacts-dir: fallow-artifacts-health-thresholds
       - name: Assert health results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}

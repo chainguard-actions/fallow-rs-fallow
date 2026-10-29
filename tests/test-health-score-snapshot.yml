@@ -1,4 +1,4 @@
-name: Test health snapshot and trend
+name: Test health score, snapshot and trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snap
+      - id: snapshot
         uses: .
         with:
           command: health
@@ -14,24 +14,30 @@ jobs:
           version: '3.36.0'
           fail-on-issues: 'false'
           score: 'true'
+          min-score: '0'
           save-snapshot: 'true'
-          artifacts-dir: fallow-artifacts-snap
+          no-cache: 'true'
+          artifacts-dir: fallow-artifacts-snapshot
       - name: Assert snapshot saved
         env:
-          ISSUES: ${{ steps.snap.outputs.issues }}
+          RESULTS: ${{ steps.snapshot.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          echo "results: $RESULTS"
+          found=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -n 5)
+          echo "snapshots: $found"
+          if [ -z "$found" ]; then
+            echo "FAIL: no snapshot file saved under .fallow/snapshots"
             exit 1
           fi
-          COUNT=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | wc -l)
-          echo "snapshot files: $COUNT"
-          find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null || true
-          if [ "$COUNT" -lt 1 ]; then
-            echo "FAIL: no snapshot written under .fallow/snapshots"
+          case "$RESULTS" in
+            /*) FILE="$RESULTS" ;;
+            *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
+          esac
+          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
+          jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"
       - id: trend
         uses: .
@@ -42,6 +48,7 @@ jobs:
           fail-on-issues: 'false'
           score: 'true'
           trend: 'true'
+          no-cache: 'true'
           artifacts-dir: fallow-artifacts-trend
       - name: Assert trend run produced results
         env:

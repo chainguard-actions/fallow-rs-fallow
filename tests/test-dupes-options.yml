@@ -1,4 +1,4 @@
-name: Test health min-score and min-severity gates pass
+name: Test dupes with token/line minimums and threshold
 on:
   workflow_dispatch:
 jobs:
@@ -9,22 +9,22 @@ jobs:
       - id: action
         uses: .
         with:
-          command: health
+          command: dupes
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          min-score: '0'
-          min-severity: critical
-          artifacts-dir: fallow-artifacts-health-score
-      - name: Assert gates passed and results produced
+          min-tokens: '20'
+          min-lines: '2'
+          threshold: '100'
+          top: '10'
+          artifacts-dir: fallow-artifacts-dupes-options
+      - name: Assert dupes results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
-          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          echo "gates-failed: $FAILED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1

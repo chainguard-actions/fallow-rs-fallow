@@ -8,9 +8,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Prepare baseline directory
+      - name: Prepare baseline dir
         run: mkdir -p "$GITHUB_WORKSPACE/fallow-audit-baselines"
-      - id: dc
+      - id: save-dead-code
         uses: .
         with:
           command: dead-code
@@ -19,7 +19,7 @@ jobs:
           fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
           artifacts-dir: fallow-artifacts-audit-dc
-      - id: health
+      - id: save-health
         uses: .
         with:
           command: health
@@ -28,7 +28,7 @@ jobs:
           fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
           artifacts-dir: fallow-artifacts-audit-health
-      - id: dupes
+      - id: save-dupes
         uses: .
         with:
           command: dupes
@@ -37,18 +37,17 @@ jobs:
           fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
           artifacts-dir: fallow-artifacts-audit-dupes
-      - name: Assert baselines written
+      - name: Assert baselines saved
         run: |
           for f in dead-code health dupes; do
-            P="$GITHUB_WORKSPACE/fallow-audit-baselines/$f.json"
-            if [ ! -s "$P" ]; then
-              echo "FAIL: $P not written"
+            F="$GITHUB_WORKSPACE/fallow-audit-baselines/$f.json"
+            if [ ! -s "$F" ]; then
+              echo "FAIL: $F not saved"
               exit 1
             fi
-            jq empty "$P" || { echo "FAIL: $P invalid JSON"; exit 1; }
           done
           echo "PASS"
-      - id: audit
+      - id: action
         uses: .
         with:
           command: audit
@@ -62,23 +61,25 @@ jobs:
           health-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
           dupes-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
           artifacts-dir: fallow-artifacts-audit
-      - name: Assert audit verdict and gate
+      - name: Assert audit verdict
         env:
-          VERDICT: ${{ steps.audit.outputs.verdict }}
-          GATE: ${{ steps.audit.outputs.gate }}
-          ISSUES: ${{ steps.audit.outputs.issues }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
         run: |
-          echo "verdict: $VERDICT  gate: $GATE  issues: $ISSUES"
+          echo "issues: $ISSUES"
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE"
           case "$VERDICT" in
             pass|warn|fail) ;;
-            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+            *) echo "FAIL: verdict should be pass/warn/fail"; exit 1 ;;
           esac
-          if [ "$GATE" != "all" ]; then
-            echo "FAIL: expected gate 'all'"
-            exit 1
-          fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all'"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test git-derived changed-workspaces scoping
+name: Test changed-workspaces scoping in a monorepo
 on:
   workflow_dispatch:
 jobs:
@@ -16,8 +16,8 @@ jobs:
           version: '3.36.0'
           fail-on-issues: 'false'
           changed-workspaces: HEAD
-          artifacts-dir: fallow-artifacts-changed-ws
-      - name: Assert scoped run produced results
+          artifacts-dir: fallow-artifacts-changed-workspaces
+      - name: Assert changed-workspaces run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

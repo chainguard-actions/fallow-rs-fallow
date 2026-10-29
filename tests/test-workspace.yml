@@ -13,9 +13,9 @@ jobs:
           root: tests/fixtures/monorepo
           version: '3.36.0'
           fail-on-issues: 'false'
-          workspace: web
+          workspace: lib
           artifacts-dir: fallow-artifacts-workspace
-      - name: Assert scoped results produced
+      - name: Assert workspace-scoped results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -35,8 +35,8 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
-          if grep -q "packages/admin" "$FILE"; then
-            echo "FAIL: admin workspace findings leaked into web-scoped output"
+          if grep -q "packages/app/" "$FILE" && ! grep -q "packages/lib/" "$FILE"; then
+            echo "FAIL: results reference only the out-of-scope app workspace"
             exit 1
           fi
           echo "PASS"

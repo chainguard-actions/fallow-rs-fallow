@@ -1,4 +1,4 @@
-name: Test health with Istanbul coverage
+name: Test health with Istanbul coverage and CRAP threshold
 on:
   workflow_dispatch:
 jobs:
@@ -14,9 +14,9 @@ jobs:
           version: '3.36.0'
           fail-on-issues: 'false'
           coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /ci/build
+          coverage-root: /build
           max-crap: '30'
-          artifacts-dir: fallow-artifacts-coverage
+          artifacts-dir: fallow-artifacts-health-coverage
       - name: Assert health results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
