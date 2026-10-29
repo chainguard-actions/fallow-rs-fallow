@@ -1,4 +1,4 @@
-name: Test changed-workspaces with a missing ref fails hard
+name: Test changed-workspaces with a missing ref is a hard error
 on:
   workflow_dispatch:
 
@@ -16,7 +16,7 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          changed-workspaces: refs/heads/this-ref-does-not-exist-anywhere
+          changed-workspaces: refs/heads/this-ref-does-not-exist-xyz
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -25,13 +25,13 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert missing ref is a hard error
+      - name: Assert the action failed instead of silently analyzing full scope
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected a hard error for a missing changed-workspaces ref"
+            echo "FAIL: expected failure for a missing changed-workspaces ref, got '$OUTCOME'"
             exit 1
           fi
           echo "PASS"

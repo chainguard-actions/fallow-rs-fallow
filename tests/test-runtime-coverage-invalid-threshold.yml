@@ -1,4 +1,4 @@
-name: Test runtime coverage inputs reject invalid low-traffic-threshold
+name: Test runtime-coverage inputs reject a non-numeric low-traffic-threshold
 on:
   workflow_dispatch:
 
@@ -16,11 +16,11 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
-          runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          min-invocations-hot: '100'
-          min-observation-volume: '1000'
-          low-traffic-threshold: 'not-a-number'
           format: json
+          runtime-coverage: tests/fixtures/coverage/coverage-final.json
+          min-invocations-hot: '100'
+          min-observation-volume: '10'
+          low-traffic-threshold: 'not-a-number'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -28,7 +28,7 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert action rejected invalid input
+      - name: Assert the action rejected the invalid threshold
         env:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
@@ -36,11 +36,11 @@ jobs:
           echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for invalid low-traffic-threshold"
+            echo "FAIL: expected failure for invalid low-traffic-threshold, got '$OUTCOME'"
             exit 1
           fi
           if [ -n "$ISSUES" ]; then
-            echo "FAIL: analysis should not have run"
+            echo "FAIL: analysis should not have produced an issues count"
             exit 1
           fi
           echo "PASS"

@@ -17,10 +17,10 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
+          format: json
           hotspots: 'true'
           since: 1y
           min-commits: '1'
-          format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -28,18 +28,19 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert outputs
+      - name: Assert hotspot analysis ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+            echo "FAIL: results file missing: $RESULTS"
             exit 1
           fi
           echo "PASS"

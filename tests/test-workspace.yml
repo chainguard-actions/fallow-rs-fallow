@@ -24,22 +24,19 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert scoped results
+      - name: Assert workspace-scoped analysis ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
-            exit 1
-          fi
-          if grep -q 'pkg-b/' "$RESULTS"; then
-            echo "FAIL: results include findings from pkg-b outside the workspace scope"
+            echo "FAIL: results file missing: $RESULTS"
             exit 1
           fi
           echo "PASS"

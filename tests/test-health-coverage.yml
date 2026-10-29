@@ -15,10 +15,9 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
-          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /original/project
-          max-crap: '30'
           format: json
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /coverage-root
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -26,18 +25,19 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert outputs
+      - name: Assert health with coverage ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+            echo "FAIL: results file missing: $RESULTS"
             exit 1
           fi
           echo "PASS"

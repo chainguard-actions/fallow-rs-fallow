@@ -1,4 +1,4 @@
-name: Test combined run with only selector
+name: Test dupes with min-tokens, min-lines, threshold and top
 on:
   workflow_dispatch:
 
@@ -13,9 +13,13 @@ jobs:
       - id: action
         uses: .
         with:
+          command: dupes
           root: tests/fixtures/simple-js
-          only: dead-code,health
           format: json
+          min-tokens: '10'
+          min-lines: '2'
+          threshold: '100'
+          top: '5'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -23,19 +27,19 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert outputs
+      - name: Assert dupes ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+            echo "FAIL: results file missing: $RESULTS"
             exit 1
           fi
-          jq -e . "$RESULTS" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

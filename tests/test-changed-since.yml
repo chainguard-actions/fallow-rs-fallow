@@ -1,4 +1,4 @@
-name: Test changed-since scoping
+name: Test changed-since scoping to HEAD
 on:
   workflow_dispatch:
 
@@ -26,7 +26,7 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert scoped run produced results
+      - name: Assert scoped analysis ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -36,11 +36,11 @@ jobs:
           echo "results: $RESULTS"
           echo "changed-files-unavailable: $UNAVAILABLE"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+            echo "FAIL: results file missing: $RESULTS"
             exit 1
           fi
           echo "PASS"

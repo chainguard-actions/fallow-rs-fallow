@@ -1,4 +1,4 @@
-name: Test health thresholds, sort, top and min-severity
+name: Test health complexity thresholds, top, sort and min-severity
 on:
   workflow_dispatch:
 
@@ -15,13 +15,13 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
-          max-cyclomatic: '10'
-          max-cognitive: '8'
-          max-crap: '25.5'
-          sort: cognitive
-          top: '5'
-          min-severity: critical
           format: json
+          max-cyclomatic: '50'
+          max-cognitive: '50'
+          max-crap: '100.0'
+          top: '5'
+          sort: cognitive
+          min-severity: critical
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -29,18 +29,23 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert outputs
+      - name: Assert health ran with thresholds
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+            echo "FAIL: results file missing: $RESULTS"
+            exit 1
+          fi
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: results file is not valid JSON"
             exit 1
           fi
           echo "PASS"
