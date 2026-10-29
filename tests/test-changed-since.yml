@@ -25,7 +25,7 @@ jobs:
           fail-on-issues: 'false'
           annotations: 'false'
 
-      - name: Assert scoped run produced numeric output
+      - name: Assert scoped run produced outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -39,8 +39,12 @@ jobs:
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: '$RESULTS'"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
+          case "$UNAVAILABLE" in
+            true|false|"") ;;
+            *) echo "FAIL: unexpected changed-files-unavailable '$UNAVAILABLE'"; exit 1 ;;
+          esac
           echo "PASS"

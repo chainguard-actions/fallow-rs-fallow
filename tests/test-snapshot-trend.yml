@@ -1,4 +1,4 @@
-name: Test health save-snapshot then trend
+name: Test health snapshot save and trend comparison
 on:
   workflow_dispatch:
 jobs:
@@ -26,7 +26,7 @@ jobs:
           auto-changed-since: 'false'
           annotations: 'false'
 
-      - name: Assert snapshot file was written
+      - name: Assert snapshot was written
         env:
           ISSUES: ${{ steps.snapshot.outputs.issues }}
         run: |
@@ -35,10 +35,11 @@ jobs:
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          FOUND=$(find . -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
-          echo "snapshots: $FOUND"
-          if [ -z "$FOUND" ]; then
-            echo "FAIL: no snapshot file found under a .fallow/snapshots directory"
+          COUNT=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | wc -l)
+          echo "snapshot files: $COUNT"
+          find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null || true
+          if [ "$COUNT" -lt 1 ]; then
+            echo "FAIL: no snapshot file found under .fallow/snapshots"
             exit 1
           fi
           echo "PASS"
@@ -66,8 +67,8 @@ jobs:
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          if ! jq empty "$RESULTS"; then
-            echo "FAIL: results is not valid JSON"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"

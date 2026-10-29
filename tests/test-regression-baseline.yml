@@ -1,0 +1,68 @@
+name: Test regression baseline save and compare
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - id: save
+        uses: .
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+
+      - name: Assert regression baseline file was written
+        run: |
+          F="$GITHUB_WORKSPACE/fallow-regression-baseline.json"
+          if [ ! -s "$F" ]; then
+            echo "FAIL: regression baseline not written at $F"
+            exit 1
+          fi
+          cat "$F"
+          echo "PASS"
+
+      - id: compare
+        uses: .
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+          fail-on-regression: 'true'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+
+      - name: Assert no regression detected
+        env:
+          OUTCOME: ${{ steps.compare.outcome }}
+          SAVED: ${{ steps.save.outputs.issues }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME saved-issues: $SAVED compare-issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: compare run should succeed with unchanged code"
+            exit 1
+          fi
+          if [ "$ISSUES" != "$SAVED" ]; then
+            echo "FAIL: issue count changed between runs"
+            exit 1
+          fi
+          echo "PASS"

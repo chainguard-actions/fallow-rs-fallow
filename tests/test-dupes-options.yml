@@ -1,4 +1,4 @@
-name: Test dupes tuning options
+name: Test dupes with token/line/threshold options
 on:
   workflow_dispatch:
 jobs:
@@ -24,12 +24,12 @@ jobs:
           min-tokens: '10'
           min-lines: '2'
           threshold: '100'
-          top: '5'
+          top: '3'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
 
-      - name: Assert dupes ran with options
+      - name: Assert dupes run produced clone-group count
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -40,7 +40,7 @@ jobs:
             exit 1
           fi
           if ! jq -e '.stats' "$RESULTS" > /dev/null; then
-            echo "FAIL: results file has no stats section"
+            echo "FAIL: results missing .stats"
             exit 1
           fi
           echo "PASS"

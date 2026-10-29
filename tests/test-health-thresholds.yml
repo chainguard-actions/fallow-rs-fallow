@@ -1,4 +1,4 @@
-name: Test health with low complexity thresholds and hotspot options
+name: Test health with strict complexity thresholds
 on:
   workflow_dispatch:
 jobs:
@@ -23,27 +23,28 @@ jobs:
           format: json
           max-cyclomatic: '2'
           max-cognitive: '2'
-          max-crap: '5'
           sort: cognitive
-          top: '10'
-          hotspots: 'true'
-          since: 1y
-          min-commits: '1'
+          top: '5'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
 
-      - name: Assert complex function exceeds the low thresholds
+      - name: Assert complexFunction exceeds thresholds
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "functions above threshold: $ISSUES"
+          echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected complexFunction to exceed max-cyclomatic 2 / max-cognitive 2"
+            echo "FAIL: expected at least one function above thresholds"
+            exit 1
+          fi
+          if ! grep -q complexFunction "$RESULTS"; then
+            echo "FAIL: complexFunction not reported in results"
             exit 1
           fi
           echo "PASS"

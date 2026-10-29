@@ -10,24 +10,73 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.32.0** was hardened automatically. 1 finding(s) were identified and resolved across 2 iteration(s).
+Action **fallow-rs--fallow/v3.32.0** was hardened automatically. 8 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Sub-rule (a): 8 composite steps in action.yml put the expression ${{ github.action_path }} directly into a run: shell string, e.g. `run: bash ${{ github.action_path }}/action/scripts/install.sh`. The steps are Install fallow (install.sh), Fallow branded token (broker-token.sh), Run analysis (analyze.sh), Check Code Scanning availability (check-code-scanning.sh), Post PR comment (comment.sh), Emit inline annotations (annotate.sh), Job summary (summary.sh) and Post review comments (review.sh). Any ${{ }} inside a run: block is template-substituted before the shell parses it. Fix: use the runner-provided env var instead, quoted: `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
+Rule (a): the 'Install fallow' step puts an expression directly inside its run: line: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Fix: use the quoted env var instead, e.g. `bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
-- `action.yml:548`
-- `action.yml:556`
-- `action.yml:660`
-- `action.yml:672`
-- `action.yml:722`
-- `action.yml:741`
-- `action.yml:766`
-- `action.yml:797`
+- `action.yml:411`
+
+### script-injection (severity: high)
+
+Rule (a): the 'Fallow branded token' step puts an expression directly inside its run: line: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`.
+
+Locations:
+
+- `action.yml:419`
+
+### script-injection (severity: high)
+
+Rule (a): the 'Run analysis' step puts an expression directly inside its run: line: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`.
+
+Locations:
+
+- `action.yml:532`
+
+### script-injection (severity: high)
+
+Rule (a): the 'Check Code Scanning availability' step puts an expression directly inside its run: line: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`.
+
+Locations:
+
+- `action.yml:545`
+
+### script-injection (severity: high)
+
+Rule (a): the 'Post PR comment' step puts an expression directly inside its run: line: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`.
+
+Locations:
+
+- `action.yml:592`
+
+### script-injection (severity: high)
+
+Rule (a): the 'Emit inline annotations' step puts an expression directly inside its run: line: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`.
+
+Locations:
+
+- `action.yml:614`
+
+### script-injection (severity: high)
+
+Rule (a): the 'Job summary' step puts an expression directly inside its run: line: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`.
+
+Locations:
+
+- `action.yml:640`
+
+### script-injection (severity: high)
+
+Rule (a): the 'Post review comments' step puts an expression directly inside its run: line: `run: bash ${{ github.action_path }}/action/scripts/review.sh`.
+
+Locations:
+
+- `action.yml:673`
 
 ## Iteration Notes
 
@@ -37,20 +86,11 @@ Locations:
 
 **Notes:**
 
-action.yml had 8 composite steps whose run: line put ${{ github.action_path }} straight into the shell command: install, broker-token, analyze, check-code-scanning, comment, annotate, summary and review. Each now reads `bash "$GITHUB_ACTION_PATH/action/scripts/<name>.sh"`. All of these steps use shell: bash, so this is the correct form. I haven't run the action. The two ACTION_JQ_DIR values still use ${{ github.action_path }}, but they sit in env: blocks, not in run: lines, so I left them alone. No other files changed.
+I fixed all 8 script-injection findings in action.yml. Each step that ran `bash ${{ github.action_path }}/action/scripts/<x>.sh` now runs `bash "$GITHUB_ACTION_PATH/action/scripts/<x>.sh"` instead. The steps are install, broker-token, analyze, check-code-scanning, comment, annotate, summary and review. All of them use shell: bash, so the quoted $VAR form works as is.
 
-### Iteration 2
+The edit tool misbehaved partway through. Two edits damaged the YAML near the annotate and summary steps (merged lines and truncated text), and two others did not change the install and review lines on the first try. I repaired the damage, re-applied the changes, and re-read the whole steps section: it reads correctly, and searching the file finds exactly the expected 8 run: lines. I did not re-read the inputs section above `runs:` after the glitches, so it hasn't been checked.
 
-**Fixes applied:** script-injection, invalid-yaml
+The file has not been run or parsed by a YAML tool, so a test run of the action is still needed to confirm it works.
 
-**Notes:**
-
-Both findings are fixed in action.yml. I haven't loaded the file in a YAML parser or run the action. I checked the result with text searches only.
-
-- **invalid-yaml:** The `run:` line of the 'Fallow branded token' step was broken. It was indented at the wrong level and had stray text (`n.sh`) after the closing quote. It now reads `run: bash "$GITHUB_ACTION_PATH/action/scripts/broker-token.sh"` at the correct indentation, and that script exists in the action.
-- **script-injection:** The install.sh, analyze.sh, annotate.sh, summary.sh and review.sh steps now use `run: bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"` instead of putting `${{ github.action_path }}` in the shell command. This matches the steps that already did it this way.
-
-I made the first round of edits in parallel, and some of them overwrote each other. I redid the lost ones one at a time and confirmed that all eight script `run:` lines are in the quoted form and no `run:` line contains a `${{ }}` expression.
-
-The `${{ github.action_path }}` values left in `env:` blocks (ACTION_JQ_DIR) are not a shell-injection risk and are unchanged.
+Two uses of `${{ github.action_path }}` remain. They set ACTION_JQ_DIR in the env: blocks of the annotate and summary steps, not in run:, so they can't inject anything and I left them unchanged.
 
