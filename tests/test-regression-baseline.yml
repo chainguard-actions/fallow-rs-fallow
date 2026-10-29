@@ -7,35 +7,46 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a minimal JS project
+      - name: Create project with an unused export
         run: |
-          P="$GITHUB_WORKSPACE/act-fixtures/regression"
+          P="$GITHUB_WORKSPACE/tests/fixtures/regression-project"
+          rm -rf "$P"
           mkdir -p "$P/src"
-          echo '{"name":"regression","version":"1.0.0","type":"module","scripts":{"start":"node src/index.js"}}' > "$P/package.json"
+          cat > "$P/package.json" <<'EOF'
+          {
+            "name": "regression-project",
+            "version": "1.0.0",
+            "type": "module",
+            "main": "src/index.js"
+          }
+          EOF
           cat > "$P/src/index.js" <<'EOF'
+          import { used } from './util.js';
+          console.log(used());
+          EOF
+          cat > "$P/src/util.js" <<'EOF'
           export function used() { return 1; }
-          export function unused() { return 2; }
-          used();
+          export function unusedHelper() { return 2; }
           EOF
 
       - id: save
         uses: .
         with:
           command: dead-code
-          root: act-fixtures/regression
+          root: tests/fixtures/regression-project
           format: json
+          save-regression-baseline: ${{ github.workspace }}/tests/fixtures/regression-project/regression-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
-          save-regression-baseline: ${{ github.workspace }}/act-fixtures/regression-out/regression-baseline.json
 
-      - name: Assert regression baseline file was saved
+      - name: Assert regression baseline was saved
         run: |
-          F="$GITHUB_WORKSPACE/act-fixtures/regression-out/regression-baseline.json"
-          if [ ! -f "$F" ]; then
-            echo "FAIL: regression baseline not saved at $F"
+          F="$GITHUB_WORKSPACE/tests/fixtures/regression-project/regression-baseline.json"
+          if [ ! -f "$F" ] || ! jq empty "$F"; then
+            echo "FAIL: regression baseline missing or invalid at $F"
             exit 1
           fi
           cat "$F"
@@ -45,29 +56,29 @@ jobs:
         uses: .
         with:
           command: dead-code
-          root: act-fixtures/regression
+          root: tests/fixtures/regression-project
           format: json
-          fail-on-issues: 'false'
+          regression-baseline: ${{ github.workspace }}/tests/fixtures/regression-project/regression-baseline.json
           fail-on-regression: 'true'
+          fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
-          regression-baseline: ${{ github.workspace }}/act-fixtures/regression-out/regression-baseline.json
 
       - name: Assert no regression against identical code
         env:
-          OUTCOME: ${{ steps.compare.outcome }}
           ISSUES: ${{ steps.compare.outputs.issues }}
+          OUTCOME: ${{ steps.compare.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: expected success when comparing against own regression baseline"
+            echo "FAIL: regression gate tripped on unchanged code"
             exit 1
           fi
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected the existing unused export to still be counted"
             exit 1
           fi
           echo "PASS"

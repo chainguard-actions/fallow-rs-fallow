@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds, sort, top and threads
+name: Test health command with complexity thresholds and hotspot options
 on:
   workflow_dispatch:
 jobs:
@@ -6,83 +6,91 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
-      - name: Create a minimal JS project
+      - name: Create a minimal JS project with a complex function
         run: |
-          P="$GITHUB_WORKSPACE/act-fixtures/health-thresholds"
+          P="$GITHUB_WORKSPACE/tests/fixtures/health-thresholds-project"
           mkdir -p "$P/src"
           cat > "$P/package.json" <<'EOF'
           {
-            "name": "health-thresholds",
+            "name": "health-thresholds-project",
             "version": "1.0.0",
             "type": "module",
             "scripts": { "start": "node src/index.js" }
           }
           EOF
           cat > "$P/src/index.js" <<'EOF'
-          export function branchy(a, b, c, d) {
+          export function complexFunction(a, b, c, d, e) {
             if (a > 0) {
               if (b > 0) {
                 if (c > 0) {
-                  return d > 0 ? 4 : 3;
+                  if (d > 0) {
+                    if (e > 0) {
+                      return a + b + c + d + e;
+                    } else {
+                      return a + b + c + d;
+                    }
+                  } else {
+                    return a + b + c;
+                  }
+                } else {
+                  return a + b;
                 }
-                return 2;
+              } else {
+                return a;
               }
-              return 1;
+            } else {
+              return 0;
             }
-            return 0;
           }
-          branchy(1, 2, 3, 4);
+          complexFunction(1, 2, 3, 4, 5);
           EOF
 
       - id: action
         uses: .
         with:
           command: health
-          root: act-fixtures/health-thresholds
+          root: tests/fixtures/health-thresholds-project
           format: json
+          max-cyclomatic: '3'
+          max-cognitive: '3'
+          max-crap: '10'
+          top: '5'
+          sort: cognitive
+          threads: '2'
+          hotspots: 'true'
+          since: 1y
+          min-commits: '1'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
-          max-cyclomatic: '2'
-          max-cognitive: '2'
-          max-crap: '30.0'
-          sort: cognitive
-          top: '5'
-          threads: '2'
 
-      - name: Assert issues output and results file
+      - name: Assert complex function exceeded the low thresholds
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number"
+            echo "FAIL: issues is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one function above the thresholds"
             exit 1
           fi
           echo "PASS"
 
-      - name: Assert threshold flags were passed to fallow
+      - name: Assert results file is valid JSON
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          ARGS_FILE=$(find "$GITHUB_WORKSPACE" -maxdepth 2 -name 'fallow-analysis-args.sh' | head -1)
-          echo "args file: $ARGS_FILE"
-          if [ -z "$ARGS_FILE" ]; then
-            echo "SKIP: args file not found"
-            exit 0
+          echo "results: $RESULTS"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
           fi
-          cat "$ARGS_FILE"
-          for flag in --max-cyclomatic --max-cognitive --max-crap --sort --top --threads; do
-            if ! grep -q -- "$flag" "$ARGS_FILE"; then
-              echo "FAIL: expected $flag in analysis args"
-              exit 1
-            fi
-          done
           echo "PASS"

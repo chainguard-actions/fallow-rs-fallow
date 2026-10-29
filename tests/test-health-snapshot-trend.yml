@@ -1,4 +1,4 @@
-name: Test health save-snapshot then trend
+name: Test health command save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,17 +6,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
 
       - name: Create a minimal JS project
         run: |
-          P="$GITHUB_WORKSPACE/act-fixtures/snapshot"
+          P="$GITHUB_WORKSPACE/tests/fixtures/snapshot-project"
+          rm -rf "$P"
           mkdir -p "$P/src"
-          echo '{"name":"snapshot","version":"1.0.0","type":"module","scripts":{"start":"node src/index.js"}}' > "$P/package.json"
+          cat > "$P/package.json" <<'EOF'
+          {
+            "name": "snapshot-project",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": { "start": "node src/index.js" }
+          }
+          EOF
           cat > "$P/src/index.js" <<'EOF'
           export function add(a, b) {
-            if (a > b) { return a - b; }
             return a + b;
           }
           add(1, 2);
@@ -26,21 +31,21 @@ jobs:
         uses: .
         with:
           command: health
-          root: act-fixtures/snapshot
+          root: tests/fixtures/snapshot-project
           format: json
+          save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
-          save-snapshot: 'true'
 
-      - name: Assert a snapshot was written
+      - name: Assert a snapshot was saved
         run: |
-          FOUND=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
-          echo "snapshots: $FOUND"
-          if [ -z "$FOUND" ]; then
-            echo "FAIL: no snapshot file found under .fallow/snapshots"
+          D="$GITHUB_WORKSPACE/tests/fixtures/snapshot-project/.fallow/snapshots"
+          ls -la "$D" || true
+          if [ -z "$(ls -A "$D" 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot saved in $D"
             exit 1
           fi
           echo "PASS"
@@ -49,14 +54,14 @@ jobs:
         uses: .
         with:
           command: health
-          root: act-fixtures/snapshot
+          root: tests/fixtures/snapshot-project
           format: json
+          trend: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
-          trend: 'true'
 
       - name: Assert trend run produced results
         env:
@@ -64,13 +69,12 @@ jobs:
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number"
+            echo "FAIL: issues is not a number: '$ISSUES'"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"

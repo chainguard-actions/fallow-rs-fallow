@@ -10,72 +10,23 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.31.0** was hardened automatically. 8 finding(s) were identified and resolved across 2 iteration(s).
+Action **fallow-rs--fallow/v3.31.0** was hardened automatically. 1 finding(s) were identified and resolved across 3 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Rule (a) violation in step 'Install fallow': `run: bash ${{ github.action_path }}/action/scripts/install.sh` puts an expression straight into the shell command. Pass it through env instead, e.g. ACTION_PATH: ${{ github.action_path }} with `bash "$ACTION_PATH/action/scripts/install.sh"`, or use "$GITHUB_ACTION_PATH".
+Sub-rule (a): a GitHub Actions expression is placed directly in run: shell commands. Eight composite steps (Install fallow, Fallow branded token, Run analysis, Check Code Scanning availability, Post PR comment, Emit inline annotations, Job summary, Post review comments) use the form `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`. The template is substituted unquoted before the shell parses the line. Fix: use the runner-provided env var, quoted: `run: bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"`.
 
 Locations:
 
-- `action.yml:410`
-
-### script-injection (severity: high)
-
-Rule (a) violation in step 'Fallow branded token': `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh` puts an expression straight into the shell command.
-
-Locations:
-
-- `action.yml:418`
-
-### script-injection (severity: high)
-
-Rule (a) violation in step 'Run analysis': `run: bash ${{ github.action_path }}/action/scripts/analyze.sh` puts an expression straight into the shell command.
-
-Locations:
-
-- `action.yml:532`
-
-### script-injection (severity: high)
-
-Rule (a) violation in step 'Check Code Scanning availability': `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh` puts an expression straight into the shell command.
-
-Locations:
-
-- `action.yml:545`
-
-### script-injection (severity: high)
-
-Rule (a) violation in step 'Post PR comment': `run: bash ${{ github.action_path }}/action/scripts/comment.sh` puts an expression straight into the shell command.
-
-Locations:
-
+- `action.yml:411`
+- `action.yml:419`
+- `action.yml:533`
+- `action.yml:547`
 - `action.yml:592`
-
-### script-injection (severity: high)
-
-Rule (a) violation in step 'Emit inline annotations': `run: bash ${{ github.action_path }}/action/scripts/annotate.sh` puts an expression straight into the shell command.
-
-Locations:
-
 - `action.yml:614`
-
-### script-injection (severity: high)
-
-Rule (a) violation in step 'Job summary': `run: bash ${{ github.action_path }}/action/scripts/summary.sh` puts an expression straight into the shell command.
-
-Locations:
-
 - `action.yml:640`
-
-### script-injection (severity: high)
-
-Rule (a) violation in step 'Post review comments': `run: bash ${{ github.action_path }}/action/scripts/review.sh` puts an expression straight into the shell command.
-
-Locations:
-
 - `action.yml:673`
 
 ## Iteration Notes
@@ -86,13 +37,21 @@ Locations:
 
 **Notes:**
 
-In all 8 composite steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review), replaced `run: bash ${{ github.action_path }}/action/scripts/X.sh` with `run: bash "$GITHUB_ACTION_PATH/action/scripts/X.sh"`. All steps are shell: bash, so quoting the $VAR form is right. A few edits broke the YAML layout at first (wrong indentation, missing newlines). I fixed those and re-read the section to confirm it is well-formed. ACTION_JQ_DIR still gets github.action_path through env:, which is already the safe pattern, so I left it as it was.
+In action.yml, I rewrote the 8 composite steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review) from `run: bash ${{ github.action_path }}/action/scripts/X.sh` to `run: bash "$GITHUB_ACTION_PATH/action/scripts/X.sh"`. All steps use shell: bash. I left ACTION_JQ_DIR in the env: blocks unchanged because expressions there are not injectable.
 
-### Iteration 1
+### Iteration 2
 
-**Fixes applied:** github-env-injection
+**Fixes applied:** invalid-yaml, script-injection
 
 **Notes:**
 
-In action/scripts/analyze.sh (a bash script), FALLOW_DIFF_FILE from the diff-file input is now checked before it is written to $GITHUB_ENV. A value containing CR or LF stops the script with an ::error:: and exit 2. As a second layer, the value is also passed through tr -d '\n\r' before the write. The other write uses an auto-generated path (_DIFF_PATH), so it was left alone. action.yml needed no change, since the env: mapping itself is safe.
+An earlier iteration's edits left action.yml malformed: the run: lines for analyze.sh, annotate.sh and summary.sh ran into the following '- name:' entries. Each is now its own line, run: bash "$GITHUB_ACTION_PATH/action/scripts/<x>.sh", with the next step's '- name:' restored. The 'Post review comments' step now runs bash "$GITHUB_ACTION_PATH/action/scripts/review.sh" instead of interpolating ${{ github.action_path }}. Not checked by a parser or a test run. The file ends at the review step, and I couldn't confirm upstream has nothing after it, because no original copy was available.
+
+### Iteration 3
+
+**Fixes applied:** script-injection
+
+**Notes:**
+
+Changed the 'Post review comments' step from `run: bash ${{ github.action_path }}/action/scripts/review.sh` to `run: bash "$GITHUB_ACTION_PATH/action/scripts/review.sh"` so it matches the other steps.
 
