@@ -1,3 +1,3 @@
-export function render(name) {
-  return `<h1>${name}</h1>`;
+export function greet(name) {
+  return `hello ${name}`;
 }

@@ -1,0 +1,13 @@
+{
+  "/build/src/math.js": {
+    "path": "/build/src/math.js",
+    "statementMap": {
+      "0": { "start": { "line": 1, "column": 0 }, "end": { "line": 1, "column": 40 } }
+    },
+    "fnMap": {},
+    "branchMap": {},
+    "s": { "0": 1 },
+    "f": {},
+    "b": {}
+  }
+}

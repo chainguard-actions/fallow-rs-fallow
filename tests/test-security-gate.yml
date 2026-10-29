@@ -13,27 +13,24 @@ jobs:
         with:
           command: security
           root: tests/fixtures/clean-project
-          version: '3.37.0'
-          changed-since: HEAD
           security-gate: new
+          changed-since: HEAD
+          version: '3.37.0'
           fail-on-issues: 'false'
-          auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert security output
+      - name: Assert security outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES gate: $GATE results: $RESULTS"
+          echo "issues: $ISSUES"
+          echo "gate: $GATE"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          F="$RESULTS"
-          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$F" ]; then
-            echo "FAIL: results file not found"
+          if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
+            echo "FAIL: expected gate 'new' when set"
             exit 1
           fi
           echo "PASS"

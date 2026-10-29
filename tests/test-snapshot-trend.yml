@@ -1,4 +1,4 @@
-name: Test health snapshot save and trend comparison
+name: Test health snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,23 +6,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snapshot
+      - id: snap
         uses: .
         with:
           command: health
           root: tests/fixtures/clean-project
           version: '3.37.0'
-          score: 'true'
           save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert snapshot written
+      - name: Assert snapshot saved
+        env:
+          ISSUES: ${{ steps.snap.outputs.issues }}
         run: |
-          found=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -n 5)
-          echo "snapshots: $found"
-          if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file written under .fallow/snapshots"
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          ls -la tests/fixtures/clean-project/.fallow/snapshots 2>/dev/null || true
+          ls -la .fallow/snapshots 2>/dev/null || true
+          COUNT=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | wc -l)
+          echo "snapshot files: $COUNT"
+          if [ "$COUNT" -lt 1 ]; then
+            echo "FAIL: no snapshot file was written"
             exit 1
           fi
           echo "PASS"
@@ -32,17 +40,16 @@ jobs:
           command: health
           root: tests/fixtures/clean-project
           version: '3.37.0'
-          score: 'true'
           trend: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert trend run output
+      - name: Assert trend run
         env:
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
@@ -50,7 +57,7 @@ jobs:
           F="$RESULTS"
           [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
           if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

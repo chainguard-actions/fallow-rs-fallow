@@ -1,0 +1,54 @@
+name: Test dead-code baseline save and load
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dead-code-project
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          version: '3.37.0'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Assert baseline saved
+        run: |
+          F="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: baseline file not written"
+            exit 1
+          fi
+          if ! jq -e . "$F" > /dev/null; then
+            echo "FAIL: baseline is not valid JSON"
+            exit 1
+          fi
+          echo "PASS"
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dead-code-project
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          version: '3.37.0'
+          fail-on-issues: 'true'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Assert baseline applied
+        env:
+          ISSUES: ${{ steps.load.outputs.issues }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
+          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "baseline-entries: $ENTRIES"
+          echo "baseline-stale-entries: $STALE"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues after loading baseline"
+            exit 1
+          fi
+          echo "PASS"
