@@ -1,4 +1,4 @@
-name: Test health min-score and min-severity gates pass
+name: Test dead-code with issue-types filter and explicit config
 on:
   workflow_dispatch:
 jobs:
@@ -9,23 +9,21 @@ jobs:
       - id: action
         uses: .
         with:
-          command: health
+          command: dead-code
           root: tests/fixtures/sample-project
+          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
-          min-score: '0'
-          min-severity: critical
-          artifacts-dir: fallow-out-health-gates
+          artifacts-dir: fallow-out-issue-types
+          issue-types: unused-files
       - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
-          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          echo "gates-failed: $FAILED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1
@@ -34,4 +32,8 @@ jobs:
             echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
+          ARGS_FILE=fallow-out-issue-types/fallow-analysis-args.sh
+          cat "$ARGS_FILE"
+          grep -q -- "--unused-files" "$ARGS_FILE" || { echo "FAIL: --unused-files not forwarded"; exit 1; }
+          grep -q -- "--config" "$ARGS_FILE" || { echo "FAIL: --config not forwarded"; exit 1; }
           echo "PASS"

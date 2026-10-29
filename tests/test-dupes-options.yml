@@ -1,4 +1,4 @@
-name: Test dupes command with tuning options
+name: Test dupes with tuning options
 on:
   workflow_dispatch:
 jobs:
@@ -14,12 +14,11 @@ jobs:
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
-          min-tokens: '10'
-          min-lines: '2'
+          artifacts-dir: fallow-out-dupes-options
+          min-tokens: '30'
+          min-lines: '3'
           threshold: '100'
-          top: '5'
-          threads: '2'
-          artifacts-dir: fallow-out-dupes-opts
+          top: '10'
       - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
@@ -35,4 +34,12 @@ jobs:
             echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
+          ARGS_FILE=fallow-out-dupes-options/fallow-analysis-args.sh
+          cat "$ARGS_FILE"
+          for flag in --min-tokens --min-lines --threshold --top; do
+            if ! grep -q -- "$flag" "$ARGS_FILE"; then
+              echo "FAIL: $flag not forwarded"
+              exit 1
+            fi
+          done
           echo "PASS"

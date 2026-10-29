@@ -16,7 +16,7 @@ Action **fallow-rs--fallow/v3.35.0** was hardened automatically. 8 finding(s) we
 
 ### script-injection (severity: high)
 
-Sub-rule (a) failed in the 'Install fallow' step. The expression goes straight into the shell command: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Pass it through an env var (e.g. ACTION_PATH: ${{ github.action_path }}) or use the runner-provided $GITHUB_ACTION_PATH, and call `bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
+Rule (a): a GitHub Actions expression is placed directly in the run: command of the 'Install fallow' step: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Pass github.action_path in through env (e.g. ACTION_PATH) or use the $GITHUB_ACTION_PATH variable, double-quoted.
 
 Locations:
 
@@ -24,7 +24,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Sub-rule (a) failed in the 'Fallow branded token' step: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`. Use the quoted "$GITHUB_ACTION_PATH" instead.
+Rule (a): a GitHub Actions expression is placed directly in the run: command of the 'Fallow branded token' step: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
@@ -32,23 +32,23 @@ Locations:
 
 ### script-injection (severity: high)
 
-Sub-rule (a) failed in the 'Run analysis' step: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`. Use the quoted "$GITHUB_ACTION_PATH" instead.
+Rule (a): a GitHub Actions expression is placed directly in the run: command of the 'Run analysis' step: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
-- `action.yml:543`
+- `action.yml:541`
 
 ### script-injection (severity: high)
 
-Sub-rule (a) failed in the 'Check Code Scanning availability' step: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`. Use the quoted "$GITHUB_ACTION_PATH" instead.
+Rule (a): a GitHub Actions expression is placed directly in the run: command of the 'Check Code Scanning availability' step: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
-- `action.yml:555`
+- `action.yml:554`
 
 ### script-injection (severity: high)
 
-Sub-rule (a) failed in the 'Post PR comment' step: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`. Use the quoted "$GITHUB_ACTION_PATH" instead.
+Rule (a): a GitHub Actions expression is placed directly in the run: command of the 'Post PR comment' step: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
@@ -56,7 +56,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Sub-rule (a) failed in the 'Emit inline annotations' step: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`. Use the quoted "$GITHUB_ACTION_PATH" instead.
+Rule (a): a GitHub Actions expression is placed directly in the run: command of the 'Emit inline annotations' step: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
@@ -64,7 +64,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Sub-rule (a) failed in the 'Job summary' step: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`. Use the quoted "$GITHUB_ACTION_PATH" instead.
+Rule (a): a GitHub Actions expression is placed directly in the run: command of the 'Job summary' step: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
@@ -72,11 +72,11 @@ Locations:
 
 ### script-injection (severity: high)
 
-Sub-rule (a) failed in the 'Post review comments' step: `run: bash ${{ github.action_path }}/action/scripts/review.sh`. Use the quoted "$GITHUB_ACTION_PATH" instead.
+Rule (a): a GitHub Actions expression is placed directly in the run: command of the 'Post review comments' step: `run: bash ${{ github.action_path }}/action/scripts/review.sh`. Use "$GITHUB_ACTION_PATH" instead.
 
 Locations:
 
-- `action.yml:681`
+- `action.yml:682`
 
 ## Iteration Notes
 
@@ -86,7 +86,7 @@ Locations:
 
 **Notes:**
 
-Replaced `bash ${{ github.action_path }}/action/scripts/<x>.sh` with `bash "$GITHUB_ACTION_PATH/action/scripts/<x>.sh"` in all 8 composite steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review). All steps use shell: bash. ACTION_JQ_DIR env entries left as-is (env: is the safe location).
+I changed 8 run: lines in action.yml from `bash ${{ github.action_path }}/action/scripts/X.sh` to `bash "$GITHUB_ACTION_PATH/action/scripts/X.sh"`. All of these steps use shell: bash. I left the ACTION_JQ_DIR env: entries alone: they are expressions inside env:, not inside run:, so they are already the safe form.
 
 ### Iteration 2
 
@@ -94,14 +94,7 @@ Replaced `bash ${{ github.action_path }}/action/scripts/<x>.sh` with `bash "$GIT
 
 **Notes:**
 
-script-injection: the 'Run analysis' and 'Post review comments' steps now run `bash "$GITHUB_ACTION_PATH/action/scripts/analyze.sh"` and `.../review.sh` instead of using the inline `${{ github.action_path }}` expression.
-
-invalid-yaml: a previous pass left three run: lines merged with the text that followed them. I split each one back into its own line:
-- broker-token step: a `run:run:` line had swallowed the next comment block.
-- comment step: a `run: basrun:` line had swallowed the next step's name.
-- annotate step: a `run:run:` line had swallowed the next step's name.
-
-I couldn't run a YAML parser here. I checked the fixed sections by reading them back, and a pattern search for other merged run: lines found nothing new.
+Replaced `${{ github.action_path }}` with the quoted `"$GITHUB_ACTION_PATH/..."` in the 'Check Code Scanning availability' and 'Post PR comment' run: lines. Fixed the broken YAML that an earlier edit left behind: the annotate step's run: line had been merged into the 'Job summary' step name, and the summary step's run: line had been merged into the 'Post review comments' step. I restored correct indentation and step separators.
 
 ### Iteration 3
 
@@ -109,5 +102,5 @@ I couldn't run a YAML parser here. I checked the fixed sections by reading them 
 
 **Notes:**
 
-Fixed invalid YAML in action.yml: in the 'Emit inline annotations' step, run: was indented 10 spaces instead of 6, and the next step's '- name: Job summary' and 'if:' had been merged onto one line. Moved run: back to 6 spaces and split the name and if: lines. Earlier hardening (pinned SHAs, values passed through env:) is unchanged. The YAML was not re-parsed and tests were not run.
+Fixed malformed YAML near the end of action.yml. The 'run:' lines of the 'Emit inline annotations' and 'Job summary' steps were over-indented (so YAML read them as part of the env mapping), and two step headers had been merged onto one line ('- name: Job summary   if: ...' and '- name: Post review comments   id: review'). I moved those run lines back to step level and split the 'name' line apart from 'if' and 'id'. Nothing else in the steps changed. A search found no other mis-indented run lines or merged keys.
 

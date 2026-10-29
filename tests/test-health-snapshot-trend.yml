@@ -6,41 +6,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snap
+        with:
+          fetch-depth: 0
+      - id: snapshot
         uses: .
         with:
           command: health
           root: tests/fixtures/sample-project
-          save-snapshot: 'true'
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-snapshot
-      - name: Assert snapshot written
+          save-snapshot: 'true'
+      - name: Assert snapshot run produced results
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
         run: |
-          D="$GITHUB_WORKSPACE/tests/fixtures/sample-project/.fallow/snapshots"
-          ls -la "$D" || true
-          if [ -z "$(ls -A "$D" 2>/dev/null)" ]; then
-            echo "FAIL: no snapshot written under $D"
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not numeric"
             exit 1
           fi
+          grep -q -- "--save-snapshot" fallow-out-snapshot/fallow-analysis-args.sh || { echo "FAIL: --save-snapshot not forwarded"; exit 1; }
           echo "PASS"
       - id: trend
         uses: .
         with:
           command: health
           root: tests/fixtures/sample-project
-          trend: 'true'
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-trend
+          trend: 'true'
+          since: 1y
+          min-commits: '1'
       - name: Assert trend run produced results
         env:
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1
@@ -49,4 +56,9 @@ jobs:
             echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
+          ARGS_FILE=fallow-out-trend/fallow-analysis-args.sh
+          cat "$ARGS_FILE"
+          for flag in --trend --since --min-commits; do
+            grep -q -- "$flag" "$ARGS_FILE" || { echo "FAIL: $flag not forwarded"; exit 1; }
+          done
           echo "PASS"

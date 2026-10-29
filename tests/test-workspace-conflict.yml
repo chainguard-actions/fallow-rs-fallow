@@ -1,4 +1,4 @@
-name: Test workspace and changed-workspaces together are rejected
+name: Test workspace and changed-workspaces are mutually exclusive
 on:
   workflow_dispatch:
 jobs:
@@ -13,11 +13,10 @@ jobs:
           command: dead-code
           root: tests/fixtures/sample-project
           version: 3.35.0
-          fail-on-issues: 'false'
           auto-changed-since: 'false'
+          artifacts-dir: fallow-out-workspace-conflict
           workspace: web
-          changed-workspaces: origin/main
-          artifacts-dir: fallow-out-ws-conflict
+          changed-workspaces: origin/does-not-exist
       - name: Assert action failed
         env:
           OUTCOME: ${{ steps.action.outcome }}

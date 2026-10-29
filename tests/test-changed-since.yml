@@ -13,19 +13,24 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/sample-project
-          changed-since: HEAD
           version: 3.35.0
           fail-on-issues: 'false'
           artifacts-dir: fallow-out-changed-since
+          changed-since: HEAD
       - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "changed-files-unavailable: $UNAVAILABLE"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1
           fi
+          if [ ! -f "$RESULTS" ] || ! jq -e . "$RESULTS" > /dev/null; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          grep -q -- "--changed-since" fallow-out-changed-since/fallow-analysis-args.sh || { echo "FAIL: --changed-since not forwarded"; exit 1; }
           echo "PASS"
