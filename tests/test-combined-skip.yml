@@ -1,4 +1,4 @@
-name: Test combined run with skip selector
+name: Test combined run with skip
 on:
   workflow_dispatch:
 jobs:

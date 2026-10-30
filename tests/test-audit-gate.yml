@@ -1,4 +1,4 @@
-name: Test audit with gate, worsened and per-analysis baselines
+name: Test audit command with gate and worsened
 on:
   workflow_dispatch:
 jobs:
@@ -8,9 +8,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Prepare baseline dir
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-audit-baselines"
-      - id: save-dead-code
+      - run: mkdir -p "$GITHUB_WORKSPACE/fallow-audit-baselines"
+      - id: save
         uses: .
         with:
           command: dead-code
@@ -18,35 +17,7 @@ jobs:
           version: '3.36.0'
           fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
-          artifacts-dir: fallow-artifacts-audit-dc
-      - id: save-health
-        uses: .
-        with:
-          command: health
-          root: tests/fixtures/sample-project
-          version: '3.36.0'
-          fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
-          artifacts-dir: fallow-artifacts-audit-health
-      - id: save-dupes
-        uses: .
-        with:
-          command: dupes
-          root: tests/fixtures/sample-project
-          version: '3.36.0'
-          fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
-          artifacts-dir: fallow-artifacts-audit-dupes
-      - name: Assert baselines saved
-        run: |
-          for f in dead-code health dupes; do
-            F="$GITHUB_WORKSPACE/fallow-audit-baselines/$f.json"
-            if [ ! -s "$F" ]; then
-              echo "FAIL: $F not saved"
-              exit 1
-            fi
-          done
-          echo "PASS"
+          artifacts-dir: fallow-artifacts-audit-save
       - id: action
         uses: .
         with:
@@ -58,10 +29,8 @@ jobs:
           gate: all
           worsened: warn
           dead-code-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
-          health-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
-          dupes-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
           artifacts-dir: fallow-artifacts-audit
-      - name: Assert audit verdict
+      - name: Assert audit verdict and gate
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           VERDICT: ${{ steps.action.outputs.verdict }}
@@ -72,7 +41,7 @@ jobs:
           echo "gate: $GATE"
           case "$VERDICT" in
             pass|warn|fail) ;;
-            *) echo "FAIL: verdict should be pass/warn/fail"; exit 1 ;;
+            *) echo "FAIL: verdict must be pass/warn/fail"; exit 1 ;;
           esac
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"

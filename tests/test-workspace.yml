@@ -1,4 +1,4 @@
-name: Test workspace scoping in a monorepo
+name: Test dead-code scoped to one workspace
 on:
   workflow_dispatch:
 jobs:
@@ -11,11 +11,11 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
+          workspace: pkg-a
           version: '3.36.0'
           fail-on-issues: 'false'
-          workspace: lib
           artifacts-dir: fallow-artifacts-workspace
-      - name: Assert workspace-scoped results
+      - name: Assert output scoped to pkg-a
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -35,8 +35,8 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
-          if grep -q "packages/app/" "$FILE" && ! grep -q "packages/lib/" "$FILE"; then
-            echo "FAIL: results reference only the out-of-scope app workspace"
+          if grep -q "unused-b" "$FILE"; then
+            echo "FAIL: pkg-b finding leaked into pkg-a scoped output"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test health hotspots with history window
+name: Test health hotspots with git history window
 on:
   workflow_dispatch:
 jobs:

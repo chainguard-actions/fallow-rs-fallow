@@ -1,5 +1,5 @@
 {
-  "name": "fallow-monorepo-fixture",
+  "name": "fallow-monorepo",
   "version": "1.0.0",
   "private": true,
   "workspaces": [

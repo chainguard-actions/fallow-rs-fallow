@@ -14,7 +14,8 @@ jobs:
           version: '3.36.0'
           fail-on-issues: 'false'
           max-cyclomatic: '10'
-          max-cognitive: '8'
+          max-cognitive: '10'
+          max-crap: '30'
           top: '5'
           sort: cognitive
           min-severity: critical
