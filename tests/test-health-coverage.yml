@@ -1,4 +1,4 @@
-name: Test health with Istanbul coverage for CRAP scoring
+name: Test health with Istanbul coverage
 on:
   workflow_dispatch:
 jobs:
@@ -21,12 +21,12 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /repo/tests/fixtures/simple-js
-          max-crap: '30'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /ci-build
+          max-crap: '30'
 
       - name: Assert coverage run produced results
         env:
@@ -35,11 +35,11 @@ jobs:
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

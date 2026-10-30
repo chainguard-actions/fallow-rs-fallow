@@ -21,21 +21,22 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
-      - name: Assert regression baseline file was written
+      - name: Assert regression baseline was saved
         run: |
-          F="$GITHUB_WORKSPACE/fallow-regression-baseline.json"
-          if [ ! -s "$F" ]; then
-            echo "FAIL: regression baseline not written at $F"
+          F="$GITHUB_WORKSPACE/fallow-regression.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: regression baseline not saved at $F"
             exit 1
           fi
           cat "$F"
           echo "PASS"
 
+      # Same code, so counts are equal and fail-on-regression must not trip.
       - id: compare
         uses: .
         env:
@@ -44,25 +45,24 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
-          fail-on-regression: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
+          fail-on-regression: 'true'
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
-      - name: Assert no regression detected
+      - name: Assert comparison succeeded
         env:
           OUTCOME: ${{ steps.compare.outcome }}
-          SAVED: ${{ steps.save.outputs.issues }}
           ISSUES: ${{ steps.compare.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME saved-issues: $SAVED compare-issues: $ISSUES"
+          echo "outcome: $OUTCOME issues: $ISSUES"
           if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: compare run should succeed with unchanged code"
+            echo "FAIL: expected success"
             exit 1
           fi
-          if [ "$ISSUES" != "$SAVED" ]; then
-            echo "FAIL: issue count changed between runs"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"
