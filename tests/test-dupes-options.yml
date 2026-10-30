@@ -10,28 +10,28 @@ jobs:
         uses: .
         with:
           command: dupes
-          root: tests/fixtures/dirty-project
+          root: tests/fixtures/clean-project
           version: '3.38.0'
           type-aware: 'false'
+          fail-on-issues: 'true'
           format: json
-          fail-on-issues: 'false'
-          min-tokens: '20'
-          min-lines: '2'
+          dupes-mode: strict
+          min-tokens: '50'
+          min-lines: '5'
           threshold: '100'
-          top: '5'
-      - name: Assert dupes ran
+          top: '10'
+      - name: Assert no clone groups
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          echo "issues: $ISSUES results: $RESULTS"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 clone groups on clean fixture"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
           echo "PASS"

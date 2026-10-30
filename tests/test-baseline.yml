@@ -1,4 +1,4 @@
-name: Test save-baseline then baseline
+name: Test dead-code baseline save and load
 on:
   workflow_dispatch:
 jobs:
@@ -13,19 +13,19 @@ jobs:
           root: tests/fixtures/dirty-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
-          save-baseline: ${{ runner.temp }}/fallow-baseline.json
-      - name: Assert baseline saved
-        env:
-          BASELINE: ${{ runner.temp }}/fallow-baseline.json
+          format: json
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+      - name: Assert baseline file written
         run: |
-          if [ ! -s "$BASELINE" ]; then
-            echo "FAIL: baseline file not written at $BASELINE"
+          F="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
+          ls -la "$GITHUB_WORKSPACE" | grep -i baseline || true
+          if [ ! -s "$F" ]; then
+            echo "FAIL: baseline file not written at $F"
             exit 1
           fi
-          cat "$BASELINE"
-          jq empty "$BASELINE" || { echo "FAIL: baseline not JSON"; exit 1; }
+          jq empty "$F" || { echo "FAIL: baseline is not valid JSON"; exit 1; }
+          cat "$F"
           echo "PASS"
       - id: load
         uses: .
@@ -34,20 +34,20 @@ jobs:
           root: tests/fixtures/dirty-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'true'
-          baseline: ${{ runner.temp }}/fallow-baseline.json
-      - name: Assert baseline suppresses known issues
+          format: json
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+      - name: Assert baseline suppressed known issues
         env:
           ISSUES: ${{ steps.load.outputs.issues }}
-          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
           BPATH: ${{ steps.load.outputs.baseline-path }}
+          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
         run: |
           echo "issues: $ISSUES"
-          echo "baseline-entries: $ENTRIES"
           echo "baseline-path: $BPATH"
+          echo "baseline-stale-entries: $STALE"
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 new issues with baseline loaded"
+            echo "FAIL: expected 0 new issues against baseline"
             exit 1
           fi
           echo "PASS"

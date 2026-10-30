@@ -1,4 +1,4 @@
-name: Test config file and issue-types filter
+name: Test issue-types restricts to unused-files
 on:
   workflow_dispatch:
 jobs:
@@ -11,29 +11,28 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
-          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
-          issue-types: unused-files
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
+          format: json
+          issue-types: unused-files
       - name: Assert only unused files reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          cat "$RESULTS" || true
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
             echo "FAIL: expected at least one unused file"
             exit 1
           fi
-          if ! grep -q "orphan" "$RESULTS"; then
-            echo "FAIL: expected orphan.ts in results"
+          if ! grep -q 'orphan' "$RESULTS"; then
+            echo "FAIL: expected orphan.ts as unused file"
             exit 1
           fi
-          if grep -q "neverUsedHelper" "$RESULTS"; then
+          if grep -q 'neverUsedHelper' "$RESULTS"; then
             echo "FAIL: unused export reported despite issue-types=unused-files"
+            cat "$RESULTS"
             exit 1
           fi
           echo "PASS"

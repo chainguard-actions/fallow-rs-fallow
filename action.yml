@@ -466,7 +466,7 @@ runs:
         printf 'root_digest=%s\n' "${digest:0:16}" >> "$GITHUB_OUTPUT"
 
     - name: Cache analysis results
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+      uses: chainguard-actions/actions-cache@244dfed44d8c4e917b332280fb2c1063eda3d9be # v5
       with:
         path: ${{ inputs.root }}/.fallow
         key: fallow-cache-${{ runner.os }}-${{ steps.fallow-cache-key.outputs.root_digest }}-${{ hashFiles(format('{0}/**/package.json', inputs.root)) }}
@@ -581,7 +581,7 @@ runs:
         steps.analyze.outputs.sarif != '' &&
         steps.ghas-check.outputs.available == 'true' &&
         always()
-      uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+      uses: chainguard-actions/github-codeql-action/upload-sarif@af9a71138d91d5fb30bfcfc73aff470163092543 # v4
       with:
         sarif_file: ${{ steps.analyze.outputs.sarif }}
         category: fallow

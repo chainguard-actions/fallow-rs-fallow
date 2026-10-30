@@ -1,4 +1,4 @@
-name: Test workspace scoping
+name: Test workspace scoping in a monorepo
 on:
   workflow_dispatch:
 jobs:
@@ -11,24 +11,27 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          workspace: app-a
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
-      - name: Assert output scoped to app-a
+          format: json
+          workspace: web
+      - name: Assert workspace-scoped run
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          cat "$RESULTS" || true
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues is not a number"
             exit 1
           fi
-          if grep -q "orphan-b" "$RESULTS"; then
-            echo "FAIL: app-b finding leaked into app-a scoped output"
+          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
+            exit 1
+          fi
+          if grep -q 'packages/api/' "$RESULTS"; then
+            echo "FAIL: api workspace leaked into web-scoped results"
             exit 1
           fi
           echo "PASS"

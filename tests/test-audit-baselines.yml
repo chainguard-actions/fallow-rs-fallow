@@ -15,61 +15,58 @@ jobs:
           root: tests/fixtures/dirty-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
-          annotations: 'false'
-          save-baseline: ${{ runner.temp }}/dc-baseline.json
-      - id: health
+          format: json
+          save-baseline: ${{ github.workspace }}/bl-dead-code.json
+      - id: hb
         uses: .
         with:
           command: health
           root: tests/fixtures/dirty-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
-          annotations: 'false'
-          save-baseline: ${{ runner.temp }}/health-baseline.json
-      - id: dupes
+          format: json
+          save-baseline: ${{ github.workspace }}/bl-health.json
+      - id: db
         uses: .
         with:
           command: dupes
           root: tests/fixtures/dirty-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
-          annotations: 'false'
-          save-baseline: ${{ runner.temp }}/dupes-baseline.json
-      - name: Assert baselines saved
+          format: json
+          save-baseline: ${{ github.workspace }}/bl-dupes.json
+      - name: Assert baselines exist
         run: |
-          for f in dc-baseline.json health-baseline.json dupes-baseline.json; do
-            if [ ! -f "$RUNNER_TEMP/$f" ]; then
-              echo "FAIL: $f not written"
+          for f in bl-dead-code.json bl-health.json bl-dupes.json; do
+            if [ ! -s "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: missing $f"
               exit 1
             fi
           done
           echo "PASS"
-      - id: audit
+      - id: action
         uses: .
         with:
           command: audit
           root: tests/fixtures/dirty-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
+          format: json
           changed-since: HEAD
           gate: all
           worsened: warn
-          dead-code-baseline: ${{ runner.temp }}/dc-baseline.json
-          health-baseline: ${{ runner.temp }}/health-baseline.json
-          dupes-baseline: ${{ runner.temp }}/dupes-baseline.json
+          dead-code-baseline: ${{ github.workspace }}/bl-dead-code.json
+          health-baseline: ${{ github.workspace }}/bl-health.json
+          dupes-baseline: ${{ github.workspace }}/bl-dupes.json
       - name: Assert audit verdict and gate
         env:
-          VERDICT: ${{ steps.audit.outputs.verdict }}
-          GATE: ${{ steps.audit.outputs.gate }}
-          ISSUES: ${{ steps.audit.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "verdict: $VERDICT gate: $GATE issues: $ISSUES"
           case "$VERDICT" in
@@ -78,6 +75,10 @@ jobs:
           esac
           if [ "$GATE" != "all" ]; then
             echo "FAIL: expected gate 'all'"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a number"
             exit 1
           fi
           echo "PASS"

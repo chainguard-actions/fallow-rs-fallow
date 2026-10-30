@@ -1,4 +1,4 @@
-name: Test health with runtime coverage options
+name: Test health with runtime coverage inputs
 on:
   workflow_dispatch:
 jobs:
@@ -6,8 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      # runtime-coverage is a paid fallow feature: without a license the CLI may
-      # refuse it. Accept either a valid run or a clean failure, but never a skip.
+      # runtime-coverage is a paid, license-gated feature. Without a license the
+      # CLI is expected to refuse; with one it must produce results.
       - id: action
         uses: .
         continue-on-error: true
@@ -16,31 +16,34 @@ jobs:
           root: tests/fixtures/dirty-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
-          runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/v8-coverage.json
-          min-invocations-hot: '50'
+          format: json
+          artifacts-dir: fallow-rt-artifacts
+          runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /ci/project
+          min-invocations-hot: '100'
           min-observation-volume: '10'
           low-traffic-threshold: '0.01'
-      - name: Assert runtime coverage run outcome
+      - name: Assert runtime coverage handled
         env:
           OUTCOME: ${{ steps.action.outcome }}
-          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME issues: $ISSUES results: $RESULTS"
+          echo "outcome: $OUTCOME results: $RESULTS"
+          LOG="$GITHUB_WORKSPACE/fallow-rt-artifacts/fallow-stderr.log"
+          [ -f "$LOG" ] && cat "$LOG"
           if [ "$OUTCOME" = "success" ]; then
-            if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-              echo "FAIL: succeeded but issues output is not a number"
+            if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+              echo "FAIL: success but results missing/invalid"
               exit 1
             fi
-            if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
-              echo "FAIL: succeeded but results file missing or invalid"
-              exit 1
-            fi
-            echo "PASS: runtime coverage run succeeded"
+            echo "PASS: runtime coverage analysis produced results"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: runtime coverage rejected gracefully (license-gated feature)"
+            if [ -f "$LOG" ] && ! grep -qiE 'licen|coverage|sidecar|paid|trial|runtime' "$LOG"; then
+              echo "FAIL: action failed for an unrelated reason"
+              exit 1
+            fi
+            echo "PASS: runtime coverage refused without a license"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

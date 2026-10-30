@@ -15,24 +15,23 @@ jobs:
           root: tests/fixtures/dirty-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
+          format: json
           hotspots: 'true'
           since: 1y
           min-commits: '1'
-      - name: Assert hotspots run produced results
+      - name: Assert hotspot analysis ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
           echo "PASS"

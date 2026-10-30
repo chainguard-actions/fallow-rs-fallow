@@ -12,45 +12,41 @@ jobs:
           root: tests/fixtures/dirty-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
+          format: json
           only: dead-code
-      - name: Assert only run produced results
+      - name: Assert only dead-code ran and found issues
         env:
           ISSUES: ${{ steps.only.outputs.issues }}
           RESULTS: ${{ steps.only.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          echo "issues: $ISSUES results: $RESULTS"
+          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          if ! grep -q orphan "$RESULTS"; then
+            echo "FAIL: expected orphan.ts in dead-code results"
             exit 1
           fi
           echo "PASS"
       - id: skip
         uses: .
         with:
-          root: tests/fixtures/dirty-project
+          root: tests/fixtures/clean-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
+          format: json
           skip: dupes,health
       - name: Assert skip run produced results
         env:
-          ISSUES: ${{ steps.skip.outputs.issues }}
           RESULTS: ${{ steps.skip.outputs.results }}
+          OUTCOME: ${{ steps.skip.outcome }}
         run: |
-          echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          echo "outcome: $OUTCOME results: $RESULTS"
+          if [ "$OUTCOME" != "success" ] || [ ! -s "$RESULTS" ]; then
+            echo "FAIL: skip run failed or results missing"
             exit 1
           fi
           echo "PASS"

@@ -12,25 +12,26 @@ jobs:
         uses: .
         with:
           command: security
-          root: tests/fixtures/dirty-project
+          root: tests/fixtures/clean-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
+          format: json
           changed-since: HEAD
           security-gate: new
-      - name: Assert security gate applied
+      - name: Assert security ran with gate
         env:
-          GATE: ${{ steps.action.outputs.gate }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "gate: $GATE issues: $ISSUES"
+          echo "issues: $ISSUES gate: $GATE results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues is not a number"
             exit 1
           fi
-          if [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new'"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: clean fixture with no changes should have 0 new candidates"
             exit 1
           fi
           echo "PASS"

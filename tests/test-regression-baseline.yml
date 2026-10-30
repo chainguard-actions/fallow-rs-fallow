@@ -13,18 +13,17 @@ jobs:
           root: tests/fixtures/dirty-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
-          save-regression-baseline: ${{ runner.temp }}/fallow-regression.json
-      - name: Assert regression baseline saved
-        env:
-          RB: ${{ runner.temp }}/fallow-regression.json
+          format: json
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
+      - name: Assert regression baseline written
         run: |
-          if [ ! -s "$RB" ]; then
-            echo "FAIL: regression baseline not written at $RB"
+          F="$GITHUB_WORKSPACE/fallow-regression.json"
+          if [ ! -s "$F" ]; then
+            echo "FAIL: regression baseline not written at $F"
             exit 1
           fi
-          cat "$RB"
+          cat "$F"
           echo "PASS"
       - id: compare
         uses: .
@@ -33,23 +32,23 @@ jobs:
           root: tests/fixtures/dirty-project
           version: '3.38.0'
           type-aware: 'false'
-          format: json
           fail-on-issues: 'false'
+          format: json
           fail-on-regression: 'true'
           tolerance: '0'
-          regression-baseline: ${{ runner.temp }}/fallow-regression.json
-      - name: Assert no regression against identical baseline
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
+      - name: Assert no regression detected (same code)
         env:
           ISSUES: ${{ steps.compare.outputs.issues }}
           OUTCOME: ${{ steps.compare.outcome }}
         run: |
-          echo "issues: $ISSUES outcome: $OUTCOME"
+          echo "outcome: $OUTCOME issues: $ISSUES"
           if [ "$OUTCOME" != "success" ]; then
             echo "FAIL: compare step did not succeed"
             exit 1
           fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected issues count >= 1"
+            echo "FAIL: expected issues to still be reported (>=1)"
             exit 1
           fi
           echo "PASS"
