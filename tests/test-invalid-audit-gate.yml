@@ -1,4 +1,4 @@
-name: Test audit rejects an invalid gate
+name: Test invalid audit gate is rejected
 on:
   workflow_dispatch:
 jobs:
@@ -12,21 +12,27 @@ jobs:
         with:
           command: audit
           root: tests/fixtures/sample-project
+          gate: bogus
+          worsened: warn
+          dead-code-baseline: fallow-baselines/dead-code.json
+          health-baseline: fallow-baselines/health.json
+          dupes-baseline: fallow-baselines/dupes.json
           version: 3.35.0
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-invalid-gate
-          gate: bogus
-          worsened: warn
-          dead-code-baseline: baselines/dead-code.json
-          health-baseline: baselines/health.json
-          dupes-baseline: baselines/dupes.json
-      - name: Assert action failed on invalid gate
+      - name: Assert action failed validation
         env:
           OUTCOME: ${{ steps.action.outcome }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
         run: |
           echo "outcome: $OUTCOME"
+          echo "verdict: '$VERDICT'"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for gate=bogus"
+            echo "FAIL: expected failure for gate 'bogus'"
+            exit 1
+          fi
+          if [ -n "$VERDICT" ]; then
+            echo "FAIL: no audit verdict should be produced"
             exit 1
           fi
           echo "PASS"
