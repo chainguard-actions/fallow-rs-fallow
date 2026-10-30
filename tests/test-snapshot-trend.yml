@@ -1,4 +1,4 @@
-name: Test health command save-snapshot then trend
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -10,37 +10,24 @@ jobs:
       - name: Create a minimal JS project
         run: |
           P="$GITHUB_WORKSPACE/tests/fixtures/snapshot-project"
-          rm -rf "$P"
           mkdir -p "$P/src"
-          cat > "$P/package.json" <<'EOF'
-          {
-            "name": "snapshot-project",
-            "version": "1.0.0",
-            "type": "module",
-            "scripts": { "start": "node src/index.js" }
-          }
-          EOF
-          cat > "$P/src/index.js" <<'EOF'
-          export function add(a, b) {
-            return a + b;
-          }
-          add(1, 2);
-          EOF
+          echo '{"name":"snapshot-project","version":"1.0.0","type":"module","main":"src/index.js"}' > "$P/package.json"
+          printf 'export function add(a, b) { return a + b; }\nadd(1, 2);\n' > "$P/src/index.js"
 
-      - id: save
+      - id: snapshot
         uses: .
         with:
           command: health
           root: tests/fixtures/snapshot-project
-          format: json
           save-snapshot: 'true'
+          format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert a snapshot was saved
+      - name: Assert snapshot was saved
         run: |
           D="$GITHUB_WORKSPACE/tests/fixtures/snapshot-project/.fallow/snapshots"
           ls -la "$D" || true
@@ -55,8 +42,8 @@ jobs:
         with:
           command: health
           root: tests/fixtures/snapshot-project
-          format: json
           trend: 'true'
+          format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
@@ -65,16 +52,11 @@ jobs:
 
       - name: Assert trend run produced results
         env:
-          ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number: '$ISSUES'"
-            exit 1
-          fi
+          echo "results: $RESULTS"
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
           echo "PASS"

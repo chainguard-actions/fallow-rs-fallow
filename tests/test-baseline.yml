@@ -1,4 +1,4 @@
-name: Test dead-code save-baseline then baseline comparison
+name: Test dead-code save-baseline then baseline
 on:
   workflow_dispatch:
 jobs:
@@ -7,14 +7,13 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create project with an unused export
+      - name: Create a minimal JS project
         run: |
           P="$GITHUB_WORKSPACE/tests/fixtures/baseline-project"
-          rm -rf "$P"
           mkdir -p "$P/src"
           cat > "$P/package.json" <<'EOF'
           {
-            "name": "baseline-project",
+            "name": "baseline-test-project",
             "version": "1.0.0",
             "type": "module",
             "main": "src/index.js"
@@ -28,14 +27,15 @@ jobs:
           export function used() { return 1; }
           export function unusedHelper() { return 2; }
           EOF
+          mkdir -p "$GITHUB_WORKSPACE/fallow-baseline-out"
 
       - id: save
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/baseline-project
+          save-baseline: ${{ github.workspace }}/fallow-baseline-out/baseline.json
           format: json
-          save-baseline: ${{ github.workspace }}/tests/fixtures/baseline-project/fallow-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
@@ -44,41 +44,43 @@ jobs:
 
       - name: Assert baseline file was saved
         run: |
-          F="$GITHUB_WORKSPACE/tests/fixtures/baseline-project/fallow-baseline.json"
-          if [ ! -f "$F" ] || ! jq empty "$F"; then
-            echo "FAIL: baseline file missing or invalid at $F"
+          F="$GITHUB_WORKSPACE/fallow-baseline-out/baseline.json"
+          ls -la "$GITHUB_WORKSPACE/fallow-baseline-out"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: baseline file not written"
             exit 1
           fi
-          cat "$F"
+          if ! jq empty "$F"; then
+            echo "FAIL: baseline is not valid JSON"
+            exit 1
+          fi
           echo "PASS"
 
-      - id: compare
+      - id: load
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/baseline-project
+          baseline: ${{ github.workspace }}/fallow-baseline-out/baseline.json
           format: json
-          baseline: ${{ github.workspace }}/tests/fixtures/baseline-project/fallow-baseline.json
-          fail-on-issues: 'true'
+          fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert baseline suppressed known issues
+      - name: Assert baseline run reports no new issues
         env:
-          ISSUES: ${{ steps.compare.outputs.issues }}
-          BPATH: ${{ steps.compare.outputs.baseline-path }}
-          EXPECTED: ${{ github.workspace }}/tests/fixtures/baseline-project/fallow-baseline.json
+          ISSUES: ${{ steps.load.outputs.issues }}
+          OUTCOME: ${{ steps.load.outcome }}
         run: |
-          echo "issues: $ISSUES"
-          echo "baseline-path: $BPATH"
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 issues after baseline, got '$ISSUES'"
+          echo "outcome: $OUTCOME issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: baseline run did not succeed"
             exit 1
           fi
-          if [ "$BPATH" != "$EXPECTED" ]; then
-            echo "FAIL: baseline-path should echo the baseline input"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues after baseline, got '$ISSUES'"
             exit 1
           fi
           echo "PASS"

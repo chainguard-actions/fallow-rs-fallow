@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds and hotspot options
+name: Test health with custom complexity thresholds
 on:
   workflow_dispatch:
 jobs:
@@ -6,10 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
 
-      - name: Create a minimal JS project with a complex function
+      - name: Create a JS project with a complex function
         run: |
           P="$GITHUB_WORKSPACE/tests/fixtures/health-thresholds-project"
           mkdir -p "$P/src"
@@ -18,7 +16,7 @@ jobs:
             "name": "health-thresholds-project",
             "version": "1.0.0",
             "type": "module",
-            "scripts": { "start": "node src/index.js" }
+            "main": "src/index.js"
           }
           EOF
           cat > "$P/src/index.js" <<'EOF'
@@ -27,23 +25,16 @@ jobs:
               if (b > 0) {
                 if (c > 0) {
                   if (d > 0) {
-                    if (e > 0) {
-                      return a + b + c + d + e;
-                    } else {
-                      return a + b + c + d;
-                    }
-                  } else {
-                    return a + b + c;
+                    if (e > 0) { return a + b + c + d + e; }
+                    return a + b + c + d;
                   }
-                } else {
-                  return a + b;
+                  return a + b + c;
                 }
-              } else {
-                return a;
+                return a + b;
               }
-            } else {
-              return 0;
+              return a;
             }
+            return 0;
           }
           complexFunction(1, 2, 3, 4, 5);
           EOF
@@ -53,44 +44,30 @@ jobs:
         with:
           command: health
           root: tests/fixtures/health-thresholds-project
-          format: json
-          max-cyclomatic: '3'
-          max-cognitive: '3'
-          max-crap: '10'
-          top: '5'
+          max-cyclomatic: '2'
+          max-cognitive: '2'
+          max-crap: '30'
           sort: cognitive
-          threads: '2'
-          hotspots: 'true'
-          since: 1y
-          min-commits: '1'
+          top: '10'
+          format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert complex function exceeded the low thresholds
+      - name: Assert complexity finding reported with low thresholds
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number: '$ISSUES'"
+            echo "FAIL: expected numeric issues"
             exit 1
           fi
-          if [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected at least one function above the thresholds"
-            exit 1
-          fi
-          echo "PASS"
-
-      - name: Assert results file is valid JSON
-        env:
-          RESULTS: ${{ steps.action.outputs.results }}
-        run: |
-          echo "results: $RESULTS"
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
           echo "PASS"

@@ -1,0 +1,46 @@
+name: Test audit rejects an invalid gate value
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a minimal JS project
+        run: |
+          P="$GITHUB_WORKSPACE/tests/fixtures/audit-project"
+          mkdir -p "$P/src"
+          echo '{"name":"audit-project","version":"1.0.0","main":"src/index.js"}' > "$P/package.json"
+          echo 'export const x = 1;' > "$P/src/index.js"
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: audit
+          root: tests/fixtures/audit-project
+          gate: not-a-gate
+          dead-code-baseline: tests/fixtures/audit-project/dead-code-baseline.json
+          health-baseline: tests/fixtures/audit-project/health-baseline.json
+          dupes-baseline: tests/fixtures/audit-project/dupes-baseline.json
+          format: json
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+
+      - name: Assert audit failed on the invalid gate
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+        run: |
+          echo "outcome: $OUTCOME verdict: $VERDICT"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected failure for gate=not-a-gate"
+            exit 1
+          fi
+          if [ -n "$VERDICT" ]; then
+            echo "FAIL: no verdict expected when validation rejects the gate"
+            exit 1
+          fi
+          echo "PASS"

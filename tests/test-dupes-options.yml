@@ -1,4 +1,4 @@
-name: Test dupes command with min-tokens, min-lines, threshold, top
+name: Test dupes with min-tokens, min-lines, threshold and top
 on:
   workflow_dispatch:
 jobs:
@@ -7,7 +7,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a project with duplicated code
+      - name: Create a JS project with duplicated code
         run: |
           P="$GITHUB_WORKSPACE/tests/fixtures/dupes-options-project"
           mkdir -p "$P/src"
@@ -16,61 +16,51 @@ jobs:
             "name": "dupes-options-project",
             "version": "1.0.0",
             "type": "module",
-            "scripts": { "start": "node src/index.js" }
+            "main": "src/a.js"
           }
           EOF
           for f in a b; do
-          cat > "$P/src/$f.js" <<'EOF'
-          export function compute(items) {
-            let total = 0;
-            for (const item of items) {
-              if (item.enabled && item.price > 0) {
-                total += item.price * item.quantity;
-              } else if (item.discount) {
-                total -= item.discount;
-              }
+          cat > "$P/src/$f.js" <<EOF
+          export function process_$f(user) {
+            const name = user.name.trim();
+            const email = user.email.toLowerCase();
+            const age = parseInt(user.age, 10);
+            if (!name || !email || isNaN(age)) {
+              throw new Error('Invalid user data');
             }
-            const tax = total * 0.21;
-            const shipping = total > 100 ? 0 : 9.95;
-            return { total, tax, shipping, grand: total + tax + shipping };
+            return { name, email, age };
           }
           EOF
           done
-          sed -i 's/compute/computeB/' "$P/src/b.js"
-          cat > "$P/src/index.js" <<'EOF'
-          import { compute } from './a.js';
-          import { computeB } from './b.js';
-          console.log(compute([]), computeB([]));
-          EOF
 
       - id: action
         uses: .
         with:
           command: dupes
           root: tests/fixtures/dupes-options-project
-          format: json
           min-tokens: '10'
           min-lines: '3'
           threshold: '100'
           top: '5'
+          format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert clone groups counted
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number: '$ISSUES'"
+            echo "FAIL: expected numeric issues"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
           echo "PASS"

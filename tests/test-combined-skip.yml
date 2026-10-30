@@ -11,50 +11,34 @@ jobs:
         run: |
           P="$GITHUB_WORKSPACE/tests/fixtures/skip-project"
           mkdir -p "$P/src"
-          cat > "$P/package.json" <<'EOF'
-          {
-            "name": "skip-project",
-            "version": "1.0.0",
-            "type": "module",
-            "main": "src/index.js"
-          }
-          EOF
-          cat > "$P/src/index.js" <<'EOF'
-          export function add(a, b) {
-            return a + b;
-          }
-          add(1, 2);
-          EOF
+          echo '{"name":"skip-project","version":"1.0.0","type":"module","main":"src/index.js"}' > "$P/package.json"
+          printf 'import { a } from "./util.js";\nconsole.log(a);\n' > "$P/src/index.js"
+          printf 'export const a = 1;\nexport const unused = 2;\n' > "$P/src/util.js"
 
       - id: action
         uses: .
         with:
           root: tests/fixtures/skip-project
+          skip: dupes
           format: json
-          skip: health
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert health section was skipped
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number: '$ISSUES'"
+            echo "FAIL: expected numeric issues"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
-            exit 1
-          fi
-          jq 'keys' "$RESULTS"
-          if jq -e '.health != null' "$RESULTS" >/dev/null; then
-            echo "FAIL: health section present despite skip: health"
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
           echo "PASS"

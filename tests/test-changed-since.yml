@@ -1,0 +1,46 @@
+name: Test dead-code scoped with changed-since
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Create a minimal JS project
+        run: |
+          P="$GITHUB_WORKSPACE/tests/fixtures/changed-since-project"
+          mkdir -p "$P/src"
+          echo '{"name":"changed-since-project","version":"1.0.0","type":"module","main":"src/index.js"}' > "$P/package.json"
+          printf 'import { a } from "./util.js";\nconsole.log(a);\n' > "$P/src/index.js"
+          printf 'export const a = 1;\nexport const unused = 2;\n' > "$P/src/util.js"
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/changed-since-project
+          changed-since: HEAD
+          format: json
+          fail-on-issues: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: expected numeric issues"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
+            exit 1
+          fi
+          echo "PASS"
