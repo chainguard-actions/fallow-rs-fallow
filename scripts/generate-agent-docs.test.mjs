@@ -1,0 +1,1059 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  compareCuratedSeeds,
+  curatedSeeds,
+  escapeCell,
+  firstSentence,
+  formatCuratedSeedDrift,
+  hasCuratedSeedDrift,
+  parseExistingTable,
+  readCuratedSeedRecord,
+  regenerateCliReferenceMd,
+  regenerateIssueTypeReferenceMd,
+  regenerateMcpReferenceMd,
+  regenerateSkillMd,
+  sectionIsAbsent,
+  spliceSection,
+} from "./generate-agent-docs.mjs";
+
+const boolFlag = (name, description = `${name} description`) => ({
+  name,
+  type: "bool",
+  required: false,
+  description,
+  possible_values: ["true", "false"],
+});
+
+const stringFlag = (name, description = `${name} description`, extra = {}) => ({
+  name,
+  type: "string",
+  required: false,
+  description,
+  ...extra,
+});
+
+const SCHEMA = {
+  version: "0.0.0-test",
+  manifest_version: "1",
+  default_behavior: "Runs all analyses (check + dupes + health). Use --only/--skip to select.",
+  global_flags: [
+    stringFlag("--format", "Output format", {
+      short: "-f",
+      default: "human",
+      possible_values: ["human", "json"],
+    }),
+    boolFlag("--quiet", "Suppress progress output"),
+    stringFlag("--output-file", "Write the report to a file", { short: "-o" }),
+    boolFlag("--legacy-envelope"),
+    stringFlag("--changed-since"),
+    stringFlag("--max-file-size"),
+    boolFlag("--production"),
+    boolFlag("--no-production"),
+    boolFlag("--production-dead-code"),
+    boolFlag("--production-health"),
+    boolFlag("--production-dupes"),
+    stringFlag("--baseline"),
+    stringFlag("--save-baseline"),
+    stringFlag("--workspace"),
+    stringFlag("--changed-workspaces"),
+    boolFlag("--include-entry-exports"),
+    stringFlag("--only"),
+    stringFlag("--skip"),
+    stringFlag("--dupes-mode"),
+    stringFlag("--dupes-threshold"),
+    stringFlag("--dupes-min-tokens"),
+    stringFlag("--dupes-min-lines"),
+    stringFlag("--dupes-min-occurrences"),
+    boolFlag("--dupes-skip-local"),
+    boolFlag("--dupes-cross-language"),
+    boolFlag("--dupes-ignore-imports"),
+    boolFlag("--score"),
+    boolFlag("--trend"),
+    stringFlag("--save-snapshot"),
+    stringFlag("--coverage"),
+    stringFlag("--coverage-root"),
+    stringFlag("--dupes-random"),
+    stringFlag("--root", "Project root directory", { short: "-r" }),
+    stringFlag("--config", "Config file path", { short: "-c" }),
+    stringFlag("--churn-file"),
+    stringFlag("--group-by"),
+    boolFlag("--explain"),
+    boolFlag("--explain-skipped"),
+    stringFlag("--diff-file"),
+    boolFlag("--diff-stdin"),
+  ],
+  commands: [
+    {
+      name: "dead-code",
+      description: "Analyze project for unused code. Second sentence is cut.",
+      flags: [
+        boolFlag("--unused-files", "Only report unused files"),
+        boolFlag("--unused-exports", "Only report unused exports"),
+        boolFlag("--unused-deps", "Only report unused dependencies"),
+        boolFlag("--type-aware", "Type-aware semantic refinement"),
+        stringFlag("--type-aware-project", "TypeScript project selection"),
+        stringFlag("--type-aware-require", "Type-aware completeness policy"),
+        boolFlag("--trace", "Trace export usage"),
+        stringFlag("--file", "Scope output to files"),
+      ],
+    },
+    {
+      name: "coverage",
+      description: "Runtime coverage workflow",
+      flags: [],
+    },
+    {
+      name: "dupes",
+      description: "Find clones",
+      flags: [
+        stringFlag("--mode", "Detection mode", {
+          default: "mild",
+          possible_values: ["strict", "mild"],
+        }),
+        stringFlag("--trace", "Trace clones"),
+      ],
+    },
+    {
+      name: "fix",
+      description: "Apply fixes",
+      flags: [boolFlag("--dry-run"), boolFlag("--yes"), boolFlag("--no-create-config")],
+    },
+    {
+      name: "list",
+      description: "List project data",
+      flags: [boolFlag("--entry-points")],
+    },
+    {
+      name: "init",
+      description: "Initialize config",
+      flags: [boolFlag("--toml")],
+    },
+    {
+      name: "migrate",
+      description: "Migrate config",
+      flags: [boolFlag("--dry-run")],
+    },
+    {
+      name: "health",
+      description: "Analyze health",
+      flags: [stringFlag("--top")],
+    },
+    {
+      name: "audit",
+      description: "Audit changed files",
+      flags: [boolFlag("--strict")],
+    },
+    {
+      name: "flags",
+      description: "Analyze feature flags",
+      flags: [stringFlag("--top")],
+    },
+    {
+      name: "security",
+      description: "Analyze security candidates",
+      flags: [stringFlag("--gate")],
+    },
+    {
+      name: "config",
+      description: "Show config",
+      flags: [stringFlag("--path")],
+    },
+    {
+      name: "explain",
+      description: "Explain issue types",
+      flags: [{ name: "issue_type", type: "string", description: "Issue type to explain" }],
+    },
+  ],
+  issue_types: [
+    {
+      id: "unused-file",
+      command: "dead-code",
+      description: "File is not reachable from any entry point",
+      filter_flag: "--unused-files",
+      fixable: false,
+      suppressible: true,
+      suppress_comment: "// fallow-ignore-file unused-file",
+      note: null,
+      license: "free",
+    },
+    {
+      id: "type-only-dependency",
+      command: "dead-code",
+      description: "Dependency only used via import type",
+      filter_flag: "--unused-deps",
+      fixable: false,
+      suppressible: false,
+      suppress_comment: null,
+      note: "Only reported in --production mode",
+      license: "free",
+    },
+    {
+      id: "sql-injection",
+      command: "security",
+      description: "Catalogue security candidate for CWE-89",
+      filter_flag: null,
+      fixable: false,
+      suppressible: true,
+      suppress_comment: "// fallow-ignore-next-line security-sink",
+      note: null,
+      license: "free",
+    },
+    {
+      id: "tainted-sink",
+      command: "security",
+      description: "Syntactic security sink candidates require verification",
+      filter_flag: null,
+      fixable: false,
+      suppressible: true,
+      suppress_comment: "// fallow-ignore-next-line security-sink",
+      note: null,
+      license: "free",
+    },
+    {
+      id: "runtime-safe-to-delete",
+      command: "health",
+      description: "Statically unused AND never invoked in production",
+      filter_flag: null,
+      fixable: false,
+      suppressible: false,
+      suppress_comment: null,
+      note: "Requires --runtime-coverage input",
+      license: "freemium",
+    },
+  ],
+  mcp_tools: {
+    tools: [
+      {
+        name: "analyze",
+        kind: "analysis",
+        license: "free",
+        key_params: ["issue_types", "production"],
+        description: "Full dead-code analysis",
+      },
+      {
+        name: "list_boundaries",
+        kind: "introspection",
+        license: "free",
+        key_params: [],
+        description: "List architecture | boundary zones\nand access rules",
+      },
+    ],
+  },
+  mcp_resources: {
+    resources: [
+      {
+        uri: "fallow://tools",
+        name: "tools",
+        description: "Tool manifest",
+        mime_type: "application/json",
+        template: false,
+      },
+      {
+        uri: "fallow://explain/{issue_type}",
+        name: "explain-issue-type",
+        description: "Explain | document",
+        mime_type: "application/json",
+        template: true,
+      },
+    ],
+  },
+  task_matrix: [
+    {
+      task: "delete an unused export or file",
+      command: "fallow dead-code --trace <file>:<export>",
+      note: null,
+    },
+    {
+      task: "scope a monorepo",
+      command: "--workspace <glob> / --changed-workspaces <ref>",
+      note: "global flags, prefix any command",
+    },
+  ],
+};
+
+const DOC = `# Skill
+
+Hand-written intro stays.
+
+## Catalogues
+
+Commands live in \`references/cli-reference.md\` and issue types live in
+\`references/issue-types.md\`.
+
+## Task Map
+
+<!-- generated:task-matrix:start -->
+| When the agent is about to... | Run |
+|---|---|
+| stale row that should be regenerated | \`fallow gone\` |
+<!-- generated:task-matrix:end -->
+
+Hand-written outro stays.
+`;
+
+/** A skill target that has NOT adopted the task-matrix markers. The generator
+ * must tolerate the absent section and leave the file otherwise intact. */
+const DOC_WITHOUT_TASK_MATRIX = `# Skill
+
+Hand-written intro stays.
+
+## Catalogues
+
+Commands live in \`references/cli-reference.md\` and issue types live in
+\`references/issue-types.md\`.
+
+Hand-written outro stays.
+`;
+
+/** A dedicated references/mcp.md target: the mcp-tools section moved here out of
+ * SKILL.md. Stale relative to SCHEMA (analyze is missing its 2nd key param and
+ * list_boundaries is absent) so regeneration has work to do. */
+const DOC_MCP_REFERENCE = `# Fallow MCP Server Reference
+
+Hand-written intro stays.
+
+## Tool catalogue
+
+<!-- generated:mcp-tools:start -->
+| Tool | Kind | License | Key params | Description |
+|---|---|---|---|---|
+| \`analyze\` | analysis | free | \`issue_types\` | Curated long analyze prose with call hints |
+<!-- generated:mcp-tools:end -->
+
+## Resource catalogue
+
+<!-- generated:mcp-resources:start -->
+| Resource | Name | Kind | MIME | Description |
+|---|---|---|---|---|
+| \`fallow://tools\` | \`tools\` | static | \`application/json\` | Curated tools resource prose |
+| \`fallow://removed\` | \`removed\` | static | \`application/json\` | Gone |
+<!-- generated:mcp-resources:end -->
+
+Hand-written outro stays.
+`;
+
+/** A dedicated references/issue-types.md target: the issue-types section moved
+ * here out of SKILL.md. Stale relative to SCHEMA so regeneration has work. */
+const DOC_ISSUE_TYPE_REFERENCE = `# Fallow Issue Types
+
+Hand-written intro stays.
+
+## Catalogue
+
+<!-- generated:issue-types:start -->
+| Type | Filter flag | Fixable | Suppress comment | Description |
+|---|---|---|---|---|
+| \`unused-file\` | \`--unused-files\` | - | \`// fallow-ignore-file unused-file\` | Curated teaching prose for unused files |
+<!-- generated:issue-types:end -->
+
+Hand-written outro stays.
+`;
+
+const DOC_CLI_REFERENCE = `# Fallow CLI Reference
+
+## Command catalogue
+
+<!-- generated:commands:start -->
+| Command | Purpose | Key Flags |
+|---|---|---|
+| \`fallow\` | Curated combined purpose | \`--only\`, \`--skip\` |
+| \`dead-code\` | Curated dead code purpose | \`--changed-since\` |
+| \`coverage\` | Coverage helper | \`setup\` |
+| \`coverage upload-source-maps\` | Upload source maps from CI | \`--dir dist\` |
+| \`removed-command\` | Should disappear | \`--gone\` |
+<!-- generated:commands:end -->
+
+## \`dead-code\`: Dead Code Analysis
+
+### Flags
+
+<!-- generated:flags:dead-code:start -->
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| \`--format\` | \`human\\|json\` | \`human\` | Old global row should move out |
+| \`--trace\` | \`bool\` | \`false\` | Curated trace description |
+| \`--removed\` | \`bool\` | \`false\` | Should disappear |
+<!-- generated:flags:dead-code:end -->
+
+### Issue Type Filters
+
+<!-- generated:flags:dead-code-filters:start -->
+| Flag | Issue Type |
+|---|---|
+| \`--unused-files\` | Curated unused files prose |
+<!-- generated:flags:dead-code-filters:end -->
+
+## \`dupes\`: Duplication Detection
+
+### Flags
+
+<!-- generated:flags:dupes:start -->
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| \`--mode\` | \`strict\\|mild\` | \`mild\` | Curated mode prose |
+<!-- generated:flags:dupes:end -->
+
+## \`explain\`: Rule Explanation
+
+Arguments are hand-written here.
+
+## Global Flags
+
+<!-- generated:flags:global:start -->
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| \`-o, --output-file\` | \`string\` | - | Curated output file prose |
+| \`--removed-global\` | \`string\` | - | Should disappear |
+<!-- generated:flags:global:end -->
+
+### Combined Mode Flags
+
+<!-- generated:flags:fallow-combined:start -->
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| \`--only\` | \`string\` | - | Curated only prose |
+<!-- generated:flags:fallow-combined:end -->
+`;
+
+test("escapeCell escapes pipes and collapses whitespace, leaves backticks and angle brackets", () => {
+  assert.equal(escapeCell("a | b\nc  d `e` <f>"), "a \\| b c d `e` <f>");
+  assert.equal(escapeCell("pre\\|escaped"), "pre\\|escaped");
+});
+
+test("firstSentence cuts at sentence boundary and survives dotted filenames", () => {
+  assert.equal(firstSentence("First part. Second part."), "First part.");
+  assert.equal(
+    firstSentence("Initialize a .fallowrc.json configuration file"),
+    "Initialize a .fallowrc.json configuration file",
+  );
+});
+
+test("regeneration is idempotent and preserves content outside markers", () => {
+  const once = regenerateSkillMd(DOC, SCHEMA);
+  const twice = regenerateSkillMd(once, SCHEMA);
+  assert.equal(once, twice);
+  assert.ok(once.startsWith("# Skill\n\nHand-written intro stays."));
+  assert.ok(once.trimEnd().endsWith("Hand-written outro stays."));
+});
+
+test("curated cells are preserved; identity columns are regenerated", () => {
+  const commands = regenerateCliReferenceMd(DOC_CLI_REFERENCE, SCHEMA);
+  assert.ok(commands.includes("Curated dead code purpose"));
+  assert.ok(commands.includes("`--changed-since`"));
+  const issueTypes = regenerateIssueTypeReferenceMd(DOC_ISSUE_TYPE_REFERENCE, SCHEMA);
+  assert.ok(issueTypes.includes("Curated teaching prose for unused files"));
+});
+
+test("new rows are seeded from the manifest", () => {
+  const out = regenerateIssueTypeReferenceMd(DOC_ISSUE_TYPE_REFERENCE, SCHEMA);
+  // New issue type seeded with description + note.
+  assert.ok(
+    out.includes(
+      "| `type-only-dependency` | `--unused-deps` | - | - | Dependency only used via import type; Only reported in --production mode |",
+    ),
+  );
+});
+
+test("mcp-tools regenerates in references/mcp.md: curated preserved, identity + new rows", () => {
+  const out = regenerateMcpReferenceMd(DOC_MCP_REFERENCE, SCHEMA);
+  // Idempotent.
+  assert.equal(regenerateMcpReferenceMd(out, SCHEMA), out);
+  // Curated Description preserved across regeneration.
+  assert.ok(out.includes("Curated long analyze prose with call hints"));
+  // Identity regenerated: analyze gains its second key param from the manifest.
+  assert.ok(out.includes("`issue_types`, `production`"));
+  // New tool seeded; empty key params render as a dash.
+  assert.ok(out.includes("| `list_boundaries` | introspection | free | - |"));
+  // Hand-written prose outside the markers is untouched.
+  assert.ok(out.startsWith("# Fallow MCP Server Reference"));
+  assert.ok(out.trimEnd().endsWith("Hand-written outro stays."));
+});
+
+test("mcp-resources regenerates in references/mcp.md: curated preserved, template rows added, removed rows dropped", () => {
+  const out = regenerateMcpReferenceMd(DOC_MCP_REFERENCE, SCHEMA);
+  assert.equal(regenerateMcpReferenceMd(out, SCHEMA), out);
+  assert.ok(out.includes("Curated tools resource prose"));
+  assert.ok(
+    out.includes(
+      "| `fallow://explain/{issue_type}` | `explain-issue-type` | template | `application/json` | Explain \\| document |",
+    ),
+  );
+  assert.ok(!out.includes("fallow://removed"));
+  assert.ok(out.trimEnd().endsWith("Hand-written outro stays."));
+});
+
+test("SKILL.md no longer carries or regenerates an mcp-tools section", () => {
+  assert.ok(sectionIsAbsent(DOC, "mcp-tools"));
+  const out = regenerateSkillMd(DOC, SCHEMA);
+  assert.ok(!out.includes("generated:mcp-tools"));
+  assert.ok(!out.includes("list_boundaries"));
+});
+
+test("SKILL.md no longer carries or regenerates the commands and issue-types catalogues", () => {
+  assert.ok(sectionIsAbsent(DOC, "commands"));
+  assert.ok(sectionIsAbsent(DOC, "issue-types"));
+  const out = regenerateSkillMd(DOC, SCHEMA);
+  assert.ok(!out.includes("generated:commands"));
+  assert.ok(!out.includes("generated:issue-types"));
+  // Neither catalogue leaks back into the entry file.
+  assert.ok(!out.includes("`type-only-dependency`"));
+  assert.ok(!out.includes("| `dupes` |"));
+  // The pointers to both reference files survive regeneration.
+  assert.ok(out.includes("references/cli-reference.md"));
+  assert.ok(out.includes("references/issue-types.md"));
+});
+
+test("issue-types regenerates in references/issue-types.md and is idempotent", () => {
+  const out = regenerateIssueTypeReferenceMd(DOC_ISSUE_TYPE_REFERENCE, SCHEMA);
+  assert.equal(regenerateIssueTypeReferenceMd(out, SCHEMA), out);
+  assert.ok(out.startsWith("# Fallow Issue Types"));
+  assert.ok(out.trimEnd().endsWith("Hand-written outro stays."));
+  // The reference target regenerates only its own section.
+  assert.ok(!out.includes("generated:commands"));
+  assert.ok(!out.includes("generated:task-matrix"));
+});
+
+test("a half-present issue-types marker in the reference target throws", () => {
+  const bare = "# Fallow Issue Types\n\nHand-written outro stays.\n";
+
+  const halfStart = bare.replace(
+    "Hand-written outro stays.",
+    "<!-- generated:issue-types:start -->\n\nHand-written outro stays.",
+  );
+  assert.ok(!sectionIsAbsent(halfStart, "issue-types"));
+  assert.throws(
+    () => regenerateIssueTypeReferenceMd(halfStart, SCHEMA),
+    /missing marker.*issue-types/s,
+  );
+
+  const halfEnd = bare.replace(
+    "Hand-written outro stays.",
+    "<!-- generated:issue-types:end -->\n\nHand-written outro stays.",
+  );
+  assert.ok(!sectionIsAbsent(halfEnd, "issue-types"));
+  assert.throws(
+    () => regenerateIssueTypeReferenceMd(halfEnd, SCHEMA),
+    /missing marker.*issue-types/s,
+  );
+
+  const duplicated = `${DOC_ISSUE_TYPE_REFERENCE}\n<!-- generated:issue-types:start -->\n<!-- generated:issue-types:end -->\n`;
+  assert.throws(() => regenerateIssueTypeReferenceMd(duplicated, SCHEMA), /duplicated marker/);
+});
+
+test("removed rows drop; nested-subcommand rows survive while their parent exists", () => {
+  const out = regenerateCliReferenceMd(DOC_CLI_REFERENCE, SCHEMA);
+  assert.ok(!out.includes("removed-command"));
+  assert.ok(out.includes("`coverage upload-source-maps`"));
+  const coverageIdx = out.indexOf("| `coverage` |");
+  const uploadIdx = out.indexOf("| `coverage upload-source-maps` |");
+  assert.ok(coverageIdx !== -1 && uploadIdx > coverageIdx);
+});
+
+test("security catalogue and freemium rows stay out of the issue-types table", () => {
+  const out = regenerateIssueTypeReferenceMd(DOC_ISSUE_TYPE_REFERENCE, SCHEMA);
+  assert.ok(!out.includes("sql-injection"));
+  assert.ok(!out.includes("runtime-safe-to-delete"));
+  assert.ok(out.includes("`tainted-sink`"));
+});
+
+test("seeded cells escape pipes and newlines from manifest text", () => {
+  const out = regenerateMcpReferenceMd(DOC_MCP_REFERENCE, SCHEMA);
+  assert.ok(out.includes("List architecture \\| boundary zones and access rules"));
+});
+
+test("missing, duplicated, and inverted markers fail loudly", () => {
+  assert.throws(
+    () => spliceSection("no markers here", "commands", SCHEMA, "f.md"),
+    /missing marker.*commands/s,
+  );
+  const dup = `${DOC_CLI_REFERENCE}\n<!-- generated:commands:start -->\n<!-- generated:commands:end -->\n`;
+  assert.throws(() => spliceSection(dup, "commands", SCHEMA, "f.md"), /duplicated marker/);
+  const inverted = "<!-- generated:commands:end -->\n<!-- generated:commands:start -->\n";
+  assert.throws(
+    () => spliceSection(inverted, "commands", SCHEMA, "f.md"),
+    /end marker before start/,
+  );
+});
+
+test("task-matrix section regenerates from the manifest and is idempotent", () => {
+  const once = regenerateSkillMd(DOC, SCHEMA);
+  const twice = regenerateSkillMd(once, SCHEMA);
+  assert.equal(once, twice);
+  // Stale row replaced by the manifest rows.
+  assert.ok(!once.includes("stale row that should be regenerated"));
+  assert.ok(once.includes("| When the agent is about to... | Run |"));
+  assert.ok(
+    once.includes(
+      "| delete an unused export or file | `fallow dead-code --trace <file>:<export>` |",
+    ),
+  );
+  // The flag-fragment row appends its note after a semicolon.
+  assert.ok(
+    once.includes(
+      "| scope a monorepo | `--workspace <glob> / --changed-workspaces <ref>`; global flags, prefix any command |",
+    ),
+  );
+});
+
+test("a target without the task-matrix markers is tolerated and left byte-identical", () => {
+  assert.ok(sectionIsAbsent(DOC_WITHOUT_TASK_MATRIX, "task-matrix"));
+  // Tolerance: regeneration must NOT throw on the absent section.
+  const out = regenerateSkillMd(DOC_WITHOUT_TASK_MATRIX, SCHEMA);
+  // No task-matrix markers were injected, and the surrounding prose is intact.
+  assert.equal(out, DOC_WITHOUT_TASK_MATRIX);
+  assert.ok(!out.includes("generated:task-matrix"));
+  // Idempotent on the tolerant path too.
+  assert.equal(regenerateSkillMd(out, SCHEMA), out);
+});
+
+test("a reference target without the issue-types markers is tolerated", () => {
+  const withoutSection = `# Fallow Issue Types\n\nHand-written only.\n`;
+  assert.ok(sectionIsAbsent(withoutSection, "issue-types"));
+  assert.equal(regenerateIssueTypeReferenceMd(withoutSection, SCHEMA), withoutSection);
+});
+
+test("a half-present task-matrix marker still throws", () => {
+  const halfStart = DOC_WITHOUT_TASK_MATRIX.replace(
+    "Hand-written outro stays.",
+    "<!-- generated:task-matrix:start -->\n\nHand-written outro stays.",
+  );
+  assert.ok(!sectionIsAbsent(halfStart, "task-matrix"));
+  assert.throws(() => regenerateSkillMd(halfStart, SCHEMA), /missing marker.*task-matrix/s);
+
+  const halfEnd = DOC_WITHOUT_TASK_MATRIX.replace(
+    "Hand-written outro stays.",
+    "<!-- generated:task-matrix:end -->\n\nHand-written outro stays.",
+  );
+  assert.ok(!sectionIsAbsent(halfEnd, "task-matrix"));
+  assert.throws(() => regenerateSkillMd(halfEnd, SCHEMA), /missing marker.*task-matrix/s);
+});
+
+test("parseExistingTable honors escaped pipes inside cells", () => {
+  const { rows } = parseExistingTable(
+    "| Tool | Description |\n|---|---|\n| `x` | uses a \\| pipe |\n",
+  );
+  assert.equal(rows.get("x").get("Description"), "uses a \\| pipe");
+});
+
+test("CLI reference flag sections regenerate from the manifest and preserve curated cells", () => {
+  const out = regenerateCliReferenceMd(DOC_CLI_REFERENCE, SCHEMA);
+  assert.equal(regenerateCliReferenceMd(out, SCHEMA), out);
+  assert.match(out, /\| `--trace` \| `bool` \| `false` \| Curated trace description \|/);
+  assert.match(out, /\| `--mode` \| `strict\\\|mild` \| `mild` \| Curated mode prose \|/);
+  assert.match(out, /\| `-o, --output-file` \| `string` \| - \| Curated output file prose \|/);
+  assert.doesNotMatch(out, /Old global row should move out/);
+  assert.doesNotMatch(out, /--removed/);
+  assert.doesNotMatch(out, /--removed-global/);
+});
+
+test("CLI reference keeps issue filters separate from command flags", () => {
+  const out = regenerateCliReferenceMd(DOC_CLI_REFERENCE, SCHEMA);
+  const deadCodeBlock = out.slice(
+    out.indexOf("<!-- generated:flags:dead-code:start -->"),
+    out.indexOf("<!-- generated:flags:dead-code:end -->"),
+  );
+  const filterBlock = out.slice(
+    out.indexOf("<!-- generated:flags:dead-code-filters:start -->"),
+    out.indexOf("<!-- generated:flags:dead-code-filters:end -->"),
+  );
+  assert.doesNotMatch(deadCodeBlock, /--unused-files/);
+  assert.match(deadCodeBlock, /--type-aware/);
+  assert.match(deadCodeBlock, /--type-aware-project/);
+  assert.match(deadCodeBlock, /--type-aware-require/);
+  assert.match(deadCodeBlock, /--trace/);
+  assert.match(filterBlock, /\| `--unused-files` \| Curated unused files prose \|/);
+  assert.match(filterBlock, /\| `--unused-deps` \|/);
+});
+
+test("CLI reference combined mode uses the explicit allow-list", () => {
+  const out = regenerateCliReferenceMd(DOC_CLI_REFERENCE, SCHEMA);
+  const block = out.slice(
+    out.indexOf("<!-- generated:flags:fallow-combined:start -->"),
+    out.indexOf("<!-- generated:flags:fallow-combined:end -->"),
+  );
+  assert.match(block, /\| `--dupes-mode` \|/);
+  assert.match(block, /\| `--coverage` \|/);
+  assert.match(block, /\| `--coverage-root` \|/);
+  assert.match(block, /\| `--only` \| `string` \| - \| Curated only prose \|/);
+  assert.doesNotMatch(block, /--dupes-random/);
+});
+
+test("CLI reference fails loudly when an explicit global reference mapping is stale", () => {
+  const schema = {
+    ...SCHEMA,
+    global_flags: SCHEMA.global_flags.filter((flag) => flag.name !== "--format"),
+  };
+  assert.throws(
+    () => regenerateCliReferenceMd(DOC_CLI_REFERENCE, schema),
+    /schema is missing flag '--format'/,
+  );
+});
+
+test("CLI reference ignores command arguments that are not flags", () => {
+  const out = regenerateCliReferenceMd(DOC_CLI_REFERENCE, SCHEMA);
+  assert.match(out, /Arguments are hand-written here\./);
+  // Scoped past the commands catalogue: no flag table may carry a positional argument.
+  const flagTables = out.slice(out.indexOf("<!-- generated:flags:dead-code:start -->"));
+  assert.doesNotMatch(flagTables, /issue_type/);
+});
+
+test("manifest_version and expect-version guards", async () => {
+  const { loadSchema } = await import("./generate-agent-docs.mjs");
+  const tmp = `${process.env.TMPDIR ?? "/tmp"}/agent-docs-schema-${process.pid}.json`;
+  const { writeFileSync, rmSync } = await import("node:fs");
+  writeFileSync(tmp, JSON.stringify({ ...SCHEMA, manifest_version: "2" }));
+  assert.throws(() => loadSchema({ schemaPath: tmp }), /unsupported manifest_version/);
+  writeFileSync(tmp, JSON.stringify(SCHEMA));
+  assert.throws(() => loadSchema({ schemaPath: tmp, expectVersion: "9.9.9" }), /expected 9\.9\.9/);
+  rmSync(tmp);
+});
+
+test("--check exits 1 on drift, writes nothing, and exits 0 when in sync", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { main } = await import("./generate-agent-docs.mjs");
+
+  const dir = mkdtempSync(join(tmpdir(), "agent-docs-check-"));
+  const referencesDir = join(dir, "references");
+  const schemaPath = join(dir, "schema.json");
+  writeFileSync(schemaPath, JSON.stringify(SCHEMA));
+  writeFileSync(join(dir, "SKILL.md"), DOC);
+  mkdirSync(referencesDir);
+  writeFileSync(join(referencesDir, "cli-reference.md"), DOC_CLI_REFERENCE);
+  writeFileSync(join(referencesDir, "issue-types.md"), DOC_ISSUE_TYPE_REFERENCE);
+  writeFileSync(join(referencesDir, "mcp.md"), DOC_MCP_REFERENCE);
+
+  // DOC is stale relative to SCHEMA: --check must report drift without writing.
+  const seedRecord = join(dir, "seeds.json");
+  const before = readFileSync(join(dir, "SKILL.md"), "utf8");
+  const cliBefore = readFileSync(join(referencesDir, "cli-reference.md"), "utf8");
+  const mcpBefore = readFileSync(join(referencesDir, "mcp.md"), "utf8");
+  const issueTypesBefore = readFileSync(join(referencesDir, "issue-types.md"), "utf8");
+  const args = ["--schema", schemaPath, "--target", dir, "--seed-record", seedRecord];
+  assert.equal(main([...args, "--check"]), 1);
+  assert.equal(readFileSync(join(dir, "SKILL.md"), "utf8"), before);
+  assert.equal(readFileSync(join(referencesDir, "cli-reference.md"), "utf8"), cliBefore);
+  assert.equal(readFileSync(join(referencesDir, "mcp.md"), "utf8"), mcpBefore);
+  assert.equal(readFileSync(join(referencesDir, "issue-types.md"), "utf8"), issueTypesBefore);
+
+  // Regenerate for real, then --check must pass.
+  assert.equal(main(args), 0);
+  assert.equal(main([...args, "--check"]), 0);
+  // The mcp-tools table now lives in references/mcp.md, not SKILL.md.
+  assert.ok(readFileSync(join(referencesDir, "mcp.md"), "utf8").includes("list_boundaries"));
+  assert.ok(!readFileSync(join(dir, "SKILL.md"), "utf8").includes("generated:mcp-tools"));
+  // The commands and issue-types catalogues moved to their reference files too.
+  assert.ok(readFileSync(join(referencesDir, "cli-reference.md"), "utf8").includes("`dupes`"));
+  assert.ok(
+    readFileSync(join(referencesDir, "issue-types.md"), "utf8").includes("type-only-dependency"),
+  );
+  const skillAfter = readFileSync(join(dir, "SKILL.md"), "utf8");
+  assert.ok(!skillAfter.includes("generated:commands"));
+  assert.ok(!skillAfter.includes("generated:issue-types"));
+  rmSync(dir, { recursive: true });
+});
+
+test("--output-target stages regenerated docs without changing the source target", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { main } = await import("./generate-agent-docs.mjs");
+
+  const dir = mkdtempSync(join(tmpdir(), "agent-docs-output-target-"));
+  const source = join(dir, "source");
+  const output = join(dir, "output");
+  const sourceReferences = join(source, "references");
+  const schemaPath = join(dir, "schema.json");
+  mkdirSync(sourceReferences, { recursive: true });
+  writeFileSync(schemaPath, JSON.stringify(SCHEMA));
+  writeFileSync(join(source, "SKILL.md"), DOC);
+  writeFileSync(join(sourceReferences, "cli-reference.md"), DOC_CLI_REFERENCE);
+  writeFileSync(join(sourceReferences, "issue-types.md"), DOC_ISSUE_TYPE_REFERENCE);
+  writeFileSync(join(sourceReferences, "mcp.md"), DOC_MCP_REFERENCE);
+
+  try {
+    assert.equal(
+      main([
+        "--schema",
+        schemaPath,
+        "--target",
+        source,
+        "--output-target",
+        output,
+        "--seed-record",
+        join(dir, "seeds.json"),
+        "--seed-record-output",
+        join(output, "seeds.json"),
+      ]),
+      0,
+    );
+    assert.equal(readFileSync(join(source, "SKILL.md"), "utf8"), DOC);
+    assert.notEqual(readFileSync(join(output, "SKILL.md"), "utf8"), DOC);
+    assert.ok(
+      readFileSync(join(output, "references", "cli-reference.md"), "utf8").includes(
+        "--unused-deps",
+      ),
+    );
+    assert.ok(
+      readFileSync(join(output, "references", "mcp.md"), "utf8").includes("list_boundaries"),
+    );
+    assert.equal(
+      readFileSync(join(sourceReferences, "issue-types.md"), "utf8"),
+      DOC_ISSUE_TYPE_REFERENCE,
+    );
+    assert.ok(
+      readFileSync(join(output, "references", "issue-types.md"), "utf8").includes(
+        "type-only-dependency",
+      ),
+    );
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
+});
+
+const seedOf = (seeds, section, row, column) =>
+  seeds.find((cell) => cell.section === section && cell.row === row && cell.column === column)
+    ?.seed;
+
+test("curated seeds cover every curated column and carry the escaped manifest text", () => {
+  const seeds = curatedSeeds(SCHEMA, [
+    "commands",
+    "issue-types",
+    "mcp-tools",
+    "mcp-resources",
+    "flags:global",
+    "flags:dead-code-filters",
+  ]);
+
+  assert.equal(seedOf(seeds, "commands", "dupes", "Purpose"), "Find clones");
+  assert.equal(seedOf(seeds, "commands", "dupes", "Key Flags"), "`--mode`, `--trace`");
+  assert.equal(
+    seedOf(seeds, "issue-types", "type-only-dependency", "Description"),
+    "Dependency only used via import type; Only reported in --production mode",
+  );
+  assert.equal(
+    seedOf(seeds, "mcp-tools", "list_boundaries", "Description"),
+    "List architecture \\| boundary zones and access rules",
+  );
+  assert.equal(seedOf(seeds, "mcp-resources", "fallow://tools", "Description"), "Tool manifest");
+  assert.equal(seedOf(seeds, "flags:global", "--quiet", "Description"), "Suppress progress output");
+  assert.equal(
+    seedOf(seeds, "flags:dead-code-filters", "--unused-files", "Issue Type"),
+    "File is not reachable from any entry point",
+  );
+
+  // Only the requested sections are recorded, and rows without a curated
+  // column (task-matrix) contribute nothing.
+  assert.deepEqual([...new Set(seeds.map((cell) => cell.section))].toSorted(), [
+    "commands",
+    "flags:dead-code-filters",
+    "flags:global",
+    "issue-types",
+    "mcp-resources",
+    "mcp-tools",
+  ]);
+});
+
+test("seed comparison separates a moved seed from added and dropped cells", () => {
+  const recorded = curatedSeeds(SCHEMA, ["mcp-tools"]);
+  const moved = {
+    ...SCHEMA,
+    mcp_tools: {
+      tools: [
+        { ...SCHEMA.mcp_tools.tools[0], description: "Dead-code analysis with production scoping" },
+        { name: "trace_file", kind: "trace", license: "free", key_params: [], description: "New" },
+      ],
+    },
+  };
+  const comparison = compareCuratedSeeds(recorded, curatedSeeds(moved, ["mcp-tools"]));
+
+  assert.equal(hasCuratedSeedDrift(comparison), true);
+  assert.deepEqual(
+    comparison.changed.map((cell) => [cell.row, cell.recordedSeed, cell.seed]),
+    [["analyze", "Full dead-code analysis", "Dead-code analysis with production scoping"]],
+  );
+  assert.deepEqual(
+    comparison.added.map((cell) => cell.row),
+    ["trace_file"],
+  );
+  assert.deepEqual(
+    comparison.removed.map((cell) => cell.row),
+    ["list_boundaries"],
+  );
+
+  const report = formatCuratedSeedDrift(comparison, { recordPath: "record.json" });
+  assert.match(report, /CURATED SEED DRIFT: 3 curated agent-doc cell\(s\)/);
+  assert.match(report, /changed: mcp-tools \/ analyze \/ Description/);
+  assert.match(report, /recorded seed: Full dead-code analysis/);
+  assert.match(report, /current seed: {2}Dead-code analysis with production scoping/);
+  assert.match(report, /npm run generate:contracts/);
+  assert.match(report, /fallow-rs\/fallow-skills/);
+});
+
+test("identity-only manifest changes leave every curated seed alone", () => {
+  const withExtraKeyParam = {
+    ...SCHEMA,
+    mcp_tools: {
+      tools: SCHEMA.mcp_tools.tools.map((tool) =>
+        tool.name === "analyze" ? { ...tool, key_params: [...tool.key_params, "workspace"] } : tool,
+      ),
+    },
+  };
+
+  assert.deepEqual(
+    curatedSeeds(withExtraKeyParam, ["mcp-tools"]),
+    curatedSeeds(SCHEMA, ["mcp-tools"]),
+  );
+});
+
+test("a moved seed fails --check by name while the published cell still looks in sync", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { main } = await import("./generate-agent-docs.mjs");
+
+  const dir = mkdtempSync(join(tmpdir(), "agent-docs-seed-gate-"));
+  const references = join(dir, "references");
+  const schemaPath = join(dir, "schema.json");
+  const seedRecord = join(dir, "seeds.json");
+  const args = ["--schema", schemaPath, "--target", dir, "--seed-record", seedRecord];
+  mkdirSync(references, { recursive: true });
+  writeFileSync(schemaPath, JSON.stringify(SCHEMA));
+  writeFileSync(join(dir, "SKILL.md"), DOC);
+  writeFileSync(join(references, "cli-reference.md"), DOC_CLI_REFERENCE);
+  writeFileSync(join(references, "mcp.md"), DOC_MCP_REFERENCE);
+
+  const errors = [];
+  const originalError = console.error;
+  console.error = (message) => errors.push(String(message));
+
+  try {
+    assert.equal(main(args), 0);
+    assert.equal(main([...args, "--check"]), 0);
+
+    // The tool description moves; the curated cell is preserved verbatim, so
+    // the published table alone gives no signal.
+    const moved = {
+      ...SCHEMA,
+      mcp_tools: {
+        tools: SCHEMA.mcp_tools.tools.map((tool) =>
+          tool.name === "analyze"
+            ? { ...tool, description: "Dead-code analysis, rewritten" }
+            : tool,
+        ),
+      },
+    };
+    writeFileSync(schemaPath, JSON.stringify(moved));
+    const publishedBefore = readFileSync(join(references, "mcp.md"), "utf8");
+
+    assert.equal(main([...args, "--check"]), 1);
+    assert.equal(readFileSync(join(references, "mcp.md"), "utf8"), publishedBefore);
+    const report = errors.join("\n");
+    assert.match(report, /changed: mcp-tools \/ analyze \/ Description/);
+    assert.match(report, /recorded seed: Full dead-code analysis/);
+    assert.match(report, /current seed: {2}Dead-code analysis, rewritten/);
+
+    // Re-accepting the seed is one plain run, and it rewrites nothing else.
+    assert.equal(main(args), 0);
+    assert.equal(main([...args, "--check"]), 0);
+    assert.equal(readFileSync(join(references, "mcp.md"), "utf8"), publishedBefore);
+    assert.equal(
+      readCuratedSeedRecord(seedRecord).find(
+        (cell) => cell.section === "mcp-tools" && cell.row === "analyze",
+      ).seed,
+      "Dead-code analysis, rewritten",
+    );
+  } finally {
+    console.error = originalError;
+    rmSync(dir, { recursive: true });
+  }
+});
+
+test("a plain run fails when a curated Key Flags cell lacks a flag that is new in its seed", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { main } = await import("./generate-agent-docs.mjs");
+
+  const dir = mkdtempSync(join(tmpdir(), "agent-docs-key-flags-"));
+  const references = join(dir, "references");
+  const cliReference = join(references, "cli-reference.md");
+  const schemaPath = join(dir, "schema.json");
+  const seedRecord = join(dir, "seeds.json");
+  const args = ["--schema", schemaPath, "--target", dir, "--seed-record", seedRecord];
+  mkdirSync(references, { recursive: true });
+  writeFileSync(schemaPath, JSON.stringify(SCHEMA));
+  writeFileSync(join(dir, "SKILL.md"), DOC);
+  writeFileSync(cliReference, DOC_CLI_REFERENCE);
+
+  const errors = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  console.error = (message) => errors.push(String(message));
+  console.log = () => {};
+
+  try {
+    // The curated dead-code cell drops most seed flags on purpose; that is allowed.
+    assert.equal(main(args), 0);
+    assert.equal(main([...args, "--check"]), 0);
+
+    // A new flag enters the seed. `--file` falls off the end of the seed, and
+    // the cell may keep dropping it, but it must name `--max-dead`.
+    const withNewFlag = {
+      ...SCHEMA,
+      commands: SCHEMA.commands.map((command) =>
+        command.name === "dead-code"
+          ? { ...command, flags: [stringFlag("--max-dead"), ...command.flags] }
+          : command,
+      ),
+    };
+    writeFileSync(schemaPath, JSON.stringify(withNewFlag));
+
+    assert.equal(main(args), 1);
+    const report = errors.join("\n");
+    assert.match(report, /commands \/ dead-code \/ Key Flags/);
+    assert.match(report, /`--max-dead`/);
+    assert.doesNotMatch(report, /`--file`/);
+    // The failed run does not accept the new seed, so --check keeps failing.
+    assert.equal(main([...args, "--check"]), 1);
+
+    // A flag name that only shares a prefix does not count as coverage.
+    const published = readFileSync(cliReference, "utf8");
+    writeFileSync(
+      cliReference,
+      published.replace("| `--changed-since` |", "| `--changed-since`, `--max-dead-files` |"),
+    );
+    assert.equal(main(args), 1);
+
+    writeFileSync(
+      cliReference,
+      published.replace("| `--changed-since` |", "| `--changed-since`, `--max-dead <n>` |"),
+    );
+    assert.equal(main(args), 0);
+    assert.equal(main([...args, "--check"]), 0);
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+    rmSync(dir, { recursive: true });
+  }
+});
+
+test("the committed seed record matches the committed capability manifest", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { CURATED_SEED_RECORD_PATH } = await import("./generate-agent-docs.mjs");
+
+  const schema = JSON.parse(readFileSync("npm/fallow/capabilities.json", "utf8"));
+  const comparison = compareCuratedSeeds(
+    readCuratedSeedRecord(CURATED_SEED_RECORD_PATH),
+    curatedSeeds(schema),
+  );
+
+  assert.equal(
+    hasCuratedSeedDrift(comparison),
+    false,
+    formatCuratedSeedDrift(comparison, { recordPath: CURATED_SEED_RECORD_PATH }),
+  );
+});

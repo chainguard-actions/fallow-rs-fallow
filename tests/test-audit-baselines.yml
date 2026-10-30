@@ -1,0 +1,83 @@
+name: Test audit with gate, worsened and per-analysis baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - id: dc
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          annotations: 'false'
+          save-baseline: ${{ runner.temp }}/dc-baseline.json
+      - id: health
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          annotations: 'false'
+          save-baseline: ${{ runner.temp }}/health-baseline.json
+      - id: dupes
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          annotations: 'false'
+          save-baseline: ${{ runner.temp }}/dupes-baseline.json
+      - name: Assert baselines saved
+        run: |
+          for f in dc-baseline.json health-baseline.json dupes-baseline.json; do
+            if [ ! -f "$RUNNER_TEMP/$f" ]; then
+              echo "FAIL: $f not written"
+              exit 1
+            fi
+          done
+          echo "PASS"
+      - id: audit
+        uses: .
+        with:
+          command: audit
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          changed-since: HEAD
+          gate: all
+          worsened: warn
+          dead-code-baseline: ${{ runner.temp }}/dc-baseline.json
+          health-baseline: ${{ runner.temp }}/health-baseline.json
+          dupes-baseline: ${{ runner.temp }}/dupes-baseline.json
+      - name: Assert audit verdict and gate
+        env:
+          VERDICT: ${{ steps.audit.outputs.verdict }}
+          GATE: ${{ steps.audit.outputs.gate }}
+          ISSUES: ${{ steps.audit.outputs.issues }}
+        run: |
+          echo "verdict: $VERDICT gate: $GATE issues: $ISSUES"
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+          esac
+          if [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all'"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,0 +1,249 @@
+//! Built-in plugin instantiation.
+//!
+//! Contains the canonical list of all built-in plugins, categorized by domain.
+
+use super::super::{
+    Plugin, adonis::AdonisPlugin, ag_ui::AgUiPlugin, alchemy::AlchemyPlugin,
+    angular::AngularPlugin, astro::AstroPlugin, ava::AvaPlugin, babel::BabelPlugin,
+    biome::BiomePlugin, browser_extension::BrowserExtensionPlugin, bun::BunPlugin, c8::C8Plugin,
+    capacitor::CapacitorPlugin, changesets::ChangesetsPlugin,
+    commit_and_tag_version::CommitAndTagVersionPlugin, commitizen::CommitizenPlugin,
+    commitlint::CommitlintPlugin, content_collections::ContentCollectionsPlugin,
+    contentlayer::ContentlayerPlugin, convex::ConvexPlugin, cspell::CspellPlugin,
+    cucumber::CucumberPlugin, cypress::CypressPlugin, danger::DangerPlugin, deno::DenoPlugin,
+    dependency_cruiser::DependencyCruiserPlugin, docusaurus::DocusaurusPlugin,
+    dotenv::DotenvPlugin, drizzle::DrizzlePlugin, egg::EggPlugin, electron::ElectronPlugin,
+    ember::EmberPlugin, eslint::EslintPlugin, eve::EvePlugin, expo::ExpoPlugin,
+    expo_router::ExpoRouterPlugin, firebase::FirebasePlugin, flue::FluePlugin,
+    fumadocs::FumadocsPlugin, gatsby::GatsbyPlugin, github_action::GithubActionPlugin,
+    graphql_codegen::GraphqlCodegenPlugin, hardhat::HardhatPlugin, husky::HuskyPlugin,
+    i18next::I18nextPlugin, ionic::IonicPlugin, jasmine::JasminePlugin, jest::JestPlugin,
+    k6::K6Plugin, karma::KarmaPlugin, kibana::KibanaPlugin, knex::KnexPlugin, kysely::KyselyPlugin,
+    lefthook::LefthookPlugin, lexical::LexicalPlugin, lint_staged::LintStagedPlugin,
+    lit::LitPlugin, markdownlint::MarkdownlintPlugin, mintlify::MintlifyPlugin, mise::MisePlugin,
+    mocha::MochaPlugin, module_federation::ModuleFederationPlugin, msw::MswPlugin,
+    napi_rs::NapiRsPlugin, nest_commander::NestCommanderPlugin, nestjs::NestJsPlugin,
+    nestjs_trpc::NestJsTrpcPlugin, next_intl::NextIntlPlugin, nextjs::NextJsPlugin,
+    nitro::NitroPlugin, nodemon::NodemonPlugin, nuxt::NuxtPlugin, nx::NxPlugin, nyc::NycPlugin,
+    obsidian::ObsidianPlugin, openapi_ts::OpenapiTsPlugin, opencode::OpenCodePlugin,
+    opennext_cloudflare::OpenNextCloudflarePlugin, opentelemetry::OpenTelemetryPlugin,
+    osls::OslsPlugin, oxfmt::OxfmtPlugin, oxlint::OxlintPlugin, pandacss::PandaCssPlugin,
+    parcel::ParcelPlugin, pinia::PiniaPlugin, pkg_utils::PkgUtilsPlugin,
+    playwright::PlaywrightPlugin, plop::PlopPlugin, pm2::Pm2Plugin, pnpm::PnpmPlugin,
+    postcss::PostCssPlugin, prettier::PrettierPlugin, prisma::PrismaPlugin, qwik::QwikPlugin,
+    railway::RailwayPlugin, react_native::ReactNativePlugin, react_router::ReactRouterPlugin,
+    redwoodsdk::RedwoodSdkPlugin, relay::RelayPlugin, release_it::ReleaseItPlugin,
+    remark::RemarkPlugin, remix::RemixPlugin, rolldown::RolldownPlugin, rollup::RollupPlugin,
+    rsbuild::RsbuildPlugin, rspack::RspackPlugin, rspress::RspressPlugin, rstest::RstestPlugin,
+    sanity::SanityPlugin, semantic_release::SemanticReleasePlugin, sentry::SentryPlugin,
+    serverless_framework::ServerlessFrameworkPlugin, simple_git_hooks::SimpleGitHooksPlugin,
+    size_limit::SizeLimitPlugin, storybook::StorybookPlugin, stryker::StrykerPlugin,
+    stylelint::StylelintPlugin, supabase::SupabasePlugin, sveltekit::SvelteKitPlugin,
+    svgo::SvgoPlugin, svgr::SvgrPlugin, swc::SwcPlugin, syncpack::SyncpackPlugin,
+    tailwind::TailwindPlugin, tanstack_router::TanstackRouterPlugin, tap::TapPlugin,
+    textlint::TextlintPlugin, tsd::TsdPlugin, tsdown::TsdownPlugin, tsup::TsupPlugin,
+    turborepo::TurborepoPlugin, typedoc::TypedocPlugin, typeorm::TypeormPlugin,
+    typescript::TypeScriptPlugin, typescript_content_mapper::TypescriptContentMapperPlugin,
+    unocss::UnoCssPlugin, varlock::VarlockPlugin, velite::VelitePlugin, vercel::VercelPlugin,
+    vite::VitePlugin, vite_plus::VitePlusPlugin, vitepress::VitePressPlugin, vitest::VitestPlugin,
+    vscode::VscodePlugin, waku::WakuPlugin, webdriverio::WebdriverioPlugin, webpack::WebpackPlugin,
+    wrangler::WranglerPlugin, wuchale::WuchalePlugin, wxt::WxtPlugin,
+};
+
+macro_rules! push_plugins {
+    ($plugins:expr, $($plugin:expr),+ $(,)?) => {
+        $(
+            $plugins.push(Box::new($plugin));
+        )+
+    };
+}
+
+/// Create all built-in plugin instances, categorized by domain.
+pub fn create_builtin_plugins() -> Vec<Box<dyn Plugin>> {
+    let mut plugins = Vec::new();
+    add_framework_plugins(&mut plugins);
+    add_content_and_platform_plugins(&mut plugins);
+    add_build_and_test_plugins(&mut plugins);
+    add_quality_and_language_plugins(&mut plugins);
+    add_tooling_and_infra_plugins(&mut plugins);
+    plugins
+}
+
+fn add_framework_plugins(plugins: &mut Vec<Box<dyn Plugin>>) {
+    push_plugins!(
+        plugins,
+        NextJsPlugin,
+        NuxtPlugin,
+        PiniaPlugin,
+        RemixPlugin,
+        AstroPlugin,
+        BrowserExtensionPlugin,
+        GithubActionPlugin,
+        WxtPlugin,
+        AngularPlugin,
+        ReactRouterPlugin,
+        RedwoodSdkPlugin,
+        TanstackRouterPlugin,
+        WakuPlugin,
+        ReactNativePlugin,
+        ExpoPlugin,
+        ExpoRouterPlugin,
+        FirebasePlugin,
+        NestJsPlugin,
+        NestJsTrpcPlugin,
+        NestCommanderPlugin,
+        AdonisPlugin,
+        EggPlugin,
+        DocusaurusPlugin,
+        GatsbyPlugin,
+        SvelteKitPlugin,
+        NitroPlugin,
+        CapacitorPlugin,
+        IonicPlugin,
+        KibanaPlugin,
+    );
+}
+
+fn add_content_and_platform_plugins(plugins: &mut Vec<Box<dyn Plugin>>) {
+    push_plugins!(
+        plugins,
+        SanityPlugin,
+        SupabasePlugin,
+        VitePressPlugin,
+        RspressPlugin,
+        NextIntlPlugin,
+        RelayPlugin,
+        ElectronPlugin,
+        I18nextPlugin,
+        QwikPlugin,
+        ConvexPlugin,
+        LitPlugin,
+        LexicalPlugin,
+        AgUiPlugin,
+        ObsidianPlugin,
+        ContentCollectionsPlugin,
+        ContentlayerPlugin,
+        FumadocsPlugin,
+        MintlifyPlugin,
+        VelitePlugin,
+        EmberPlugin,
+        EvePlugin,
+    );
+}
+
+fn add_build_and_test_plugins(plugins: &mut Vec<Box<dyn Plugin>>) {
+    push_plugins!(
+        plugins,
+        VitePlugin,
+        VscodePlugin,
+        WebpackPlugin,
+        RollupPlugin,
+        RolldownPlugin,
+        RspackPlugin,
+        RsbuildPlugin,
+        ModuleFederationPlugin,
+        TsupPlugin,
+        TsdownPlugin,
+        VitePlusPlugin,
+        PkgUtilsPlugin,
+        ParcelPlugin,
+        VitestPlugin,
+        JestPlugin,
+        PlaywrightPlugin,
+        CypressPlugin,
+        MochaPlugin,
+        AvaPlugin,
+        TapPlugin,
+        TsdPlugin,
+        K6Plugin,
+        StorybookPlugin,
+        StrykerPlugin,
+        KarmaPlugin,
+        CucumberPlugin,
+        WebdriverioPlugin,
+        JasminePlugin,
+        RstestPlugin,
+    );
+}
+
+fn add_quality_and_language_plugins(plugins: &mut Vec<Box<dyn Plugin>>) {
+    push_plugins!(
+        plugins,
+        EslintPlugin,
+        BiomePlugin,
+        StylelintPlugin,
+        PrettierPlugin,
+        OxfmtPlugin,
+        OxlintPlugin,
+        MarkdownlintPlugin,
+        CspellPlugin,
+        RemarkPlugin,
+        TypeScriptPlugin,
+        BabelPlugin,
+        SwcPlugin,
+        TailwindPlugin,
+        PostCssPlugin,
+        UnoCssPlugin,
+        PandaCssPlugin,
+        PrismaPlugin,
+        DrizzlePlugin,
+        KnexPlugin,
+        TypeormPlugin,
+        KyselyPlugin,
+        TextlintPlugin,
+        TypescriptContentMapperPlugin,
+    );
+}
+
+fn add_tooling_and_infra_plugins(plugins: &mut Vec<Box<dyn Plugin>>) {
+    push_plugins!(
+        plugins,
+        TurborepoPlugin,
+        NxPlugin,
+        ChangesetsPlugin,
+        SyncpackPlugin,
+        CommitlintPlugin,
+        CommitizenPlugin,
+        CommitAndTagVersionPlugin,
+        SemanticReleasePlugin,
+        ReleaseItPlugin,
+        DangerPlugin,
+        HardhatPlugin,
+        VercelPlugin,
+        WranglerPlugin,
+        AlchemyPlugin,
+        OpenNextCloudflarePlugin,
+        SentryPlugin,
+        OpenTelemetryPlugin,
+        HuskyPlugin,
+        LintStagedPlugin,
+        LefthookPlugin,
+        SimpleGitHooksPlugin,
+        SizeLimitPlugin,
+        SvgoPlugin,
+        SvgrPlugin,
+        GraphqlCodegenPlugin,
+        TypedocPlugin,
+        OpenapiTsPlugin,
+        PlopPlugin,
+        C8Plugin,
+        NycPlugin,
+        MswPlugin,
+        NapiRsPlugin,
+        OpenCodePlugin,
+        NodemonPlugin,
+        Pm2Plugin,
+        DependencyCruiserPlugin,
+        DotenvPlugin,
+        WuchalePlugin,
+        VarlockPlugin,
+        PnpmPlugin,
+        BunPlugin,
+        DenoPlugin,
+        MisePlugin,
+        RailwayPlugin,
+        ServerlessFrameworkPlugin,
+        OslsPlugin,
+        FluePlugin,
+    );
+}

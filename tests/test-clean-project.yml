@@ -1,0 +1,34 @@
+name: Test clean project passes
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean-project
+          version: '3.38.0'
+          fail-on-issues: 'true'
+          type-aware: 'false'
+          format: json
+      - name: Assert zero issues
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues on clean project"
+            [ -f "$RESULTS" ] && cat "$RESULTS"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          echo "PASS"

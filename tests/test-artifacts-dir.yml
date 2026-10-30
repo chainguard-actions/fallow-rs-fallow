@@ -1,0 +1,34 @@
+name: Test custom artifacts-dir
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create artifacts dir
+        run: mkdir -p fallow-artifacts
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts
+      - name: Assert artifacts written to custom dir
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          ls -la fallow-artifacts || true
+          case "$RESULTS" in
+            *fallow-artifacts/*) ;;
+            *) echo "FAIL: results path not under fallow-artifacts"; exit 1 ;;
+          esac
+          if [ ! -s "$RESULTS" ]; then
+            echo "FAIL: results file missing or empty"
+            exit 1
+          fi
+          echo "PASS"

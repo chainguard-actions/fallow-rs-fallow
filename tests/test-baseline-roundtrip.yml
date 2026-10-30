@@ -1,0 +1,53 @@
+name: Test save-baseline then baseline
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ runner.temp }}/fallow-baseline.json
+      - name: Assert baseline saved
+        env:
+          BASELINE: ${{ runner.temp }}/fallow-baseline.json
+        run: |
+          if [ ! -s "$BASELINE" ]; then
+            echo "FAIL: baseline file not written at $BASELINE"
+            exit 1
+          fi
+          cat "$BASELINE"
+          jq empty "$BASELINE" || { echo "FAIL: baseline not JSON"; exit 1; }
+          echo "PASS"
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'true'
+          baseline: ${{ runner.temp }}/fallow-baseline.json
+      - name: Assert baseline suppresses known issues
+        env:
+          ISSUES: ${{ steps.load.outputs.issues }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
+          BPATH: ${{ steps.load.outputs.baseline-path }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "baseline-entries: $ENTRIES"
+          echo "baseline-path: $BPATH"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues with baseline loaded"
+            exit 1
+          fi
+          echo "PASS"

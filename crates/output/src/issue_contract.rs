@@ -1,0 +1,471 @@
+use std::collections::BTreeMap;
+
+use fallow_types::envelope::{Meta, MetaMetric, MetaRule};
+pub use fallow_types::issue_meta::{CODECLIMATE_RESULT_CODES, TsAliasMeta};
+use fallow_types::issue_meta::{
+    IssueResultMeta, issue_meta_by_code, issue_result_meta_by_code, result_issue_metas,
+};
+use fallow_types::results::AnalysisResults;
+
+const DOCS_BASE: &str = "https://fallow.tools/docs";
+
+/// Docs URL for the dead-code/check command.
+pub const CHECK_DOCS: &str = "https://fallow.tools/docs/cli/dead-code/";
+
+/// Docs URL for the architecture command.
+pub const ARCHITECTURE_DOCS: &str = "https://fallow.tools/docs/cli/architecture/";
+
+/// `_meta` description for the per-finding `actions[]` array shared across
+/// JSON output.
+pub const ACTIONS_FIELD_DEFINITION: &str = "Per-finding fix and suppression suggestions. Each entry carries a `type` discriminant (kebab-case) plus a per-action `auto_fixable` bool. Consumers dispatch on `type` to choose the remediation and filter on `auto_fixable` of each individual entry.";
+
+/// `_meta` description for the per-action `auto_fixable` bool.
+pub const ACTIONS_AUTO_FIXABLE_FIELD_DEFINITION: &str = "Evaluated PER FINDING, not per action type. The same `type` may carry `auto_fixable: true` on one finding and `auto_fixable: false` on another when per-instance guards in the `fallow fix` applier discriminate. Filter on this bool of each individual action, not on `type` alone. Current per-instance flips: (1) `remove-catalog-entry` is `true` only when the finding's `hardcoded_consumers` array is empty (else fallow fix skips the entry to avoid breaking `pnpm install`); (2) the primary dependency action flips between `remove-dependency` (`auto_fixable: true`) and `move-dependency` (`auto_fixable: false`) based on `used_in_workspaces`; (3) `add-to-config` for `ignoreExports` is `true` when fallow fix can safely apply the action, which means EITHER a fallow config file already exists OR no config exists and the working directory is NOT inside a monorepo subpackage (the applier then creates `.fallowrc.json` using `fallow init`'s framework-aware scaffolding and layers the new rules on top); `false` inside a monorepo subpackage with no workspace-root config because the applier refuses to fragment per-package configs; (4) `update-catalog-reference` is always `false` today (catalog-switching applier not yet wired). All `suppress-line` and `suppress-file` actions are uniformly `false`.";
+
+/// Output-facing contract metadata for a serialized dead-code result row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueOutputContract {
+    /// Canonical issue code that owns this result array.
+    pub code: &'static str,
+    /// Serialized `AnalysisResults` array key that carries this issue row.
+    pub result_key: &'static str,
+    /// Whether `result_key` contributes to `AnalysisResults::total_issues()`.
+    pub counts_in_total: bool,
+    /// Label used by CI summary tables.
+    pub summary_label: &'static str,
+    /// Documentation anchor used by CI summary tables.
+    pub summary_docs_anchor: &'static str,
+    /// Human-readable name emitted in dead-code `_meta.rules`.
+    pub meta_name: &'static str,
+    /// Explanation emitted in dead-code `_meta.rules`.
+    pub meta_description: &'static str,
+    /// Documentation path emitted in dead-code `_meta.rules`.
+    pub meta_docs_path: &'static str,
+    /// SARIF rule ids used by the CLI SARIF formatter for this result row.
+    pub sarif_rule_ids: Vec<String>,
+    /// CodeClimate check names used by the CodeClimate formatter.
+    pub codeclimate_check_names: Vec<String>,
+    /// Published TypeScript alias policy for backwards-compatible bare names.
+    pub ts_alias: Option<TsAliasMeta>,
+}
+
+impl IssueOutputContract {
+    #[must_use]
+    fn from_result_meta(meta: &IssueResultMeta) -> Self {
+        let issue = issue_meta_by_code(meta.code).unwrap_or_else(|| {
+            panic!(
+                "output contract must reference IssueKindMeta row: {}",
+                meta.code
+            )
+        });
+        Self {
+            code: meta.code,
+            result_key: meta.result_key,
+            counts_in_total: meta.counts_in_total,
+            summary_label: meta.summary_label,
+            summary_docs_anchor: meta.docs_anchor,
+            meta_name: meta.meta_name,
+            meta_description: meta.meta_description,
+            meta_docs_path: meta.meta_docs_path,
+            sarif_rule_ids: issue.sarif_rule_ids(),
+            codeclimate_check_names: issue.codeclimate_check_names(),
+            ts_alias: issue.ts_alias(),
+        }
+    }
+}
+
+/// Build the `_meta` object for `fallow dead-code --format json --explain`.
+#[must_use]
+pub fn check_meta() -> Meta {
+    let mut rules = BTreeMap::new();
+    for contract in issue_output_contracts() {
+        rules.insert(
+            contract.code.to_string(),
+            MetaRule {
+                name: Some(contract.meta_name.to_string()),
+                description: Some(contract.meta_description.to_string()),
+                docs: Some(rule_docs_url(contract.meta_docs_path)),
+            },
+        );
+    }
+    rules.insert(
+        MISSING_SUPPRESSION_REASON_CODE.to_string(),
+        MetaRule {
+            name: Some("Missing Suppression Reason".to_string()),
+            description: Some("A fallow-ignore-next-line or fallow-ignore-file suppression omits the explanatory reason required by the requireSuppressionReason rule. Add a short reason after the suppression token, or remove the suppression if the issue is no longer intentional.".to_string()),
+            docs: Some(rule_docs_url("explanations/dead-code#stale-suppressions")),
+        },
+    );
+
+    Meta {
+        docs: Some(CHECK_DOCS.to_string()),
+        field_definitions: BTreeMap::from([
+            (
+                "actions[]".to_string(),
+                ACTIONS_FIELD_DEFINITION.to_string(),
+            ),
+            (
+                "actions[].auto_fixable".to_string(),
+                ACTIONS_AUTO_FIXABLE_FIELD_DEFINITION.to_string(),
+            ),
+        ]),
+        rules,
+        metrics: BTreeMap::from([(
+            "summary.prop_drilling_chains".to_string(),
+            MetaMetric {
+                name: Some("Enforced prop-drilling chains".to_string()),
+                description: Some("Number of prop-drilling chains with saved effective_severity set to error. Warning chains are excluded; the counter is omitted when zero.".to_string()),
+                range: Some("Non-negative integer".to_string()),
+                interpretation: Some("Each counted chain contributes to total_issues and CI error gates. The finding array can also contain advisory chains excluded from this counter.".to_string()),
+            },
+        ),
+        ("summary.thin_wrappers".to_owned(), component_error_metric("Thin wrappers")),
+        ("summary.duplicate_prop_shapes".to_owned(), component_error_metric("Duplicate prop shapes")),
+        ]),
+        ..Meta::default()
+    }
+}
+
+/// Rule code of the stale-suppression findings that report a missing reason.
+const MISSING_SUPPRESSION_REASON_CODE: &str = "missing-suppression-reason";
+/// Rule code of the other stale-suppression findings.
+const STALE_SUPPRESSION_CODE: &str = "stale-suppression";
+
+/// Keep only the `_meta.rules` entries of rules that have a finding in one
+/// of `results`. A grouped report passes the results of each group it shows.
+///
+/// A rule without a finding in the run tells the reader nothing about the
+/// report, so `--explain` lists only the rules the report uses. The CLI, the
+/// MCP server and the programmatic API call this on the same results, so the
+/// three list the same rules.
+pub fn retain_reported_rules<'a>(
+    meta: &mut Meta,
+    results: impl IntoIterator<Item = &'a AnalysisResults>,
+) {
+    let results: Vec<&AnalysisResults> = results.into_iter().collect();
+    let reported: Vec<&'static str> = issue_output_contracts()
+        .filter(|contract| {
+            results.iter().any(|results| {
+                // A result key without a mapping keeps its rule, so a new
+                // result family never loses its explanation.
+                results
+                    .result_key_has_findings(contract.result_key)
+                    .unwrap_or(true)
+            })
+        })
+        .map(|contract| contract.code)
+        .collect();
+    let stale = || {
+        results
+            .iter()
+            .flat_map(|results| results.stale_suppressions.iter())
+    };
+    let missing_reason = stale().any(|finding| finding.missing_reason);
+    let stale_without_missing_reason = stale().any(|finding| !finding.missing_reason);
+    meta.rules.retain(|code, _| match code.as_str() {
+        MISSING_SUPPRESSION_REASON_CODE => missing_reason,
+        STALE_SUPPRESSION_CODE => stale_without_missing_reason,
+        code => reported.contains(&code),
+    });
+}
+
+fn component_error_metric(name: &str) -> MetaMetric {
+    MetaMetric {
+        name: Some(format!("Enforced {name}")),
+        description: Some("Number of findings with saved effective_severity set to error. Warnings are excluded; the counter is omitted when zero.".to_owned()),
+        range: Some("Non-negative integer".to_owned()),
+        interpretation: Some("Each counted finding contributes to total_issues and CI error gates. The finding array can also contain advisory warnings.".to_owned()),
+    }
+}
+
+/// The `AnalysisResults` arrays that `fallow architecture` reports: import
+/// cycles, boundary violations and rule-pack policy violations.
+///
+/// One list for the `_meta.rules` filter, the human report and the
+/// programmatic selection, so the three cannot disagree.
+pub const ARCHITECTURE_RESULT_KEYS: &[&str] = &[
+    "circular_dependencies",
+    "re_export_cycles",
+    "package_cycles",
+    "boundary_violations",
+    "boundary_coverage_violations",
+    "boundary_call_violations",
+    "policy_violations",
+];
+
+/// Build the `_meta` object for `fallow architecture --format json --explain`.
+///
+/// It has the dead-code field definitions, the architecture docs URL, and
+/// only the rules of the [`ARCHITECTURE_RESULT_KEYS`] arrays.
+#[must_use]
+pub fn architecture_meta() -> Meta {
+    let mut meta = check_meta();
+    let architecture_codes: Vec<&'static str> = issue_output_contracts()
+        .filter(|contract| ARCHITECTURE_RESULT_KEYS.contains(&contract.result_key))
+        .map(|contract| contract.code)
+        .collect();
+    meta.rules
+        .retain(|code, _| architecture_codes.contains(&code.as_str()));
+    for key in fallow_types::results::ERROR_ONLY_RESULT_KEYS {
+        meta.metrics.remove(&format!("summary.{key}"));
+    }
+    meta.docs = Some(ARCHITECTURE_DOCS.to_string());
+    meta
+}
+
+/// Public docs URL for a rule's `docs_path` relative to the docs site root.
+///
+/// A page URL ends with a slash, before any `#anchor`, because that is the
+/// final address of the page: `cli/flags#x` becomes `.../cli/flags/#x`.
+#[must_use]
+pub fn rule_docs_url(docs_path: &str) -> String {
+    match docs_path.split_once('#') {
+        Some((page, anchor)) => format!("{DOCS_BASE}/{page}/#{anchor}"),
+        None => format!("{DOCS_BASE}/{docs_path}/"),
+    }
+}
+
+/// Output-facing dead-code result contracts in stable registry order.
+pub fn issue_output_contracts() -> impl Iterator<Item = IssueOutputContract> {
+    result_issue_metas().map(IssueOutputContract::from_result_meta)
+}
+
+/// Output-facing dead-code result contract by issue code.
+#[must_use]
+pub fn issue_output_contract_by_code(code: &str) -> Option<IssueOutputContract> {
+    issue_result_meta_by_code(code).map(IssueOutputContract::from_result_meta)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    fn stale_suppression(missing_reason: bool) -> fallow_types::results::StaleSuppression {
+        fallow_types::results::StaleSuppression {
+            path: std::path::PathBuf::from("src/a.ts"),
+            line: 1,
+            col: 0,
+            origin: fallow_types::results::SuppressionOrigin::JsdocTag {
+                export_name: "a".to_string(),
+                reason: None,
+            },
+            missing_reason,
+            finding_id: None,
+            actions: Vec::new(),
+            effective_severity: None,
+        }
+    }
+
+    #[test]
+    fn every_contract_result_key_maps_to_a_result_array() {
+        let results = AnalysisResults::default();
+        for contract in issue_output_contracts() {
+            assert_eq!(
+                results.result_key_has_findings(contract.result_key),
+                Some(false),
+                "{} has no result array mapping",
+                contract.result_key
+            );
+        }
+    }
+
+    #[test]
+    fn retain_reported_rules_keeps_only_rules_with_findings() {
+        let mut meta = check_meta();
+        retain_reported_rules(&mut meta, [&AnalysisResults::default()]);
+        assert!(
+            meta.rules.is_empty(),
+            "no finding, no rule: {:?}",
+            meta.rules
+        );
+
+        let mut meta = check_meta();
+        let mut results = AnalysisResults::default();
+        results.stale_suppressions.push(stale_suppression(true));
+        retain_reported_rules(&mut meta, [&results]);
+        assert_eq!(
+            meta.rules.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["missing-suppression-reason"],
+            "a missing reason does not list the stale-suppression rule"
+        );
+
+        let mut meta = check_meta();
+        let mut other_group = AnalysisResults::default();
+        other_group
+            .stale_suppressions
+            .push(stale_suppression(false));
+        retain_reported_rules(&mut meta, [&results, &other_group]);
+        assert_eq!(
+            meta.rules.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["missing-suppression-reason", "stale-suppression"],
+            "a grouped report lists the rules of every group"
+        );
+    }
+
+    #[test]
+    fn architecture_meta_lists_only_architecture_rules() {
+        let meta = architecture_meta();
+        let expected: BTreeSet<&str> = issue_output_contracts()
+            .filter(|contract| ARCHITECTURE_RESULT_KEYS.contains(&contract.result_key))
+            .map(|contract| contract.code)
+            .collect();
+        let actual: BTreeSet<&str> = meta.rules.keys().map(String::as_str).collect();
+
+        assert_eq!(actual, expected);
+        assert_eq!(meta.docs.as_deref(), Some(ARCHITECTURE_DOCS));
+        assert_eq!(meta.field_definitions, check_meta().field_definitions);
+        assert!(!meta.metrics.contains_key("summary.prop_drilling_chains"));
+    }
+
+    #[test]
+    fn every_architecture_result_key_names_a_result_row() {
+        let keys: BTreeSet<&str> = issue_output_contracts()
+            .map(|contract| contract.result_key)
+            .collect();
+        for key in ARCHITECTURE_RESULT_KEYS {
+            assert!(keys.contains(key), "`{key}` is not a result array key");
+        }
+        let architecture_rows = issue_output_contracts()
+            .filter(|contract| ARCHITECTURE_RESULT_KEYS.contains(&contract.result_key))
+            .count();
+        assert_eq!(architecture_rows, ARCHITECTURE_RESULT_KEYS.len());
+    }
+
+    #[test]
+    fn every_result_row_has_output_contract() {
+        let result_codes: BTreeSet<&str> = result_issue_metas().map(|meta| meta.code).collect();
+        let output_codes: BTreeSet<&str> = issue_output_contracts()
+            .map(|contract| contract.code)
+            .collect();
+        assert_eq!(result_codes, output_codes);
+    }
+
+    #[test]
+    fn summary_contracts_are_present() {
+        for contract in issue_output_contracts() {
+            assert!(!contract.summary_label.is_empty());
+            assert!(!contract.summary_docs_anchor.is_empty());
+            assert!(!contract.meta_name.is_empty());
+            assert!(!contract.meta_description.is_empty());
+            assert!(!contract.meta_docs_path.is_empty());
+        }
+    }
+
+    #[test]
+    fn check_meta_uses_output_contracts() {
+        let meta = check_meta();
+        assert_eq!(meta.docs.as_deref(), Some(CHECK_DOCS));
+        assert!(
+            meta.field_definitions["actions[].auto_fixable"].contains("PER FINDING"),
+            "auto_fixable definition should preserve per-finding guidance"
+        );
+        assert!(meta.rules.contains_key("unused-export"));
+        assert!(meta.rules.contains_key("missing-suppression-reason"));
+        assert_eq!(
+            meta.rules["unused-dev-dependency"].docs.as_deref(),
+            Some("https://fallow.tools/docs/explanations/dead-code/#unused-devdependencies")
+        );
+    }
+
+    #[test]
+    fn ci_format_contracts_are_present() {
+        for contract in issue_output_contracts() {
+            assert!(
+                contract
+                    .sarif_rule_ids
+                    .contains(&format!("fallow/{}", contract.code)),
+                "result metadata code {} has wrong SARIF rule id",
+                contract.code
+            );
+            for rule_id in contract.sarif_rule_ids {
+                assert!(
+                    rule_id.starts_with("fallow/"),
+                    "result metadata code {} has unprefixed SARIF rule id {rule_id}",
+                    contract.code
+                );
+            }
+            for check_name in &contract.codeclimate_check_names {
+                assert!(
+                    check_name.starts_with("fallow/"),
+                    "result metadata code {} has unprefixed CodeClimate check name {check_name}",
+                    contract.code
+                );
+            }
+            assert!(
+                !contract.codeclimate_check_names.is_empty(),
+                "result metadata code {} has no CodeClimate check names",
+                contract.code
+            );
+        }
+    }
+
+    #[test]
+    fn component_health_codeclimate_contracts_are_present() {
+        for code in ["duplicate-prop-shape", "thin-wrapper"] {
+            let contract = issue_output_contracts()
+                .find(|contract| contract.code == code)
+                .expect("component-health contract must be present");
+            let expected = format!("fallow/{code}");
+            assert_eq!(contract.codeclimate_check_names, vec![expected]);
+        }
+    }
+
+    #[test]
+    fn codeclimate_result_codes_match_result_metadata() {
+        let result_codes: BTreeSet<&str> = result_issue_metas().map(|meta| meta.code).collect();
+        let codeclimate_codes: BTreeSet<&str> = CODECLIMATE_RESULT_CODES.iter().copied().collect();
+        assert!(codeclimate_codes.is_subset(&result_codes));
+    }
+
+    #[test]
+    fn ts_alias_policy_is_explicit() {
+        let aliases: BTreeSet<(&str, &str)> = issue_output_contracts()
+            .filter_map(|contract| contract.ts_alias.map(|alias| (alias.name, alias.parent)))
+            .collect();
+
+        assert_eq!(
+            BTreeSet::from([
+                ("BoundaryViolation", "BoundaryViolationFinding"),
+                ("CircularDependency", "CircularDependencyFinding"),
+                ("DeprecatedExportInUse", "DeprecatedExportInUseFinding"),
+                (
+                    "DevDependencyInProduction",
+                    "DevDependencyInProductionFinding",
+                ),
+                ("DuplicateExport", "DuplicateExportFinding"),
+                ("EmptyCatalogGroup", "EmptyCatalogGroupFinding"),
+                (
+                    "MisconfiguredDependencyOverride",
+                    "MisconfiguredDependencyOverrideFinding",
+                ),
+                ("PackageCycle", "PackageCycleFinding"),
+                ("PrivateTypeLeak", "PrivateTypeLeakFinding"),
+                ("ReExportCycle", "ReExportCycleFinding"),
+                ("TestOnlyDependency", "TestOnlyDependencyFinding"),
+                ("TypeOnlyDependency", "TypeOnlyDependencyFinding"),
+                ("UnlistedDependency", "UnlistedDependencyFinding"),
+                (
+                    "UnresolvedCatalogReference",
+                    "UnresolvedCatalogReferenceFinding",
+                ),
+                ("UnresolvedImport", "UnresolvedImportFinding"),
+                ("UnusedCatalogEntry", "UnusedCatalogEntryFinding"),
+                ("UnusedDependency", "UnusedDependencyFinding"),
+                ("UnusedDependency", "UnusedDevDependencyFinding"),
+                ("UnusedDependency", "UnusedOptionalDependencyFinding"),
+                (
+                    "UnusedDependencyOverride",
+                    "UnusedDependencyOverrideFinding",
+                ),
+                ("UnusedExport", "UnusedExportFinding"),
+                ("UnusedFile", "UnusedFileFinding"),
+                ("UnusedMember", "UnusedClassMemberFinding"),
+                ("UnusedMember", "UnusedEnumMemberFinding"),
+                ("UnusedMember", "UnusedStoreMemberFinding"),
+            ]),
+            aliases
+        );
+    }
+}

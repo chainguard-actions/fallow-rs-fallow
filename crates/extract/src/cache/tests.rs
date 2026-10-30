@@ -1,0 +1,2349 @@
+//! Tests for the incremental parse cache.
+
+use std::path::Path;
+use std::sync::Arc;
+
+use oxc_span::Span;
+
+use crate::*;
+use fallow_types::cache_rejection::CacheRejection;
+use fallow_types::discover::FileId;
+use fallow_types::extract::{SkippedSecurityCalleeExpressionKind, SkippedSecurityCalleeReason};
+
+use super::*;
+
+/// A `CachedModule` with every field empty or zero. Tests set only the fields
+/// that they check and take the other fields from this value.
+fn empty_cached_module() -> CachedModule {
+    CachedModule {
+        last_seen_secs: 0,
+        ..module_to_cached_from_parts(&ModuleInfo::empty(FileId(0)), 0, 0)
+    }
+}
+
+#[test]
+fn cache_roundtrip_preserves_top_level_runtime_statement_facts() {
+    for (source, has_runtime_statement) in [
+        ("console.log('init'); export type A = string;", true),
+        ("await Promise.resolve(); export type A = string;", true),
+        (
+            "declare const value: string; export type A = string;",
+            false,
+        ),
+    ] {
+        let module = parse_from_content(FileId(0), Path::new("src/module.ts"), source);
+        let cached = module_to_cached_from_parts(&module, 10, 20);
+        let encoded = bitcode::encode(&cached);
+        let decoded: CachedModule = bitcode::decode(&encoded).expect("decode cached module");
+        let restored = cached_to_module(&decoded, FileId(0));
+        assert_eq!(restored.semantic_facts, module.semantic_facts);
+        assert_eq!(
+            restored
+                .semantic_facts
+                .contains(&SemanticFact::TopLevelRuntimeStatement),
+            has_runtime_statement,
+            "cached classification must match the source: {source}"
+        );
+    }
+}
+
+#[test]
+fn cache_store_new_is_empty() {
+    let store = CacheStore::new(Path::new(""));
+    assert!(store.is_empty());
+    assert_eq!(store.len(), 0);
+}
+
+#[test]
+fn cache_store_default_is_empty() {
+    let store = CacheStore::default();
+    assert!(store.is_empty());
+}
+
+#[test]
+fn cache_roundtrip_preserves_origin_guard_observations_without_sanitizers() {
+    let source = r#"export function handle(req) {
+        const destination = new URL(req.query.url);
+        if (destination.origin !== "https://api.example.com") return;
+        fetch(destination.href);
+    }"#;
+    let module = parse_from_content(FileId(0), Path::new("src/route.ts"), source);
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let encoded = bitcode::encode(&cached);
+    let decoded: CachedModule = bitcode::decode(&encoded).expect("decode cached module");
+    let restored = cached_to_module(&decoded, FileId(0));
+    assert_eq!(
+        bitcode::encode(&restored.security_control_sites),
+        bitcode::encode(&module.security_control_sites),
+    );
+    assert!(restored.security_control_sites.iter().any(|control| {
+        control.callee_path == "origin-equality-guard"
+            && source[control.span_start as usize..control.span_end as usize].starts_with("if (")
+    }));
+    assert!(restored.sanitized_sink_args.is_empty());
+}
+
+#[test]
+fn cache_roundtrip_preserves_declaration_merge_facts() {
+    let module = parse_from_content(
+        FileId(0),
+        Path::new("src/merged.ts"),
+        "export interface Merged {}\nexport namespace Merged {}",
+    );
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let encoded = bitcode::encode(&cached);
+    let decoded: CachedModule = bitcode::decode(&encoded).expect("decode cached module");
+    let restored = cached_to_module(&decoded, FileId(0));
+
+    assert!(restored.semantic_facts.iter().any(|fact| matches!(
+        fact,
+        fallow_types::extract::SemanticFact::DeclarationMerge(group)
+            if group.export_spans.len() == 2
+    )));
+}
+
+#[test]
+fn cache_roundtrip_preserves_single_static_cjs_object_map_provenance() {
+    let module = parse_from_content(
+        FileId(0),
+        Path::new("src/theme.cjs"),
+        "module.exports = { default: 'blue', primary: 'red' };",
+    );
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let encoded = bitcode::encode(&cached);
+    let decoded: CachedModule = bitcode::decode(&encoded).expect("decode cached module");
+    let restored = cached_to_module(&decoded, FileId(0));
+
+    assert!(
+        restored
+            .semantic_facts
+            .contains(&SemanticFact::CjsSingleStaticObjectMap)
+    );
+}
+
+#[test]
+fn cache_roundtrip_preserves_default_import_whole_object_use() {
+    let module = parse_from_content(
+        FileId(0),
+        Path::new("src/consumer.ts"),
+        "import value from './value'; hand(value);",
+    );
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let encoded = bitcode::encode(&cached);
+    let decoded: CachedModule = bitcode::decode(&encoded).expect("decode cached module");
+    let restored = cached_to_module(&decoded, FileId(0));
+
+    assert!(restored.semantic_facts.iter().any(|fact| matches!(
+        fact,
+        SemanticFact::DefaultImportWholeObjectUse(use_fact)
+            if use_fact.local_name == "value"
+    )));
+}
+
+#[test]
+fn cache_roundtrip_preserves_type_alias_surface_targets() {
+    let module = parse_from_content(
+        FileId(0),
+        Path::new("src/alias.ts"),
+        "export type Surface = Pick<Target, 'used'> & { nested: Nested }",
+    );
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let encoded = bitcode::encode(&cached);
+    let decoded: CachedModule = bitcode::decode(&encoded).expect("decode cached module");
+    let restored = cached_to_module(&decoded, FileId(0));
+
+    assert!(restored.semantic_facts.iter().any(|fact| matches!(
+        fact,
+        fallow_types::extract::SemanticFact::TypeAliasSurfaceTarget(edge)
+            if edge.alias_name == "Surface" && edge.target_name == "Target"
+    )));
+    assert!(!restored.semantic_facts.iter().any(|fact| matches!(
+        fact,
+        fallow_types::extract::SemanticFact::TypeAliasSurfaceTarget(edge)
+            if edge.target_name == "Nested"
+    )));
+}
+
+#[test]
+fn cache_roundtrip_preserves_computed_enum_key_facts() {
+    let module = parse_from_content(
+        FileId(0),
+        Path::new("src/key.ts"),
+        "export enum Key { Protocol = '__protocol' }\nvalue[Key.Protocol]",
+    );
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let encoded = bitcode::encode(&cached);
+    let decoded: CachedModule = bitcode::decode(&encoded).expect("decode cached module");
+    let restored = cached_to_module(&decoded, FileId(0));
+
+    assert!(restored.semantic_facts.iter().any(|fact| matches!(
+        fact,
+        fallow_types::extract::SemanticFact::StringEnumMemberValue(value)
+            if value.value == "__protocol"
+    )));
+    assert!(restored.semantic_facts.iter().any(|fact| matches!(
+        fact,
+        fallow_types::extract::SemanticFact::ComputedEnumKeyUse(usage)
+            if usage.key_object == "Key" && usage.key_member == "Protocol"
+    )));
+}
+
+#[test]
+fn cache_roundtrip_preserves_unresolved_callee_diagnostics() {
+    let mut module = parse_from_content(
+        FileId(7),
+        Path::new("src/security.ts"),
+        "client[method](req.body.name);",
+    );
+    assert_eq!(module.security_sinks_skipped, 1);
+    assert_eq!(module.security_unresolved_callee_sites.len(), 1);
+
+    // Exercise diagnostics without optional semantic facts; the runtime-statement
+    // fact must not become a prerequisite for preserving these diagnostics.
+    module.semantic_facts = Arc::default();
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    assert!(cached.semantic_facts.is_none());
+    let restored = cached_to_module(&cached, FileId(7));
+    let diagnostic = restored
+        .security_unresolved_callee_sites
+        .first()
+        .expect("diagnostic round-tripped");
+
+    assert_eq!(restored.security_sinks_skipped, 1);
+    assert_eq!(
+        diagnostic.reason,
+        SkippedSecurityCalleeReason::ComputedMember
+    );
+    assert_eq!(
+        diagnostic.expression_kind,
+        SkippedSecurityCalleeExpressionKind::ComputedMemberExpression
+    );
+}
+
+#[test]
+fn cache_roundtrip_preserves_react_structural_ir() {
+    let module = parse_from_content(
+        FileId(7),
+        Path::new("src/App.tsx"),
+        "import { useEffect } from 'react';\nexport const App = ({ name }) => { useEffect(() => {}, [name]); return <Child id={name} />; };",
+    );
+    assert_eq!(module.component_functions.len(), 1);
+    assert_eq!(module.react_props.len(), 1);
+    assert_eq!(module.hook_uses.len(), 1);
+    assert_eq!(module.render_edges.len(), 1);
+
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let restored = cached_to_module(&cached, FileId(7));
+
+    assert_eq!(restored.component_functions.len(), 1);
+    assert_eq!(restored.component_functions[0].name, "App");
+    assert_eq!(restored.react_props.len(), 1);
+    assert_eq!(restored.react_props[0].name, "name");
+    assert_eq!(restored.hook_uses.len(), 1);
+    assert_eq!(restored.hook_uses[0].dep_array_arity, Some(1));
+    assert_eq!(restored.render_edges.len(), 1);
+    assert_eq!(restored.render_edges[0].child_component_name, "Child");
+    assert_eq!(restored.render_edges[0].attr_names, vec!["id".to_string()]);
+}
+
+#[test]
+fn cache_omits_empty_exported_factory_returns_but_roundtrips_non_empty() {
+    let empty = parse_from_content(
+        FileId(7),
+        Path::new("src/plain.ts"),
+        "export const value = 1;",
+    );
+    assert!(empty.exported_factory_returns.is_empty());
+    let cached_empty = module_to_cached_from_parts(&empty, 10, 20);
+    assert!(cached_empty.exported_factory_returns.is_none());
+
+    let module = parse_from_content(
+        FileId(8),
+        Path::new("src/factory.ts"),
+        "class RESTApi {}\nexport function useApi() { return new RESTApi(); }",
+    );
+    assert_eq!(module.exported_factory_returns.len(), 1);
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    assert!(cached.exported_factory_returns.is_some());
+    let restored = cached_to_module(&cached, FileId(8));
+
+    assert_eq!(
+        restored.exported_factory_returns,
+        module.exported_factory_returns
+    );
+}
+
+#[test]
+fn cache_omits_empty_object_shapes_but_roundtrips_non_empty() {
+    // Issue #1858: the object-literal factory-return shape is compacted to `None`
+    // when empty and roundtrips byte-identically when populated. Without this a
+    // warm cache would drop the shape and re-flag the credited members.
+    let empty = parse_from_content(
+        FileId(7),
+        Path::new("src/plain.ts"),
+        "export const value = 1;",
+    );
+    assert!(empty.exported_factory_return_object_shapes.is_empty());
+    let cached_empty = module_to_cached_from_parts(&empty, 10, 20);
+    assert!(cached_empty.exported_factory_return_object_shapes.is_none());
+
+    let module = parse_from_content(
+        FileId(8),
+        Path::new("src/factory.ts"),
+        "class D { m() {} }\nexport class F { readonly p: D = new D() }\nexport function createUi() { const f = new F(); return { orders: f.p } }",
+    );
+    assert_eq!(module.exported_factory_return_object_shapes.len(), 1);
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    assert!(cached.exported_factory_return_object_shapes.is_some());
+    let restored = cached_to_module(&cached, FileId(8));
+
+    assert_eq!(
+        restored.exported_factory_return_object_shapes,
+        module.exported_factory_return_object_shapes
+    );
+}
+
+#[test]
+fn cache_omits_empty_type_member_types_but_roundtrips_non_empty() {
+    let empty = parse_from_content(
+        FileId(7),
+        Path::new("src/plain.ts"),
+        "export const value = 1;",
+    );
+    assert!(empty.type_member_types.is_empty());
+    let cached_empty = module_to_cached_from_parts(&empty, 10, 20);
+    assert!(cached_empty.type_member_types.is_none());
+
+    let module = parse_from_content(
+        FileId(8),
+        Path::new("src/opts.ts"),
+        "import type { OptDep } from './dep';\nexport interface SharedOpts { c: OptDep }",
+    );
+    assert_eq!(module.type_member_types.len(), 1);
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    assert!(cached.type_member_types.is_some());
+    let restored = cached_to_module(&cached, FileId(8));
+
+    assert_eq!(restored.type_member_types, module.type_member_types);
+}
+
+#[test]
+fn cache_store_insert_and_get() {
+    let mut store = CacheStore::new(Path::new(""));
+    let module = CachedModule {
+        content_hash: 42,
+        ..empty_cached_module()
+    };
+    store.insert(Path::new("test.ts"), module);
+    assert_eq!(store.len(), 1);
+    assert!(!store.is_empty());
+    assert!(store.get(Path::new("test.ts"), 42).is_some());
+}
+
+#[test]
+fn cache_store_refresh_fingerprint_keeps_the_payload() {
+    use fallow_types::source_fingerprint::SourceFingerprint;
+
+    let mut store = CacheStore::new(Path::new(""));
+    store.insert(
+        Path::new("test.ts"),
+        CachedModule {
+            content_hash: 42,
+            complexity_extracted: true,
+            last_seen_secs: 7,
+            ..empty_cached_module()
+        },
+    );
+    let fingerprint = SourceFingerprint::with_ctime(11, 12, 13);
+
+    assert!(store.refresh_fingerprint(Path::new("test.ts"), fingerprint));
+    assert!(!store.refresh_fingerprint(Path::new("missing.ts"), fingerprint));
+    let entry = store.get(Path::new("test.ts"), 42).expect("entry stays");
+    assert_eq!(entry.source_fingerprint(), fingerprint);
+    assert!(entry.complexity_extracted);
+    assert_eq!(entry.last_seen_secs, 7);
+}
+
+#[test]
+fn cache_store_hash_mismatch_returns_none() {
+    let mut store = CacheStore::new(Path::new(""));
+    let module = CachedModule {
+        content_hash: 42,
+        ..empty_cached_module()
+    };
+    store.insert(Path::new("test.ts"), module);
+    assert!(store.get(Path::new("test.ts"), 99).is_none());
+}
+
+#[test]
+fn cache_store_missing_key_returns_none() {
+    let store = CacheStore::new(Path::new(""));
+    assert!(store.get(Path::new("nonexistent.ts"), 42).is_none());
+}
+
+#[test]
+fn cache_store_overwrite_entry() {
+    let mut store = CacheStore::new(Path::new(""));
+    let m1 = CachedModule {
+        content_hash: 1,
+        ..empty_cached_module()
+    };
+    let m2 = CachedModule {
+        content_hash: 2,
+        ..empty_cached_module()
+    };
+    store.insert(Path::new("test.ts"), m1);
+    store.insert(Path::new("test.ts"), m2);
+    assert_eq!(store.len(), 1);
+    assert!(store.get(Path::new("test.ts"), 1).is_none());
+    assert!(store.get(Path::new("test.ts"), 2).is_some());
+}
+
+#[test]
+fn module_to_cached_roundtrip_named_export() {
+    let module = ModuleInfo {
+        exports: vec![ExportInfo {
+            name: ExportName::Named("foo".to_string()),
+            local_name: Some("foo".to_string()),
+            is_type_only: false,
+            visibility: VisibilityTag::None,
+            expected_unused_reason: None,
+            span: Span::new(10, 20),
+            members: vec![],
+            is_side_effect_used: false,
+            super_class: None,
+            deprecated: false,
+            deprecated_reason: None,
+        }]
+        .into(),
+        content_hash: 123,
+        iconify_prefixes: vec!["jam".to_string(), "ic".to_string()],
+        iconify_icon_names: vec!["simple-icons-github".to_string()],
+        auto_import_candidates: vec!["Card001".to_string(), "BaseButton".to_string()],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    assert!(cached.semantic_facts.is_none());
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(
+        restored.iconify_prefixes,
+        vec!["jam".to_string(), "ic".to_string()]
+    );
+    assert_eq!(
+        restored.iconify_icon_names,
+        vec!["simple-icons-github".to_string()]
+    );
+    assert_eq!(
+        restored.auto_import_candidates,
+        vec!["Card001".to_string(), "BaseButton".to_string()]
+    );
+    assert_eq!(restored.exports.len(), 1);
+    assert_eq!(
+        restored.exports[0].name,
+        ExportName::Named("foo".to_string())
+    );
+    assert!(!restored.exports[0].is_type_only);
+    assert_eq!(restored.exports[0].span.start, 10);
+    assert_eq!(restored.exports[0].span.end, 20);
+    assert_eq!(restored.content_hash, 123);
+}
+
+#[test]
+fn module_to_cached_roundtrip_side_effect_used_export() {
+    let module = ModuleInfo {
+        exports: vec![ExportInfo {
+            name: ExportName::Named("MyElement".to_string()),
+            local_name: Some("MyElement".to_string()),
+            is_type_only: false,
+            is_side_effect_used: true,
+            visibility: VisibilityTag::None,
+            expected_unused_reason: None,
+            span: Span::new(10, 20),
+            members: vec![],
+            super_class: Some("HTMLElement".to_string()),
+            deprecated: false,
+            deprecated_reason: None,
+        }]
+        .into(),
+        content_hash: 789,
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    assert!(cached.semantic_facts.is_none());
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.exports.len(), 1);
+    assert!(restored.exports[0].is_side_effect_used);
+    assert_eq!(
+        restored.exports[0].super_class.as_deref(),
+        Some("HTMLElement")
+    );
+}
+
+#[test]
+fn module_to_cached_roundtrip_default_export() {
+    let module = ModuleInfo {
+        exports: vec![ExportInfo {
+            name: ExportName::Default,
+            local_name: None,
+            is_type_only: false,
+            visibility: VisibilityTag::None,
+            expected_unused_reason: None,
+            span: Span::new(0, 10),
+            members: vec![],
+            is_side_effect_used: false,
+            super_class: None,
+            deprecated: false,
+            deprecated_reason: None,
+        }]
+        .into(),
+        content_hash: 456,
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    assert!(cached.semantic_facts.is_none());
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.exports[0].name, ExportName::Default);
+}
+
+#[test]
+fn module_to_cached_roundtrip_imports() {
+    let module = ModuleInfo {
+        imports: vec![
+            ImportInfo {
+                source: "./utils".to_string(),
+                imported_name: ImportedName::Named("foo".to_string()),
+                local_name: "foo".to_string(),
+                is_type_only: false,
+                is_type_only_star: false,
+                from_style: false,
+                span: Span::new(0, 10),
+                source_span: Span::new(5, 10),
+            },
+            ImportInfo {
+                source: "react".to_string(),
+                imported_name: ImportedName::Default,
+                local_name: "React".to_string(),
+                is_type_only: false,
+                is_type_only_star: false,
+                from_style: false,
+                span: Span::new(15, 30),
+                source_span: Span::new(20, 30),
+            },
+            ImportInfo {
+                source: "./all".to_string(),
+                imported_name: ImportedName::Namespace,
+                local_name: "all".to_string(),
+                is_type_only: false,
+                is_type_only_star: false,
+                from_style: false,
+                span: Span::new(35, 50),
+                source_span: Span::new(40, 50),
+            },
+            ImportInfo {
+                source: "./styles.css".to_string(),
+                imported_name: ImportedName::SideEffect,
+                local_name: String::new(),
+                is_type_only: false,
+                is_type_only_star: false,
+                from_style: false,
+                span: Span::new(55, 70),
+                source_span: Span::new(60, 70),
+            },
+        ],
+        content_hash: 789,
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.imports.len(), 4);
+    assert_eq!(
+        restored.imports[0].imported_name,
+        ImportedName::Named("foo".to_string())
+    );
+    assert_eq!(restored.imports[0].span.start, 0);
+    assert_eq!(restored.imports[0].span.end, 10);
+    assert_eq!(restored.imports[1].imported_name, ImportedName::Default);
+    assert_eq!(restored.imports[1].span.start, 15);
+    assert_eq!(restored.imports[1].span.end, 30);
+    assert_eq!(restored.imports[2].imported_name, ImportedName::Namespace);
+    assert_eq!(restored.imports[2].span.start, 35);
+    assert_eq!(restored.imports[2].span.end, 50);
+    assert_eq!(restored.imports[3].imported_name, ImportedName::SideEffect);
+    assert_eq!(restored.imports[3].span.start, 55);
+    assert_eq!(restored.imports[3].span.end, 70);
+}
+
+#[test]
+fn module_to_cached_roundtrip_re_exports() {
+    let module = ModuleInfo {
+        re_exports: vec![ReExportInfo {
+            source: "./module".to_string(),
+            imported_name: "foo".to_string(),
+            exported_name: "bar".to_string(),
+            is_type_only: true,
+            span: oxc_span::Span::default(),
+            statement_span: oxc_span::Span::new(0, 0),
+            source_span: oxc_span::Span::new(0, 0),
+        }],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.re_exports.len(), 1);
+    assert_eq!(restored.re_exports[0].source, "./module");
+    assert_eq!(restored.re_exports[0].imported_name, "foo");
+    assert_eq!(restored.re_exports[0].exported_name, "bar");
+    assert!(restored.re_exports[0].is_type_only);
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture covers every cached dynamic import form"
+)]
+fn module_to_cached_roundtrip_dynamic_imports() {
+    let module = ModuleInfo {
+        dynamic_imports: vec![DynamicImportInfo {
+            source: "./lazy".to_string(),
+            span: Span::new(0, 10),
+            destructured_names: Vec::new(),
+            local_name: None,
+            is_speculative: false,
+            value_escapes: false,
+        }],
+        require_calls: vec![RequireCallInfo {
+            source: "fs".to_string(),
+            span: Span::new(15, 25),
+            destructured_names: Vec::new(),
+            local_name: None,
+            source_span: oxc_span::Span::default(),
+            is_type_only: false,
+        }],
+        member_accesses: vec![MemberAccess {
+            object: "Status".to_string(),
+            member: "Active".to_string(),
+        }]
+        .into(),
+        semantic_facts: vec![
+            SemanticFact::AngularTemplateMemberAccess(AngularTemplateMemberAccessFact {
+                member: "title".to_string(),
+            }),
+            SemanticFact::FactoryCallMemberAccess(FactoryCallMemberAccessFact {
+                callee_object: "MyClass".to_string(),
+                callee_method: "getInstance".to_string(),
+                member: "getData".to_string(),
+            }),
+            SemanticFact::FluentChainMemberAccess(FluentChainMemberAccessFact {
+                root_object: "EventBuilder".to_string(),
+                root_method: "create".to_string(),
+                steps: vec!["setProcessId".into(), "setSubject".into(), "build".into()],
+            }),
+            SemanticFact::FluentChainNewMemberAccess(FluentChainNewMemberAccessFact {
+                class_name: "OptionBuilder".to_string(),
+                first_method: "addDefault".to_string(),
+                steps: vec!["addFromCli".to_string(), "build".to_string()],
+            }),
+            SemanticFact::PlaywrightFixtureUse(PlaywrightFixtureUseFact {
+                test_name: "test".to_string(),
+                fixture_name: "adminPage".to_string(),
+                member: "assertGreeting".to_string(),
+            }),
+            SemanticFact::PlaywrightFixtureDefinition(PlaywrightFixtureDefinitionFact {
+                test_name: "test".to_string(),
+                fixture_name: "adminPage".to_string(),
+                type_name: "AdminPage".to_string(),
+            }),
+            SemanticFact::PlaywrightFixtureAlias(PlaywrightFixtureAliasFact {
+                test_name: "mergedTest".to_string(),
+                base_name: "test".to_string(),
+            }),
+            SemanticFact::PlaywrightFixtureType(PlaywrightFixtureTypeFact {
+                alias_name: "Pages".to_string(),
+                fixture_name: "adminPage".to_string(),
+                type_name: "AdminPage".to_string(),
+            }),
+            SemanticFact::InstanceExportBinding(InstanceExportBindingFact {
+                export_name: "service".to_string(),
+                target_name: "Service".to_string(),
+            }),
+            SemanticFact::ExportedObjectInstanceProperty(ExportedObjectInstancePropertyFact {
+                export_name: "services".to_string(),
+                property_path: "primary".to_string(),
+                class_local_name: "Service".to_string(),
+            }),
+            SemanticFact::QualifiedClassMemberAccess(QualifiedClassMemberAccessFact {
+                namespace_local: "Services".to_string(),
+                class_export_name: "Service".to_string(),
+                member: "run".to_string(),
+            }),
+            SemanticFact::ClassThisMemberAccess(ClassThisMemberAccessFact {
+                class_local_name: "Service".to_string(),
+                object: "this.client".to_string(),
+                member: "run".to_string(),
+            }),
+            SemanticFact::ClassThisWholeObjectUse(ClassThisWholeObjectUseFact {
+                class_local_name: "Service".to_string(),
+                object: "this.client".to_string(),
+            }),
+            SemanticFact::VitestModuleMockOperation(VitestModuleMockOperationFact {
+                source: "./dependency".to_string(),
+                call_start: 42,
+                action: VitestModuleMockAction::Mock {
+                    factory_replaces_original: true,
+                },
+            }),
+        ]
+        .into(),
+        has_cjs_exports: true,
+        class_heritage: vec![ClassHeritageInfo {
+            export_name: "Service".to_string(),
+            super_class: Some("BaseService".to_string()),
+            implements: Vec::new(),
+            type_parameters: vec!["TClient".to_string()],
+            instance_bindings: Vec::new(),
+            super_class_type_args: vec!["TClient".to_string()],
+            generic_instance_bindings: Vec::new(),
+        }],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    assert!(cached.semantic_facts.is_some());
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.dynamic_imports.len(), 1);
+    assert_eq!(restored.dynamic_imports[0].source, "./lazy");
+    assert_eq!(restored.dynamic_imports[0].span.start, 0);
+    assert_eq!(restored.dynamic_imports[0].span.end, 10);
+    assert_eq!(restored.require_calls.len(), 1);
+    assert_eq!(restored.require_calls[0].source, "fs");
+    assert_eq!(restored.require_calls[0].span.start, 15);
+    assert_eq!(restored.require_calls[0].span.end, 25);
+    assert_eq!(restored.member_accesses.len(), 1);
+    assert_eq!(restored.member_accesses[0].object, "Status");
+    assert_eq!(restored.member_accesses[0].member, "Active");
+    assert_eq!(
+        restored.semantic_facts.as_ref(),
+        &[
+            SemanticFact::AngularTemplateMemberAccess(AngularTemplateMemberAccessFact {
+                member: "title".to_string(),
+            }),
+            SemanticFact::FactoryCallMemberAccess(FactoryCallMemberAccessFact {
+                callee_object: "MyClass".to_string(),
+                callee_method: "getInstance".to_string(),
+                member: "getData".to_string(),
+            }),
+            SemanticFact::FluentChainMemberAccess(FluentChainMemberAccessFact {
+                root_object: "EventBuilder".to_string(),
+                root_method: "create".to_string(),
+                steps: vec!["setProcessId".into(), "setSubject".into(), "build".into()],
+            }),
+            SemanticFact::FluentChainNewMemberAccess(FluentChainNewMemberAccessFact {
+                class_name: "OptionBuilder".to_string(),
+                first_method: "addDefault".to_string(),
+                steps: vec!["addFromCli".to_string(), "build".to_string()],
+            }),
+            SemanticFact::PlaywrightFixtureUse(PlaywrightFixtureUseFact {
+                test_name: "test".to_string(),
+                fixture_name: "adminPage".to_string(),
+                member: "assertGreeting".to_string(),
+            }),
+            SemanticFact::PlaywrightFixtureDefinition(PlaywrightFixtureDefinitionFact {
+                test_name: "test".to_string(),
+                fixture_name: "adminPage".to_string(),
+                type_name: "AdminPage".to_string(),
+            }),
+            SemanticFact::PlaywrightFixtureAlias(PlaywrightFixtureAliasFact {
+                test_name: "mergedTest".to_string(),
+                base_name: "test".to_string(),
+            }),
+            SemanticFact::PlaywrightFixtureType(PlaywrightFixtureTypeFact {
+                alias_name: "Pages".to_string(),
+                fixture_name: "adminPage".to_string(),
+                type_name: "AdminPage".to_string(),
+            }),
+            SemanticFact::InstanceExportBinding(InstanceExportBindingFact {
+                export_name: "service".to_string(),
+                target_name: "Service".to_string(),
+            }),
+            SemanticFact::ExportedObjectInstanceProperty(ExportedObjectInstancePropertyFact {
+                export_name: "services".to_string(),
+                property_path: "primary".to_string(),
+                class_local_name: "Service".to_string(),
+            }),
+            SemanticFact::QualifiedClassMemberAccess(QualifiedClassMemberAccessFact {
+                namespace_local: "Services".to_string(),
+                class_export_name: "Service".to_string(),
+                member: "run".to_string(),
+            }),
+            SemanticFact::ClassThisMemberAccess(ClassThisMemberAccessFact {
+                class_local_name: "Service".to_string(),
+                object: "this.client".to_string(),
+                member: "run".to_string(),
+            }),
+            SemanticFact::ClassThisWholeObjectUse(ClassThisWholeObjectUseFact {
+                class_local_name: "Service".to_string(),
+                object: "this.client".to_string(),
+            }),
+            SemanticFact::VitestModuleMockOperation(VitestModuleMockOperationFact {
+                source: "./dependency".to_string(),
+                call_start: 42,
+                action: VitestModuleMockAction::Mock {
+                    factory_replaces_original: true,
+                },
+            }),
+        ][..]
+    );
+    assert_eq!(restored.class_heritage, module.class_heritage);
+    assert!(restored.has_cjs_exports);
+}
+
+#[test]
+fn module_to_cached_roundtrip_members() {
+    let module = ModuleInfo {
+        exports: vec![ExportInfo {
+            name: ExportName::Named("Color".to_string()),
+            local_name: Some("Color".to_string()),
+            is_type_only: false,
+            visibility: VisibilityTag::None,
+            expected_unused_reason: None,
+            span: Span::new(0, 50),
+            members: vec![
+                MemberInfo {
+                    name: "Red".to_string(),
+                    kind: MemberKind::EnumMember,
+                    span: Span::new(10, 15),
+                    has_decorator: false,
+                    decorator_names: Vec::new(),
+                    is_instance_returning_static: false,
+                    is_self_returning: false,
+                    override_base: None,
+                },
+                MemberInfo {
+                    name: "greet".to_string(),
+                    kind: MemberKind::ClassMethod,
+                    span: Span::new(20, 30),
+                    has_decorator: false,
+                    decorator_names: Vec::new(),
+                    is_instance_returning_static: false,
+                    is_self_returning: false,
+                    override_base: None,
+                },
+                MemberInfo {
+                    name: "name".to_string(),
+                    kind: MemberKind::ClassProperty,
+                    span: Span::new(35, 45),
+                    has_decorator: false,
+                    decorator_names: Vec::new(),
+                    is_instance_returning_static: false,
+                    is_self_returning: false,
+                    override_base: None,
+                },
+            ],
+            is_side_effect_used: false,
+            super_class: None,
+            deprecated: false,
+            deprecated_reason: None,
+        }]
+        .into(),
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.exports[0].members.len(), 3);
+    assert_eq!(restored.exports[0].members[0].kind, MemberKind::EnumMember);
+    assert_eq!(restored.exports[0].members[1].kind, MemberKind::ClassMethod);
+    assert_eq!(
+        restored.exports[0].members[2].kind,
+        MemberKind::ClassProperty
+    );
+}
+
+#[test]
+fn cache_load_nonexistent_reports_absent() {
+    let result = CacheStore::load(
+        Path::new("/nonexistent/path"),
+        Path::new(""),
+        0,
+        DEFAULT_CACHE_MAX_SIZE,
+    );
+    assert_eq!(result.err(), Some(CacheRejection::Absent));
+}
+
+/// Create a unique temporary directory for cache tests.
+fn test_cache_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir()
+        .join("fallow_cache_tests")
+        .join(name)
+        .join(format!("{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn cache_save_and_load_roundtrip() {
+    let dir = test_cache_dir("roundtrip");
+    let mut store = CacheStore::new(Path::new(""));
+    let module = CachedModule {
+        content_hash: 42,
+        ..empty_cached_module()
+    };
+    store.insert(Path::new("test.ts"), module);
+    store.save(&dir, 0, DEFAULT_CACHE_MAX_SIZE).unwrap();
+
+    let loaded = CacheStore::load(&dir, Path::new(""), 0, DEFAULT_CACHE_MAX_SIZE);
+    assert!(loaded.is_ok());
+    let loaded = loaded.unwrap();
+    assert_eq!(loaded.len(), 1);
+    assert!(loaded.get(Path::new("test.ts"), 42).is_some());
+    assert_eq!(
+        std::fs::read_to_string(dir.join(".gitignore")).unwrap(),
+        "*\n"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A file whose format marker does not match what this binary writes is a
+/// different format, not a cold run and not a corrupt payload.
+#[test]
+fn cache_load_refuses_a_blob_whose_format_marker_was_mangled() {
+    let dir = test_cache_dir("version_mismatch");
+    let mut store = CacheStore::new(Path::new(""));
+    let module = CachedModule {
+        content_hash: 42,
+        ..empty_cached_module()
+    };
+    store.insert(Path::new("test.ts"), module);
+    store.save(&dir, 0, DEFAULT_CACHE_MAX_SIZE).unwrap();
+
+    assert!(CacheStore::load(&dir, Path::new(""), 0, DEFAULT_CACHE_MAX_SIZE).is_ok());
+
+    let cache_file = dir.join("cache.bin");
+    let mut data = std::fs::read(&cache_file).unwrap();
+    assert!(!data.is_empty());
+    data[0] = 255; // Mangle the format marker the header opens with.
+    std::fs::write(&cache_file, &data).unwrap();
+
+    let result = CacheStore::load(&dir, Path::new(""), 0, DEFAULT_CACHE_MAX_SIZE);
+    assert_eq!(
+        result.err(),
+        Some(CacheRejection::Undecodable),
+        "a blob whose framing this binary did not write is corrupt, not stale: the remedy is to \
+         delete it, not to look for an upgrade"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn module_to_cached_roundtrip_type_only_import() {
+    let module = ModuleInfo {
+        imports: vec![
+            ImportInfo {
+                source: "./types".to_string(),
+                imported_name: ImportedName::Named("Foo".to_string()),
+                local_name: "Foo".to_string(),
+                is_type_only: true,
+                is_type_only_star: false,
+                from_style: false,
+                span: Span::new(0, 10),
+                source_span: Span::new(5, 10),
+            },
+            ImportInfo {
+                source: "./impl".to_string(),
+                imported_name: ImportedName::Namespace,
+                local_name: String::new(),
+                is_type_only: true,
+                is_type_only_star: true,
+                from_style: false,
+                span: Span::new(20, 40),
+                source_span: Span::new(30, 40),
+            },
+        ],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert!(restored.imports[0].is_type_only);
+    assert_eq!(restored.imports[0].span.start, 0);
+    assert_eq!(restored.imports[0].span.end, 10);
+    assert!(
+        !restored.imports[0].is_type_only_star,
+        "a bound `import type {{ Foo }}` is not the ambient type star"
+    );
+    assert!(
+        restored.imports[1].is_type_only_star,
+        "the ambient `export type *` shape must survive the cache round trip (issue #2375)"
+    );
+}
+
+#[test]
+fn get_by_path_only_returns_entry_regardless_of_hash() {
+    let mut store = CacheStore::new(Path::new(""));
+    let module = CachedModule {
+        content_hash: 42,
+        ..empty_cached_module()
+    };
+    store.insert(Path::new("test.ts"), module);
+
+    let result = store.get_by_path_only(Path::new("test.ts"));
+    assert!(result.is_some());
+    assert_eq!(result.unwrap().content_hash, 42);
+}
+
+#[test]
+fn get_by_path_only_returns_none_for_missing() {
+    let store = CacheStore::new(Path::new(""));
+    assert!(
+        store
+            .get_by_path_only(Path::new("nonexistent.ts"))
+            .is_none()
+    );
+}
+
+#[test]
+fn retain_paths_removes_stale_entries() {
+    use fallow_types::discover::DiscoveredFile;
+    use std::path::PathBuf;
+
+    let mut store = CacheStore::new(Path::new(""));
+    let m = || CachedModule {
+        content_hash: 1,
+        ..empty_cached_module()
+    };
+
+    store.insert(Path::new("/project/a.ts"), m());
+    store.insert(Path::new("/project/b.ts"), m());
+    store.insert(Path::new("/project/c.ts"), m());
+    assert_eq!(store.len(), 3);
+
+    let files = vec![
+        DiscoveredFile {
+            id: FileId(0),
+            path: PathBuf::from("/project/a.ts"),
+            size_bytes: 100,
+        },
+        DiscoveredFile {
+            id: FileId(1),
+            path: PathBuf::from("/project/c.ts"),
+            size_bytes: 50,
+        },
+    ];
+
+    assert!(store.retain_paths(&files));
+    assert_eq!(store.len(), 2);
+    assert!(store.get_by_path_only(Path::new("/project/a.ts")).is_some());
+    assert!(store.get_by_path_only(Path::new("/project/b.ts")).is_none());
+    assert!(store.get_by_path_only(Path::new("/project/c.ts")).is_some());
+    assert!(!store.retain_paths(&files));
+}
+
+#[test]
+fn retain_paths_with_empty_files_clears_cache() {
+    let mut store = CacheStore::new(Path::new(""));
+    let m = CachedModule {
+        content_hash: 1,
+        ..empty_cached_module()
+    };
+    store.insert(Path::new("a.ts"), m);
+    assert_eq!(store.len(), 1);
+
+    assert!(store.retain_paths(&[]));
+    assert!(store.is_empty());
+    assert!(!store.retain_paths(&[]));
+}
+
+#[test]
+fn module_to_cached_stores_mtime_and_size() {
+    let module = ModuleInfo {
+        content_hash: 42,
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 12345, 6789);
+    assert_eq!(cached.mtime_ns, 12345);
+    assert_eq!(cached.file_size, 6789);
+    assert_eq!(cached.content_hash, 42);
+}
+
+#[test]
+fn module_to_cached_roundtrip_line_offsets() {
+    let module = ModuleInfo {
+        line_offsets: vec![0, 15, 30, 45],
+        ..ModuleInfo::empty(FileId(0))
+    };
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+    assert_eq!(restored.line_offsets, vec![0, 15, 30, 45]);
+}
+
+#[test]
+fn module_to_cached_roundtrip_suppressions_with_kinds() {
+    use crate::suppress::{IssueKind, Suppression};
+
+    let module = ModuleInfo {
+        suppressions: vec![
+            Suppression::all(0, 1),
+            Suppression::issue(5, 4, IssueKind::UnusedExport),
+            Suppression::issue(10, 9, IssueKind::UnusedFile),
+            Suppression::policy_rule(12, 11, "team-policy", "no-child-process"),
+        ],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.suppressions.len(), 4);
+    assert_eq!(restored.suppressions[0].line, 0);
+    assert!(restored.suppressions[0].issue_kind_target().is_none());
+    assert_eq!(restored.suppressions[1].line, 5);
+    assert_eq!(
+        restored.suppressions[1].issue_kind_target(),
+        Some(IssueKind::UnusedExport)
+    );
+    assert_eq!(restored.suppressions[2].line, 10);
+    assert_eq!(
+        restored.suppressions[2].issue_kind_target(),
+        Some(IssueKind::UnusedFile)
+    );
+    assert_eq!(restored.suppressions[3].line, 12);
+    let policy = restored.suppressions[3]
+        .policy_rule_target()
+        .expect("scoped policy target should round-trip");
+    assert_eq!(policy.pack, "team-policy");
+    assert_eq!(policy.rule_id, "no-child-process");
+}
+
+#[test]
+fn module_to_cached_roundtrip_unknown_suppression_kinds() {
+    use fallow_types::suppress::UnknownSuppressionKind;
+
+    let module = ModuleInfo {
+        unknown_suppression_kinds: vec![
+            UnknownSuppressionKind {
+                comment_line: 3,
+                is_file_level: false,
+                token: "complexity-typo".to_string(),
+                reason: None,
+            },
+            UnknownSuppressionKind {
+                comment_line: 7,
+                is_file_level: true,
+                token: "unsed-export".to_string(),
+                reason: None,
+            },
+        ],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.unknown_suppression_kinds.len(), 2);
+    assert_eq!(restored.unknown_suppression_kinds[0].comment_line, 3);
+    assert!(!restored.unknown_suppression_kinds[0].is_file_level);
+    assert_eq!(
+        restored.unknown_suppression_kinds[0].token,
+        "complexity-typo"
+    );
+    assert_eq!(restored.unknown_suppression_kinds[1].comment_line, 7);
+    assert!(restored.unknown_suppression_kinds[1].is_file_level);
+    assert_eq!(restored.unknown_suppression_kinds[1].token, "unsed-export");
+}
+
+#[test]
+fn module_to_cached_roundtrip_visibility() {
+    let cases = [
+        (VisibilityTag::None, 0),
+        (VisibilityTag::Public, 1),
+        (VisibilityTag::Internal, 2),
+        (VisibilityTag::Beta, 3),
+        (VisibilityTag::Alpha, 4),
+        (VisibilityTag::ExpectedUnused, 5),
+    ];
+    for (visibility, encoded) in cases {
+        let module = ModuleInfo {
+            exports: vec![ExportInfo {
+                name: ExportName::Named("tagged".to_string()),
+                local_name: Some("tagged".to_string()),
+                is_type_only: false,
+                visibility,
+                expected_unused_reason: None,
+                span: Span::new(0, 20),
+                members: vec![],
+                is_side_effect_used: false,
+                super_class: None,
+                deprecated: false,
+                deprecated_reason: None,
+            }]
+            .into(),
+            ..ModuleInfo::empty(FileId(0))
+        };
+
+        let cached = module_to_cached_from_parts(&module, 0, 0);
+        assert_eq!(cached.exports[0].visibility, encoded, "{visibility:?}");
+        let restored = cached_to_module(&cached, FileId(0));
+        assert_eq!(restored.exports[0].visibility, visibility);
+    }
+}
+
+#[test]
+fn module_to_cached_roundtrip_dynamic_import_patterns() {
+    let module = ModuleInfo {
+        dynamic_import_patterns: vec![
+            crate::DynamicImportPattern {
+                prefix: "./components/".to_string(),
+                suffix: Some(".vue".to_string()),
+                span: Span::new(0, 50),
+                mechanism: crate::ModuleLoadMechanism::EsModule,
+                excludes: vec!["./components/skip.vue".to_string()],
+            },
+            crate::DynamicImportPattern {
+                prefix: "./pages/**/".to_string(),
+                suffix: None,
+                span: Span::new(60, 100),
+                mechanism: crate::ModuleLoadMechanism::CommonJsRequire,
+                excludes: Vec::new(),
+            },
+        ],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.dynamic_import_patterns.len(), 2);
+    assert_eq!(restored.dynamic_import_patterns[0].prefix, "./components/");
+    assert_eq!(
+        restored.dynamic_import_patterns[0].suffix,
+        Some(".vue".to_string())
+    );
+    assert_eq!(
+        restored.dynamic_import_patterns[0].excludes,
+        vec!["./components/skip.vue".to_string()]
+    );
+    assert!(restored.dynamic_import_patterns[1].excludes.is_empty());
+    assert_eq!(restored.dynamic_import_patterns[0].span.start, 0);
+    assert_eq!(restored.dynamic_import_patterns[0].span.end, 50);
+    assert_eq!(
+        restored.dynamic_import_patterns[0].mechanism,
+        crate::ModuleLoadMechanism::EsModule
+    );
+    assert_eq!(restored.dynamic_import_patterns[1].prefix, "./pages/**/");
+    assert!(restored.dynamic_import_patterns[1].suffix.is_none());
+    assert_eq!(
+        restored.dynamic_import_patterns[1].mechanism,
+        crate::ModuleLoadMechanism::CommonJsRequire
+    );
+}
+
+#[test]
+fn module_to_cached_roundtrip_unused_import_bindings() {
+    let module = ModuleInfo {
+        whole_object_uses: vec!["Status".to_string()].into(),
+        unused_import_bindings: vec!["unusedFoo".to_string(), "unusedBar".to_string()],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.unused_import_bindings.len(), 2);
+    assert!(
+        restored
+            .unused_import_bindings
+            .contains(&"unusedFoo".to_string())
+    );
+    assert!(
+        restored
+            .unused_import_bindings
+            .contains(&"unusedBar".to_string())
+    );
+    assert!(restored.whole_object_uses.contains(&"Status".to_string()));
+}
+
+#[test]
+fn module_to_cached_roundtrip_complexity() {
+    use fallow_types::extract::{
+        ComplexityContribution, ComplexityContributionKind, ComplexityMetric, FunctionComplexity,
+    };
+
+    let module = ModuleInfo {
+        complexity: vec![
+            FunctionComplexity {
+                name: "complex".to_string(),
+                is_private_member: true,
+                context_named: None,
+                line: 5,
+                col: 0,
+                cyclomatic: 8,
+                cognitive: 15,
+                line_count: 20,
+                param_count: 4,
+                react_hook_count: 0,
+                react_jsx_max_depth: 0,
+                react_prop_count: 0,
+                source_hash: Some("0123456789abcdef".to_string()),
+                contributions: vec![
+                    ComplexityContribution {
+                        line: 6,
+                        col: 2,
+                        metric: ComplexityMetric::Cyclomatic,
+                        kind: ComplexityContributionKind::Await,
+                        weight: 1,
+                        nesting: 0,
+                        literal_membership: false,
+                    },
+                    ComplexityContribution {
+                        line: 8,
+                        col: 2,
+                        metric: ComplexityMetric::Cognitive,
+                        kind: ComplexityContributionKind::Then,
+                        weight: 1,
+                        nesting: 0,
+                        literal_membership: false,
+                    },
+                ],
+            },
+            FunctionComplexity {
+                name: "simple".to_string(),
+                is_private_member: false,
+                context_named: None,
+                line: 30,
+                col: 4,
+                cyclomatic: 1,
+                cognitive: 0,
+                line_count: 3,
+                param_count: 0,
+                react_hook_count: 0,
+                react_jsx_max_depth: 0,
+                react_prop_count: 0,
+                source_hash: None,
+                contributions: Vec::new(),
+            },
+        ],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.complexity.len(), 2);
+    assert_eq!(restored.complexity[0].name, "complex");
+    assert!(restored.complexity[0].is_private_member);
+    assert_eq!(restored.complexity[0].cyclomatic, 8);
+    assert_eq!(restored.complexity[0].cognitive, 15);
+    assert_eq!(restored.complexity[0].line_count, 20);
+    assert_eq!(
+        restored.complexity[0]
+            .contributions
+            .iter()
+            .map(|contribution| contribution.kind)
+            .collect::<Vec<_>>(),
+        [
+            ComplexityContributionKind::Await,
+            ComplexityContributionKind::Then,
+        ]
+    );
+    assert_eq!(restored.complexity[1].name, "simple");
+    assert!(!restored.complexity[1].is_private_member);
+    assert_eq!(restored.complexity[1].cyclomatic, 1);
+    assert_eq!(restored.complexity[1].cognitive, 0);
+}
+
+#[test]
+fn module_to_cached_roundtrip_require_with_destructured() {
+    let module = ModuleInfo {
+        require_calls: vec![RequireCallInfo {
+            source: "fs".to_string(),
+            span: Span::new(0, 30),
+            destructured_names: vec!["readFile".to_string(), "writeFile".to_string()],
+            local_name: None,
+            source_span: oxc_span::Span::default(),
+            is_type_only: false,
+        }],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.require_calls.len(), 1);
+    assert_eq!(restored.require_calls[0].source, "fs");
+    assert!(restored.require_calls[0].local_name.is_none());
+    assert_eq!(
+        restored.require_calls[0].destructured_names,
+        vec!["readFile", "writeFile"]
+    );
+}
+
+#[test]
+fn module_to_cached_roundtrip_dynamic_import_with_local() {
+    let module = ModuleInfo {
+        dynamic_imports: vec![DynamicImportInfo {
+            source: "./mod".to_string(),
+            span: Span::new(0, 20),
+            destructured_names: vec![],
+            local_name: Some("mod".to_string()),
+            is_speculative: false,
+            value_escapes: false,
+        }],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(
+        restored.dynamic_imports[0].local_name,
+        Some("mod".to_string())
+    );
+}
+
+#[test]
+fn module_to_cached_roundtrip_source_span() {
+    let module = ModuleInfo {
+        imports: vec![ImportInfo {
+            source: "./utils".to_string(),
+            imported_name: ImportedName::Named("foo".to_string()),
+            local_name: "foo".to_string(),
+            is_type_only: false,
+            is_type_only_star: false,
+            from_style: false,
+            span: Span::new(0, 30),
+            source_span: Span::new(25, 33),
+        }],
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert_eq!(restored.imports[0].source_span.start, 25);
+    assert_eq!(restored.imports[0].source_span.end, 33);
+}
+
+#[test]
+fn module_to_cached_roundtrip_member_decorators() {
+    let module = ModuleInfo {
+        exports: vec![ExportInfo {
+            name: ExportName::Named("Svc".to_string()),
+            local_name: Some("Svc".to_string()),
+            is_type_only: false,
+            visibility: VisibilityTag::None,
+            expected_unused_reason: None,
+            span: Span::new(0, 100),
+            members: vec![MemberInfo {
+                name: "handler".to_string(),
+                kind: MemberKind::ClassMethod,
+                span: Span::new(50, 80),
+                has_decorator: true,
+                decorator_names: vec!["Inject".to_string()],
+                is_instance_returning_static: false,
+                is_self_returning: false,
+                override_base: None,
+            }],
+            is_side_effect_used: false,
+            super_class: None,
+            deprecated: false,
+            deprecated_reason: None,
+        }]
+        .into(),
+        ..ModuleInfo::empty(FileId(0))
+    };
+
+    let cached = module_to_cached_from_parts(&module, 0, 0);
+    let restored = cached_to_module(&cached, FileId(0));
+
+    assert!(restored.exports[0].members[0].has_decorator);
+    assert_eq!(restored.exports[0].members[0].span.start, 50);
+    assert_eq!(restored.exports[0].members[0].span.end, 80);
+}
+
+/// Build a minimal `CachedModule` whose serialized size is roughly
+/// proportional to `payload_kb`. Used by the eviction tests to populate
+/// a store with predictable byte cost.
+fn synthetic_module(content_hash: u64, last_seen_secs: u64, payload_kb: usize) -> CachedModule {
+    let payload = "a".repeat(payload_kb * 1024);
+    CachedModule {
+        content_hash,
+        last_seen_secs,
+        whole_object_uses: vec![payload].into(),
+        ..empty_cached_module()
+    }
+}
+
+#[test]
+fn cache_save_no_eviction_when_under_threshold() {
+    let dir = test_cache_dir("no_evict");
+    let mut store = CacheStore::new(Path::new(""));
+    for i in 0..10u64 {
+        store.insert(Path::new(&format!("file{i}.ts")), synthetic_module(i, i, 1));
+    }
+    store
+        .save(&dir, 42, DEFAULT_CACHE_MAX_SIZE)
+        .expect("save under threshold");
+
+    let loaded =
+        CacheStore::load(&dir, Path::new(""), 42, DEFAULT_CACHE_MAX_SIZE).expect("load round-trip");
+    assert_eq!(loaded.len(), 10, "all 10 entries survive");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cache_save_evicts_when_over_threshold() {
+    let dir = test_cache_dir("evict_over_threshold");
+    let mut store = CacheStore::new(Path::new(""));
+    for i in 0..50u64 {
+        store.insert(Path::new(&format!("file{i}.ts")), synthetic_module(i, i, 1));
+    }
+    let cap = 40 * 1024;
+    store.save(&dir, 99, cap).expect("save with eviction");
+
+    let loaded = CacheStore::load(&dir, Path::new(""), 99, DEFAULT_CACHE_MAX_SIZE)
+        .expect("load after eviction");
+    assert!(loaded.len() < 50, "eviction removed entries");
+    let kept_max = (0..50u64)
+        .filter(|i| {
+            loaded
+                .get(&std::path::PathBuf::from(format!("file{i}.ts")), *i)
+                .is_some()
+        })
+        .max()
+        .expect("at least one entry remains");
+    let kept_min = (0..50u64)
+        .filter(|i| {
+            loaded
+                .get(&std::path::PathBuf::from(format!("file{i}.ts")), *i)
+                .is_some()
+        })
+        .min()
+        .expect("at least one entry remains");
+    assert_eq!(kept_max, 49, "newest entry survives eviction");
+    assert!(
+        kept_min > 0,
+        "oldest entry was evicted (kept_min = {kept_min})"
+    );
+
+    let on_disk = std::fs::read(dir.join("cache.bin")).unwrap();
+    assert!(
+        on_disk.len() < cap * 80 / 100,
+        "post-eviction size ({on_disk_kb} KB) < 80% of cap ({cap_kb} KB)",
+        on_disk_kb = on_disk.len() / 1024,
+        cap_kb = cap / 1024,
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cache_eviction_bounds_full_store_encoding_work() {
+    let dir = test_cache_dir("bounded_eviction_encoding");
+    let mut store = CacheStore::new(Path::new(""));
+    for i in 0..2_000u64 {
+        store.insert(Path::new(&format!("file{i}.ts")), synthetic_module(i, i, 1));
+    }
+    store
+        .save(&dir, 99, DEFAULT_CACHE_MAX_SIZE)
+        .expect("measure unbounded cache size");
+    let unbounded_size = std::fs::metadata(dir.join("cache.bin"))
+        .expect("cache metadata")
+        .len() as usize;
+
+    CacheStore::reset_full_store_encode_count();
+    store
+        .save(&dir, 99, unbounded_size)
+        .expect("save with eviction");
+    let encode_count = CacheStore::full_store_encode_count();
+
+    assert!(
+        encode_count <= 5,
+        "eviction encoded the full store {encode_count} times"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cache_eviction_budget_avoids_intermediate_overflow() {
+    let large = usize::MAX / 2;
+    let expected = ((large as u128 * large as u128 / large as u128) * 9_800 / 10_000) as usize;
+
+    assert_eq!(
+        super::store::estimated_eviction_budget(large, large, large, 9_800),
+        expected
+    );
+}
+
+#[test]
+fn cache_eviction_preserves_recent_entries_with_skewed_sizes() {
+    let dir = test_cache_dir("skewed_eviction_sizes");
+    let mut store = CacheStore::new(Path::new(""));
+    for i in 0..1_000u64 {
+        store.insert(
+            Path::new(&format!("small{i}.ts")),
+            synthetic_module(i, i, 1),
+        );
+    }
+    store.insert(Path::new("large.ts"), synthetic_module(10_000, 1_000, 512));
+    store
+        .save(&dir, 99, DEFAULT_CACHE_MAX_SIZE)
+        .expect("measure unbounded cache size");
+    let unbounded_size = std::fs::metadata(dir.join("cache.bin"))
+        .expect("cache metadata")
+        .len() as usize;
+    let cap = unbounded_size * 9 / 10;
+
+    CacheStore::reset_full_store_encode_count();
+    store.save(&dir, 99, cap).expect("save skewed cache");
+    let encode_count = CacheStore::full_store_encode_count();
+    let loaded = CacheStore::load(&dir, Path::new(""), 99, DEFAULT_CACHE_MAX_SIZE)
+        .expect("load skewed cache");
+
+    assert!(
+        loaded.len() > 200,
+        "size skew should retain recent small entries, retained {}",
+        loaded.len()
+    );
+    assert!(
+        loaded.get(Path::new("large.ts"), 10_000).is_some(),
+        "newest large entry survives"
+    );
+    assert!(
+        loaded.get(Path::new("small0.ts"), 0).is_none(),
+        "oldest small entry is evicted"
+    );
+    assert!(
+        encode_count <= 5,
+        "full-store encode count was {encode_count}"
+    );
+    let on_disk = std::fs::metadata(dir.join("cache.bin"))
+        .expect("cache metadata")
+        .len() as usize;
+    assert!(on_disk <= cap * 60 / 100, "cache exceeds eviction target");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cache_save_always_honors_cap_with_huge_entries() {
+    let dir = test_cache_dir("huge_entry_overshoot");
+    let mut store = CacheStore::new(Path::new(""));
+    store.insert(Path::new("huge.ts"), synthetic_module(7, 0, 10));
+    store
+        .save(&dir, 5, 1024)
+        .expect("save honors cap with overshoot");
+
+    let loaded = CacheStore::load(&dir, Path::new(""), 5, DEFAULT_CACHE_MAX_SIZE)
+        .expect("load after overshoot save");
+    assert_eq!(loaded.len(), 1, "single entry preserved under overshoot");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cache_load_returns_none_on_config_hash_mismatch() {
+    let dir = test_cache_dir("config_hash_mismatch");
+    let mut store = CacheStore::new(Path::new(""));
+    store.insert(Path::new("test.ts"), synthetic_module(1, 0, 1));
+    store
+        .save(&dir, 0xDEAD_BEEF, DEFAULT_CACHE_MAX_SIZE)
+        .expect("save with config_hash A");
+
+    assert!(
+        CacheStore::load(&dir, Path::new(""), 0xCAFE_BABE, DEFAULT_CACHE_MAX_SIZE).err()
+            == Some(CacheRejection::ConfigHashMismatch),
+        "mismatched config_hash invalidates cache and names the reason"
+    );
+    assert!(
+        CacheStore::load(&dir, Path::new(""), 0xDEAD_BEEF, DEFAULT_CACHE_MAX_SIZE).is_ok(),
+        "matching config_hash round-trips"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cache_load_round_trip_with_matching_config_hash() {
+    let dir = test_cache_dir("config_hash_roundtrip");
+    let mut store = CacheStore::new(Path::new(""));
+    store.insert(Path::new("a.ts"), synthetic_module(1, 0, 1));
+    store.insert(Path::new("b.ts"), synthetic_module(2, 1, 1));
+    let hash = 0xABCD_1234_5678_9ABC_u64;
+    store
+        .save(&dir, hash, DEFAULT_CACHE_MAX_SIZE)
+        .expect("save with hash");
+
+    let loaded = CacheStore::load(&dir, Path::new(""), hash, DEFAULT_CACHE_MAX_SIZE)
+        .expect("load with matching hash");
+    assert_eq!(loaded.len(), 2);
+    assert!(loaded.get(Path::new("a.ts"), 1).is_some());
+    assert!(loaded.get(Path::new("b.ts"), 2).is_some());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cache_load_honors_user_max_size_above_default() {
+    let dir = test_cache_dir("load_honors_user_max");
+    let mut store = CacheStore::new(Path::new(""));
+    store.insert(Path::new("a.ts"), synthetic_module(1, 0, 1));
+    store
+        .save(&dir, 0, DEFAULT_CACHE_MAX_SIZE)
+        .expect("save under default");
+
+    assert!(
+        CacheStore::load(&dir, Path::new(""), 0, 1).is_ok(),
+        "tiny user cap does not discard valid existing cache"
+    );
+
+    assert!(
+        CacheStore::load(&dir, Path::new(""), 0, DEFAULT_CACHE_MAX_SIZE * 2).is_ok(),
+        "user cap above default round-trips"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Unframed caches predate the header. A decode failure cannot establish
+/// whether the file came from an older release or carries damaged data.
+#[test]
+fn cache_load_reports_undecodable_for_a_blob_without_fallows_framing() {
+    let dir = test_cache_dir("unframed_blob");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("cache.bin"), bitcode::encode(&(7_u32, "legacy"))).unwrap();
+
+    assert_eq!(
+        CacheStore::load(&dir, Path::new(""), 0, DEFAULT_CACHE_MAX_SIZE).err(),
+        Some(CacheRejection::Undecodable)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A file too short to hold the header is refused the same way, and for the
+/// same reason: nothing in it says which format it claims to be.
+#[test]
+fn cache_load_reports_undecodable_for_a_truncated_file() {
+    let dir = test_cache_dir("truncated_blob");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("cache.bin"), b"FLW").unwrap();
+
+    assert_eq!(
+        CacheStore::load(&dir, Path::new(""), 0, DEFAULT_CACHE_MAX_SIZE).err(),
+        Some(CacheRejection::Undecodable)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The declared version decides before the payload is read, so a blob written
+/// for another version is refused whether or not it would have decoded.
+#[test]
+fn cache_load_refuses_a_declared_version_it_does_not_write() {
+    let dir = test_cache_dir("declared_version_mismatch");
+    let mut store = CacheStore::new(Path::new(""));
+    store.insert(Path::new("test.ts"), synthetic_module(1, 0, 1));
+    store
+        .save(&dir, 0, DEFAULT_CACHE_MAX_SIZE)
+        .expect("save current cache");
+    let on_disk = std::fs::read(dir.join("cache.bin")).unwrap();
+    let payload = on_disk[super::store::CACHE_HEADER_LEN..].to_vec();
+    std::fs::write(
+        dir.join("cache.bin"),
+        super::store::framed(super::types::CACHE_VERSION + 1, &payload),
+    )
+    .unwrap();
+
+    assert_eq!(
+        CacheStore::load(&dir, Path::new(""), 0, DEFAULT_CACHE_MAX_SIZE).err(),
+        Some(CacheRejection::VersionMismatch)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `Undecodable` keeps its meaning: a file this binary framed itself, at the
+/// version it writes, whose payload is damaged.
+#[test]
+fn cache_load_reports_undecodable_for_a_damaged_payload_at_the_current_version() {
+    let dir = test_cache_dir("decode_fail_info");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("cache.bin"),
+        super::store::framed(super::types::CACHE_VERSION, b"not-a-valid-bitcode-payload"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        CacheStore::load(&dir, Path::new(""), 0, DEFAULT_CACHE_MAX_SIZE).err(),
+        Some(CacheRejection::Undecodable)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cache_save_atomic_write_leaves_no_tmp_on_success() {
+    let dir = test_cache_dir("atomic_no_tmp");
+    let mut store = CacheStore::new(Path::new(""));
+    store.insert(Path::new("test.ts"), synthetic_module(1, 0, 1));
+    store
+        .save(&dir, 0, DEFAULT_CACHE_MAX_SIZE)
+        .expect("save atomic");
+
+    assert!(dir.join("cache.bin").exists(), "cache.bin present");
+    assert!(
+        !dir.join("cache.bin.tmp").exists(),
+        "tmp file cleaned up after rename"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A result loaded from a warm cache must be byte-for-byte identical to the one
+/// produced by a fresh (cold) parse of the same source. Guards against a
+/// forgotten `CACHE_VERSION` bump or a serialization bug silently returning
+/// WRONG analysis results from disk.
+const WARM_CACHE_SOURCE: &str = "import { useEffect } from 'react';\n\
+     import { vi } from 'vitest';\n\
+     import { ProtocolKey } from './protocol';\n\
+     import type { Props } from './types';\n\
+     export interface Runner { run(): void; optionalRun?(): void }\n\
+     class OuterContext { outer(): void {} }\n\
+     class InnerContext { used(): void {} }\n\
+     type Handler = (context: OuterContext) => void;\n\
+     type GenericHandler<T> = (context: T) => void;\n\
+     export const genericHandler: GenericHandler<InnerContext> = context => context.used();\n\
+     export function createHandler() {\n\
+       const handler: Handler = context => context.used();\n\
+       type Handler = (context: InnerContext) => void;\n\
+       return handler;\n\
+     }\n\
+     export function readShadowedKey(\n\
+       target: object,\n\
+       ProtocolKey: { Protocol: string },\n\
+     ) {\n\
+       return target[ProtocolKey.Protocol];\n\
+     }\n\
+     vi.mock('./dependency', () => ({ dependency: vi.fn() }));\n\
+     export const App = ({ name }: Props) => {\n\
+       useEffect(() => {}, [name]);\n\
+       return <Child id={name} />;\n\
+     };\n\
+     export default App;";
+
+#[test]
+fn warm_cache_load_matches_cold_parse() {
+    let dir = test_cache_dir("warm_equals_cold");
+    let path = Path::new("src/warm.tsx");
+
+    // Cold parse -> the cache unit that a fresh run would write to disk.
+    let cold_module = parse_from_content(FileId(0), path, WARM_CACHE_SOURCE);
+    let cold_cached = module_to_cached_from_parts(&cold_module, 10, 20);
+    let cold_bytes = bitcode::encode(&cold_cached);
+
+    // Warm path: store, persist, and reload through the on-disk cache.
+    let mut store = CacheStore::new(Path::new(""));
+    store.insert(path, cold_cached);
+    store.save(&dir, 0, DEFAULT_CACHE_MAX_SIZE).unwrap();
+
+    let loaded =
+        CacheStore::load(&dir, Path::new(""), 0, DEFAULT_CACHE_MAX_SIZE).expect("warm cache loads");
+    let warm_cached = loaded
+        .get(path, cold_module.content_hash)
+        .expect("entry present in warm cache");
+
+    // The serialized cache unit recovered from disk must equal the cold-parse
+    // unit exactly (no dropped field, no reordered wire shape).
+    assert_eq!(
+        bitcode::encode(warm_cached),
+        cold_bytes,
+        "warm-cache entry must serialize identically to the cold-parse entry"
+    );
+
+    // And the reconstructed module must agree with the fresh parse on the
+    // analysis-bearing fields a consumer reads back.
+    let warm_module = cached_to_module(warm_cached, FileId(0));
+    assert_eq!(warm_module.content_hash, cold_module.content_hash);
+    assert_eq!(warm_module.exports.len(), cold_module.exports.len());
+    assert_eq!(warm_module.imports.len(), cold_module.imports.len());
+    assert_eq!(
+        warm_module.component_functions.len(),
+        cold_module.component_functions.len()
+    );
+    assert_eq!(warm_module.react_props.len(), cold_module.react_props.len());
+    assert_eq!(warm_module.hook_uses.len(), cold_module.hook_uses.len());
+    let member_accesses = |module: &ModuleInfo| {
+        module
+            .member_accesses
+            .iter()
+            .map(|access| (access.object.clone(), access.member.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(member_accesses(&warm_module), member_accesses(&cold_module));
+    assert_eq!(
+        warm_module.render_edges.len(),
+        cold_module.render_edges.len()
+    );
+    assert_eq!(warm_module.semantic_facts, cold_module.semantic_facts);
+    assert_eq!(
+        warm_module.import_binding_references,
+        cold_module.import_binding_references
+    );
+    assert_eq!(
+        warm_module.public_signature_type_references,
+        cold_module.public_signature_type_references
+    );
+    assert!(
+        warm_module
+            .member_accesses
+            .iter()
+            .any(|access| access.object == "InnerContext" && access.member == "used"),
+        "warm cache should retain the receiver selected by the nearest alias"
+    );
+    assert!(
+        warm_module.semantic_facts.iter().any(|fact| matches!(
+            fact,
+            SemanticFact::VitestModuleMockOperation(operation)
+                if operation.source == "./dependency"
+                    && operation.action.replaces_original()
+        )),
+        "warm cache should retain the proven replacement operation"
+    );
+    assert!(
+        warm_module.semantic_facts.iter().any(|fact| matches!(
+            fact,
+            SemanticFact::RequiredTypeMember(required)
+                if required.type_name == "Runner" && required.member == "run"
+        )),
+        "warm cache should retain required structural members"
+    );
+    assert!(
+        !warm_module.semantic_facts.iter().any(|fact| matches!(
+            fact,
+            SemanticFact::RequiredTypeMember(required)
+                if required.type_name == "Runner" && required.member == "optionalRun"
+        )),
+        "optional structural members must remain removable"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Issue: a fully warm tree copied to a sibling path reused nothing. The blob
+/// loaded, so the run paid the full decode, and then every lookup missed
+/// because the entries were keyed on the absolute path of the directory that
+/// wrote them.
+#[test]
+fn warm_cache_written_under_one_root_is_reused_under_another() {
+    let dir = test_cache_dir("root_relative_reuse");
+    let original_root = Path::new("/build/checkout-a");
+    let moved_root = Path::new("/build/checkout-b");
+
+    let mut store = CacheStore::new(original_root);
+    store.insert(&original_root.join("src/app.ts"), synthetic_module(7, 0, 1));
+    store
+        .save(&dir, 0, DEFAULT_CACHE_MAX_SIZE)
+        .expect("save under the original root");
+
+    let loaded = CacheStore::load(&dir, moved_root, 0, DEFAULT_CACHE_MAX_SIZE)
+        .expect("a relocated cache still loads");
+    assert!(
+        loaded.get(&moved_root.join("src/app.ts"), 7).is_some(),
+        "an entry written under one root must be found under another"
+    );
+}
+
+/// A path outside the project root keeps its own spelling, so a lookup for it
+/// still resolves and never collides with a root-relative entry.
+#[test]
+fn entries_outside_the_root_keep_their_own_key() {
+    let root = Path::new("/build/checkout-a");
+    let outside = Path::new("/elsewhere/vendor/lib.ts");
+
+    let mut store = CacheStore::new(root);
+    store.insert(outside, synthetic_module(11, 0, 1));
+
+    assert!(store.get(outside, 11).is_some());
+    assert!(
+        store
+            .get(&root.join("elsewhere/vendor/lib.ts"), 11)
+            .is_none(),
+        "an outside path must not alias a root-relative one"
+    );
+}
+
+#[test]
+fn cache_load_does_not_report_an_unreadable_cache_path_as_absent() {
+    let dir = test_cache_dir("unreadable_cache_path");
+    std::fs::create_dir_all(dir.join("cache.bin")).unwrap();
+    assert_eq!(
+        CacheStore::load(&dir, Path::new(""), 0, DEFAULT_CACHE_MAX_SIZE).err(),
+        Some(CacheRejection::Unreadable)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cache_roundtrip_preserves_component_contract_evidence() {
+    let module = parse_from_content(
+        FileId(0),
+        Path::new("src/card.tsx"),
+        r"
+        import Card from './card';
+        const supplied = { enabled: undefined };
+        function View({compact=false}: {compact?:boolean}) {return <Card {...supplied}>{compact}</Card>;}
+    ",
+    );
+    let facts = module
+        .component_contracts
+        .as_deref()
+        .expect("contract facts");
+    assert_eq!(
+        facts
+            .declarations
+            .iter()
+            .find(|prop| prop.name == "compact")
+            .map(|prop| (prop.optional, prop.has_default, prop.is_used)),
+        Some((true, true, true))
+    );
+    assert_eq!(facts.invocations[0].supplied, ["children", "enabled"]);
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let encoded = bitcode::encode(&cached);
+    let decoded: CachedModule = bitcode::decode(&encoded).expect("decode component contracts");
+    let restored = cached_to_module(&decoded, FileId(0));
+    assert_eq!(restored.component_contracts, module.component_contracts);
+}
+
+#[test]
+fn cache_roundtrip_preserves_imported_call_sites_and_literal_arguments() {
+    let source = r#"import { defineProof as make } from "@gdp-ts/core";
+make("CanRead"); make("CanWrite"); make(kind);"#;
+    let module = parse_from_content(FileId(0), Path::new("src/proofs.ts"), source);
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let decoded: CachedModule =
+        bitcode::decode(&bitcode::encode(&cached)).expect("decode cached module");
+    let restored = cached_to_module(&decoded, FileId(0));
+    let calls: Vec<_> = restored
+        .imported_call_sites
+        .iter()
+        .map(|call| {
+            (
+                call.local_name.as_str(),
+                call.member_path.as_str(),
+                call.first_argument.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        vec![
+            ("make", "", Some("CanRead")),
+            ("make", "", Some("CanWrite")),
+            ("make", "", None)
+        ]
+    );
+    assert_eq!(restored.imported_call_sites, module.imported_call_sites);
+}
+
+#[test]
+fn cache_roundtrip_preserves_import_binding_references() {
+    let source = "import { useSelector, useDispatch, Provider } from 'react-redux';\n\
+        export const useAppSelector = useSelector.withTypes<{ n: number }>();\n\
+        export const useAppDispatch = useDispatch;\n\
+        export const App = () => <Provider>{String(useSelector)}</Provider>;\n";
+    let module = parse_from_content(FileId(0), Path::new("src/hooks.tsx"), source);
+    assert_eq!(module.import_binding_references.len(), 4);
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let decoded: CachedModule =
+        bitcode::decode(&bitcode::encode(&cached)).expect("decode cached module");
+    let restored = cached_to_module(&decoded, FileId(0));
+    assert_eq!(
+        restored.import_binding_references,
+        module.import_binding_references
+    );
+}
+
+#[test]
+fn factory_property_sources_roundtrip_with_declaring_module_names() {
+    let module = parse_from_content(
+        FileId(8),
+        Path::new("src/factory.ts"),
+        r"
+        import { Owner, make, Service, externalUi } from './producer';
+        export class Local { static build(): Local { return new Local(); } }
+        const remote = externalUi(); remote.page.go();
+        export function createUi() {
+            const owner = new Owner();
+            return { typed: owner.widget, called: make(), staticCall: Service.create(), local: Local.build() };
+        }
+    ",
+    );
+    let sources = |module: &ModuleInfo| {
+        fallow_types::extract::SemanticFactView::new(
+            &module.semantic_facts,
+            &module.member_accesses,
+        )
+        .factory_return_object_property_sources()
+        .map(|fact| (fact.property_path.clone(), fact.source.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let expected = std::collections::BTreeMap::from([
+        (
+            "local".to_string(),
+            FactoryPropertySource::LocalClass {
+                class_local_name: "Local".to_string(),
+            },
+        ),
+        (
+            "typed".to_string(),
+            FactoryPropertySource::TypedProperty {
+                type_name: "Owner".to_string(),
+                property_path: "widget".to_string(),
+            },
+        ),
+        (
+            "called".to_string(),
+            FactoryPropertySource::FunctionReturn {
+                callee_name: "make".to_string(),
+            },
+        ),
+        (
+            "staticCall".to_string(),
+            FactoryPropertySource::StaticFactoryReturn {
+                callee_object: "Service".to_string(),
+                callee_method: "create".to_string(),
+            },
+        ),
+    ]);
+    assert_eq!(sources(&module), expected);
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let bytes = bitcode::encode(&cached);
+    let decoded: CachedModule = bitcode::decode(&bytes).expect("cache decode");
+    let restored = cached_to_module(&decoded, FileId(8));
+    assert_eq!(sources(&restored), expected);
+    let accesses = |module: &ModuleInfo| {
+        fallow_types::extract::SemanticFactView::new(
+            &module.semantic_facts,
+            &module.member_accesses,
+        )
+        .proven_factory_return_object_property_accesses()
+        .map(|fact| {
+            (
+                fact.callee_name.clone(),
+                fact.property_path.clone(),
+                fact.member.clone(),
+            )
+        })
+        .collect::<Vec<_>>()
+    };
+    let expected = vec![(
+        "externalUi".to_string(),
+        "page".to_string(),
+        "go".to_string(),
+    )];
+    assert_eq!(accesses(&module), expected);
+    assert_eq!(accesses(&restored), expected);
+}
+
+#[test]
+fn callback_factory_sources_and_consumers_survive_cache_roundtrip() {
+    use fallow_types::extract::{
+        CallbackFactoryArgument, CallbackFactoryPropertyAccessFact, SemanticFactView,
+    };
+    let module = parse_from_content(
+        FileId(8),
+        Path::new("src/callback.ts"),
+        r"
+        import { C } from './c'; import { computed as wrap } from 'vue';
+        export function forward<T>(callback: () => T) { return { result: callback() }; }
+        const result = wrap({ get: () => new C(), set: (_value: unknown) => {} });
+        result.value = new C(); result.value.go();
+    ",
+    );
+    let sources = |module: &ModuleInfo| {
+        SemanticFactView::new(&module.semantic_facts, &module.member_accesses)
+            .factory_return_object_property_sources()
+            .map(|source| {
+                (
+                    source.factory_export_name.clone(),
+                    source.property_path.clone(),
+                    source.source.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let consumers = |module: &ModuleInfo| {
+        SemanticFactView::new(&module.semantic_facts, &module.member_accesses)
+            .callback_factory_property_accesses()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let expected_sources = vec![(
+        "forward".to_string(),
+        "result".to_string(),
+        FactoryPropertySource::CallbackParameterReturn { parameter_index: 0 },
+    )];
+    let expected_accesses = vec![CallbackFactoryPropertyAccessFact {
+        callee_name: "wrap".into(),
+        callee_member: None,
+        property_path: "value".into(),
+        member: "go".into(),
+        vue_only: false,
+        assigned_class: Some("C".into()),
+        arguments: vec![CallbackFactoryArgument {
+            parameter_index: 0,
+            class_local_name: "C".into(),
+            getter: true,
+            lazy_safe: true,
+        }],
+    }];
+    assert_eq!(sources(&module), expected_sources);
+    assert_eq!(consumers(&module), expected_accesses);
+    assert!(
+        !module
+            .member_accesses
+            .iter()
+            .any(|access| access.object == "C" && access.member == "go"),
+        "conditional member must not bypass producer authority"
+    );
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let bytes = bitcode::encode(&cached);
+    let decoded: CachedModule = bitcode::decode(&bytes).expect("callback cache decode");
+    let restored = cached_to_module(&decoded, FileId(8));
+    assert_eq!(sources(&restored), expected_sources);
+    assert_eq!(consumers(&restored), expected_accesses);
+}
+
+/// Two fallow processes that share `.fallow/` (an editor server and a CLI run,
+/// or a pre-commit hook beside an editor) save the cache at the same time.
+/// Each save must replace the file whole: a reader never sees bytes from two
+/// writers, no save fails because another save moved its temp file, and no
+/// temp file stays behind.
+#[test]
+fn concurrent_saves_never_leave_an_undecodable_cache_or_a_stray_temp_file() {
+    const WRITERS: u64 = 8;
+    const ROUNDS: u64 = 25;
+    let dir = test_cache_dir("concurrent_saves");
+    let failures = std::sync::Mutex::new(Vec::<String>::new());
+    std::thread::scope(|scope| {
+        for writer in 0..WRITERS {
+            let (dir, failures) = (&dir, &failures);
+            scope.spawn(move || {
+                let mut store = CacheStore::new(Path::new(""));
+                for i in 0..40u64 {
+                    store.insert(
+                        Path::new(&format!("w{writer}/file{i}.ts")),
+                        synthetic_module(writer * 1000 + i, i, 4),
+                    );
+                }
+                for _ in 0..ROUNDS {
+                    if let Err(error) = store.save(dir, 7, DEFAULT_CACHE_MAX_SIZE) {
+                        failures.lock().expect("failure list").push(error);
+                    }
+                }
+            });
+        }
+    });
+    let failures = failures.into_inner().expect("failure list");
+    assert!(failures.is_empty(), "saves failed: {failures:?}");
+
+    let loaded = CacheStore::load(&dir, Path::new(""), 7, DEFAULT_CACHE_MAX_SIZE)
+        .expect("the cache written last decodes");
+    assert_eq!(
+        loaded.len(),
+        40,
+        "the file holds exactly one writer's store"
+    );
+
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [".gitignore", "cache.bin"],
+        "no temp file stays behind"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Eviction removes the entries that recent runs did not see before the
+/// entries every run sees. A file that has not changed for weeks is still
+/// parsed again when it is evicted, so the age of its last parse says nothing
+/// about its value. Entries outside the current scope (test files that
+/// `--production` skips, a sibling workspace) go first.
+#[test]
+fn eviction_removes_out_of_scope_entries_before_stable_in_scope_entries() {
+    use fallow_types::discover::DiscoveredFile;
+
+    let dir = test_cache_dir("evict_out_of_scope_first");
+    let source_dir = dir.join("src");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    let mut store = CacheStore::new(Path::new(""));
+    let mut in_scope = Vec::new();
+    for i in 0..25u32 {
+        // Parsed long ago and unchanged since: the oldest write stamps.
+        let path = source_dir.join(format!("stable{i}.ts"));
+        store.insert(&path, synthetic_module(u64::from(i), 1 + u64::from(i), 1));
+        in_scope.push(DiscoveredFile {
+            id: FileId(i),
+            path,
+            size_bytes: 1,
+        });
+    }
+    let mut out_of_scope = Vec::new();
+    for i in 0..25u64 {
+        // Parsed by a recent run with another scope. The files still exist,
+        // so `retain_paths` keeps them.
+        let path = source_dir.join(format!("other{i}.test.ts"));
+        std::fs::write(&path, "").unwrap();
+        store.insert(&path, synthetic_module(100 + i, 1_000 + i, 1));
+        out_of_scope.push(path);
+    }
+
+    store.retain_paths(&in_scope);
+    let cap = 40 * 1024;
+    store.save(&dir, 5, cap).expect("save with eviction");
+
+    let loaded = CacheStore::load(&dir, Path::new(""), 5, DEFAULT_CACHE_MAX_SIZE)
+        .expect("load after eviction");
+    assert!(loaded.len() < 50, "the cap forced an eviction");
+    let kept_out_of_scope = out_of_scope
+        .iter()
+        .filter(|path| loaded.get_by_path_only(path).is_some())
+        .count();
+    let kept_in_scope = in_scope
+        .iter()
+        .filter(|file| loaded.get_by_path_only(&file.path).is_some())
+        .count();
+    assert!(
+        kept_out_of_scope == 0 || kept_in_scope == in_scope.len(),
+        "eviction kept {kept_out_of_scope} out-of-scope entries but dropped {} in-scope entries",
+        in_scope.len() - kept_in_scope
+    );
+    assert!(kept_in_scope > 0, "in-scope entries survive the eviction");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
