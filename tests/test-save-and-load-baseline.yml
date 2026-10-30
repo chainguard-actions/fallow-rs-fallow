@@ -1,0 +1,81 @@
+name: Test dead-code save-baseline followed by baseline comparison
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create sample project with an unused export
+        run: |
+          rm -rf sample-app sample-baselines && mkdir -p sample-app/src sample-baselines
+          cat > sample-app/package.json <<'EOF'
+          {"name":"sample-app","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > sample-app/src/math.js <<'EOF'
+          export function add(a, b) { return a + b; }
+          export function unusedHelper(x) { return x * 2; }
+          EOF
+          cat > sample-app/src/index.js <<'EOF'
+          import { add } from './math.js';
+          export function main() { return add(1, 2); }
+          EOF
+
+      - id: save
+        uses: .
+        with:
+          version: '3.34.0'
+          root: sample-app
+          command: dead-code
+          save-baseline: ${{ github.workspace }}/sample-baselines/dead-code.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert baseline file was saved
+        run: |
+          F="$GITHUB_WORKSPACE/sample-baselines/dead-code.json"
+          ls -la "$GITHUB_WORKSPACE/sample-baselines" || true
+          if [ ! -f "$F" ]; then
+            echo "FAIL: baseline file not written at $F"
+            exit 1
+          fi
+          if ! jq empty "$F"; then
+            echo "FAIL: baseline file is not valid JSON"
+            exit 1
+          fi
+          echo "PASS"
+
+      - id: load
+        uses: .
+        with:
+          version: '3.34.0'
+          root: sample-app
+          command: dead-code
+          baseline: ${{ github.workspace }}/sample-baselines/dead-code.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert baseline run reported outputs
+        env:
+          ISSUES: ${{ steps.load.outputs.issues }}
+          BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
+          EXPECTED_PATH: ${{ github.workspace }}/sample-baselines/dead-code.json
+          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+        run: |
+          echo "issues: $ISSUES baseline-path: '$BASELINE_PATH' stale: '$STALE'"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: expected numeric issues, got '$ISSUES'"
+            exit 1
+          fi
+          if [ -n "$BASELINE_PATH" ] && [ "$BASELINE_PATH" != "$EXPECTED_PATH" ]; then
+            echo "FAIL: baseline-path '$BASELINE_PATH' does not match input '$EXPECTED_PATH'"
+            exit 1
+          fi
+          echo "PASS"
