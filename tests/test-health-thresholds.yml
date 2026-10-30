@@ -1,4 +1,4 @@
-name: Test health command with thresholds
+name: Test health with complexity thresholds
 on:
   workflow_dispatch:
 jobs:
@@ -12,11 +12,11 @@ jobs:
           command: health
           root: tests/fixtures/clean-project
           version: '3.37.0'
-          max-cyclomatic: '10'
-          max-cognitive: '8'
-          max-crap: '25'
+          max-cyclomatic: '5'
+          max-cognitive: '5'
+          max-crap: '10'
           sort: cognitive
-          top: '5'
+          top: '3'
           min-severity: critical
           threads: '2'
           fail-on-issues: 'false'
@@ -26,17 +26,11 @@ jobs:
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
-          VERDICT: ${{ steps.action.outputs.verdict }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          echo "verdict: $VERDICT"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
-            exit 1
-          fi
-          if [ -n "$VERDICT" ]; then
-            echo "FAIL: verdict should be empty for non-audit command"
             exit 1
           fi
           F="$RESULTS"

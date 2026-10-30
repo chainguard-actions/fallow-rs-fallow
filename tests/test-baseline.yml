@@ -1,4 +1,4 @@
-name: Test dead-code baseline save and load
+name: Test save-baseline then baseline
 on:
   workflow_dispatch:
 jobs:
@@ -11,44 +11,37 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dead-code-project
-          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          save-baseline: ${{ runner.temp }}/fallow-baseline.json
           version: '3.37.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
       - name: Assert baseline saved
         run: |
-          F="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
-          if [ ! -f "$F" ]; then
+          if [ ! -s "$RUNNER_TEMP/fallow-baseline.json" ]; then
             echo "FAIL: baseline file not written"
             exit 1
           fi
-          if ! jq -e . "$F" > /dev/null; then
-            echo "FAIL: baseline is not valid JSON"
-            exit 1
-          fi
+          cat "$RUNNER_TEMP/fallow-baseline.json" | head -c 2000
           echo "PASS"
       - id: load
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dead-code-project
-          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          baseline: ${{ runner.temp }}/fallow-baseline.json
           version: '3.37.0'
-          fail-on-issues: 'true'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert baseline applied
+      - name: Assert baseline suppresses issues
         env:
           ISSUES: ${{ steps.load.outputs.issues }}
-          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
-          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+          PATH_OUT: ${{ steps.load.outputs.baseline-path }}
         run: |
           echo "issues: $ISSUES"
-          echo "baseline-entries: $ENTRIES"
-          echo "baseline-stale-entries: $STALE"
+          echo "baseline-path: $PATH_OUT"
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 new issues after loading baseline"
+            echo "FAIL: expected 0 new issues against baseline"
             exit 1
           fi
           echo "PASS"

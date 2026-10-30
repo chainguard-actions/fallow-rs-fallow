@@ -1,13 +1,20 @@
 {
-  "/build/src/math.js": {
-    "path": "/build/src/math.js",
+  "/repo/src/math.js": {
+    "path": "/repo/src/math.js",
     "statementMap": {
-      "0": { "start": { "line": 1, "column": 0 }, "end": { "line": 1, "column": 40 } }
+      "0": { "start": { "line": 2, "column": 2 }, "end": { "line": 2, "column": 15 } }
     },
-    "fnMap": {},
+    "fnMap": {
+      "0": {
+        "name": "add",
+        "decl": { "start": { "line": 1, "column": 16 }, "end": { "line": 1, "column": 19 } },
+        "loc": { "start": { "line": 1, "column": 26 }, "end": { "line": 3, "column": 1 } },
+        "line": 1
+      }
+    },
     "branchMap": {},
     "s": { "0": 1 },
-    "f": {},
+    "f": { "0": 1 },
     "b": {}
   }
 }

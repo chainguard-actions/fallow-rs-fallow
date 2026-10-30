@@ -17,8 +17,9 @@ jobs:
           changed-since: HEAD
           version: '3.37.0'
           fail-on-issues: 'false'
+          auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert security outputs
+      - name: Assert output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
@@ -30,7 +31,7 @@ jobs:
             exit 1
           fi
           if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new' when set"
+            echo "FAIL: expected gate 'new' or empty"
             exit 1
           fi
           echo "PASS"

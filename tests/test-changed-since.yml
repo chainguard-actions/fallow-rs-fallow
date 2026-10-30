@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-since
+name: Test changed-since scoping
 on:
   workflow_dispatch:
 jobs:
@@ -16,14 +16,15 @@ jobs:
           changed-since: HEAD
           version: '3.37.0'
           fail-on-issues: 'false'
+          auto-changed-since: 'false'
           type-aware: 'false'
       - name: Assert scoped run
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
+          UNAVAIL: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
           echo "issues: $ISSUES"
-          echo "changed-files-unavailable: $UNAVAILABLE"
+          echo "changed-files-unavailable: $UNAVAIL"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1

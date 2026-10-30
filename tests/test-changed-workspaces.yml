@@ -1,4 +1,4 @@
-name: Test changed-workspaces scoping in a monorepo
+name: Test changed-workspaces scoping in monorepo
 on:
   workflow_dispatch:
 jobs:
@@ -18,7 +18,7 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert scoped run
+      - name: Assert output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
