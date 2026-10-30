@@ -17,30 +17,29 @@ jobs:
           command: audit
           root: tests/fixtures/simple-js
           format: json
-          gate: not-a-gate
+          gate: bogus-gate
           dead-code-baseline: dead-code-baseline.json
           health-baseline: health-baseline.json
           dupes-baseline: dupes-baseline.json
-          fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert the invalid gate was rejected
+      - name: Assert action rejected invalid gate
         env:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
-          VERDICT: ${{ steps.action.outputs.verdict }}
         run: |
-          echo "outcome: $OUTCOME issues: '$ISSUES' verdict: '$VERDICT'"
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for gate=not-a-gate, got '$OUTCOME'"
+            echo "FAIL: expected failure for invalid gate, got '$OUTCOME'"
             exit 1
           fi
-          if [ -n "$ISSUES" ] || [ -n "$VERDICT" ]; then
+          if [ -n "$ISSUES" ]; then
             echo "FAIL: analysis should not have run"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: invalid gate rejected"

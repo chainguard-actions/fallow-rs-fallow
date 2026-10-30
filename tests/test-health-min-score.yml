@@ -17,14 +17,13 @@ jobs:
           root: tests/fixtures/simple-js
           format: json
           min-score: '0'
-          fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert health with min-score passed
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -36,7 +35,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: $RESULTS"
+            echo "FAIL: results file missing at: $RESULTS"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: min-score 0 gate passed"

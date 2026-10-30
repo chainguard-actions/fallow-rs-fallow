@@ -28,7 +28,7 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert the action rejected the invalid threshold
+      - name: Assert action rejected invalid input
         env:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
@@ -43,4 +43,4 @@ jobs:
             echo "FAIL: analysis should not have produced an issues count"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: invalid low-traffic-threshold rejected"

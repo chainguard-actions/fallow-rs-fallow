@@ -17,26 +17,26 @@ jobs:
           command: security
           root: tests/fixtures/simple-js
           format: json
-          security-gate: everything
-          fail-on-issues: 'false'
+          security-gate: not-a-gate
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert the invalid security-gate was rejected
+      - name: Assert action rejected invalid security-gate
         env:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME issues: '$ISSUES'"
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for security-gate=everything, got '$OUTCOME'"
+            echo "FAIL: expected failure for invalid security-gate, got '$OUTCOME'"
             exit 1
           fi
           if [ -n "$ISSUES" ]; then
             echo "FAIL: analysis should not have run"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: invalid security-gate rejected"

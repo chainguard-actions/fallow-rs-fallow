@@ -1,5 +1,5 @@
-function multiply(a, b) {
+function mul(a, b) {
   return a * b;
 }
 
-module.exports = { multiply };
+module.exports = { mul };

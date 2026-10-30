@@ -1,6 +1,6 @@
 {
-  "/coverage-root/index.js": {
-    "path": "/coverage-root/index.js",
+  "/ci/project/index.js": {
+    "path": "/ci/project/index.js",
     "statementMap": {
       "0": { "start": { "line": 3, "column": 2 }, "end": { "line": 3, "column": 27 } },
       "1": { "start": { "line": 7, "column": 2 }, "end": { "line": 7, "column": 12 } },

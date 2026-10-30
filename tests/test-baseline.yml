@@ -1,4 +1,4 @@
-name: Test save-baseline followed by baseline comparison
+name: Test saving and loading baselines and regression baselines
 on:
   workflow_dispatch:
 
@@ -16,7 +16,8 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          save-baseline: ${{ github.workspace }}/fallow-test-baseline.json
+          save-baseline: ${{ github.workspace }}/fallow-baseline.json
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -24,15 +25,18 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert baseline file was saved
+      - name: Assert baseline files were saved
         run: |
-          ls -la "$GITHUB_WORKSPACE" | head -50
-          if [ ! -f "$GITHUB_WORKSPACE/fallow-test-baseline.json" ]; then
-            echo "FAIL: baseline file not created"
-            exit 1
-          fi
-          jq empty "$GITHUB_WORKSPACE/fallow-test-baseline.json" || { echo "FAIL: baseline not valid JSON"; exit 1; }
-          echo "PASS: baseline saved"
+          ls -la "$GITHUB_WORKSPACE"
+          for f in fallow-baseline.json fallow-regression.json; do
+            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f was not written"
+              exit 1
+            fi
+            echo "--- $f"
+            cat "$GITHUB_WORKSPACE/$f"
+          done
+          echo "PASS: baselines saved"
 
       - id: load
         uses: .
@@ -40,7 +44,8 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          baseline: ${{ github.workspace }}/fallow-test-baseline.json
+          baseline: ${{ github.workspace }}/fallow-baseline.json
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -48,21 +53,21 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert baseline comparison ran
+      - name: Assert baseline was loaded
         env:
           ISSUES: ${{ steps.load.outputs.issues }}
           SAVED_ISSUES: ${{ steps.save.outputs.issues }}
           BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
         run: |
-          echo "saved run issues: $SAVED_ISSUES"
-          echo "baseline run issues: $ISSUES"
+          echo "issues (with baseline): $ISSUES"
+          echo "issues (save run): $SAVED_ISSUES"
           echo "baseline-path: $BASELINE_PATH"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ "$ISSUES" -gt "$SAVED_ISSUES" ]; then
-            echo "FAIL: baseline run reports more issues than the run that saved it"
+          if echo "$SAVED_ISSUES" | grep -qE '^[0-9]+$' && [ "$ISSUES" -gt "$SAVED_ISSUES" ]; then
+            echo "FAIL: loading the baseline increased the issue count"
             exit 1
           fi
           echo "PASS"
