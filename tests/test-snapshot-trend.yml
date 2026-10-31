@@ -1,4 +1,4 @@
-name: Test save-snapshot then trend
+name: Test save-snapshot followed by trend
 on:
   workflow_dispatch:
 jobs:
@@ -16,6 +16,17 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
+      - name: Assert snapshot saved
+        run: |
+          ls -la tests/fixtures/clean-project/.fallow/snapshots 2>/dev/null || true
+          ls -la .fallow/snapshots 2>/dev/null || true
+          COUNT=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | wc -l)
+          echo "snapshot files: $COUNT"
+          if [ "$COUNT" -lt 1 ]; then
+            echo "FAIL: no snapshot file written"
+            exit 1
+          fi
+          echo "PASS"
       - id: trend
         uses: .
         with:
@@ -26,16 +37,15 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert outputs
+      - name: Assert trend run output
         env:
-          SNAP_ISSUES: ${{ steps.snap.outputs.issues }}
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "snapshot issues: $SNAP_ISSUES"
-          echo "trend issues: $ISSUES"
-          if ! [[ "$SNAP_ISSUES" =~ ^[0-9]+$ ]] || ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues outputs are not numbers"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           F="$RESULTS"

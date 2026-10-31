@@ -1,6 +1,6 @@
 {
-  "/repo/src/math.js": {
-    "path": "/repo/src/math.js",
+  "/ci/build/src/math.js": {
+    "path": "/ci/build/src/math.js",
     "statementMap": {
       "0": { "start": { "line": 2, "column": 2 }, "end": { "line": 2, "column": 15 } }
     },

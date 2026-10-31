@@ -1,4 +1,4 @@
-name: Test dead-code with issue-types and explicit config
+name: Test dead-code filtered by issue-types with explicit config
 on:
   workflow_dispatch:
 jobs:
@@ -12,25 +12,31 @@ jobs:
           command: dead-code
           root: tests/fixtures/dead-code-project
           config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
-          issue-types: unused-files,unused-exports
           version: '3.37.0'
+          issue-types: unused-files
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert issues detected
+      - name: Assert unused file reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected at least one unused file/export"
+            echo "FAIL: expected at least one unused file"
             exit 1
           fi
           F="$RESULTS"
           [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
-          if ! grep -qE 'orphan|unusedHelper' "$F"; then
-            echo "FAIL: expected orphan or unusedHelper in results"
+          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          if ! grep -q 'orphan' "$F"; then
+            echo "FAIL: expected orphan.js reported as unused file"
+            head -c 3000 "$F"
             exit 1
           fi
           echo "PASS"

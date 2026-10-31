@@ -60,7 +60,8 @@ echo "::add-mask::${oidc}"
 resp=$(jq -nc --arg t "$oidc" '{token: $t}' |
   curl -sf --max-time 10 -X POST "${broker%/}/v1/ci/github-token" \
     -H 'content-type: application/json' --data @-) || emit_fallback "broker unavailable or declined"
-token=$(printf '%s' "$resp" | jq -r '.data.token // empty')
+raw_token=$(printf '%s' "$resp" | jq -r '.data.token // empty')
+token=$(printf '%s' "$raw_token" | tr -d '\n\r')
 [ -n "$token" ] || emit_fallback "broker returned no token"
 echo "::add-mask::${token}"
 

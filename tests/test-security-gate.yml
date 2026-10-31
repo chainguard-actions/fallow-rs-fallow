@@ -13,13 +13,13 @@ jobs:
         with:
           command: security
           root: tests/fixtures/clean-project
+          version: '3.37.0'
           security-gate: new
           changed-since: HEAD
-          version: '3.37.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert output
+      - name: Assert security output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
@@ -31,7 +31,7 @@ jobs:
             exit 1
           fi
           if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new' or empty"
+            echo "FAIL: expected gate 'new' when set"
             exit 1
           fi
           echo "PASS"

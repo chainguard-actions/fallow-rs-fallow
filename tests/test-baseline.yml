@@ -1,4 +1,4 @@
-name: Test save-baseline then baseline
+name: Test save-baseline then compare against baseline
 on:
   workflow_dispatch:
 jobs:
@@ -11,37 +11,46 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dead-code-project
-          save-baseline: ${{ runner.temp }}/fallow-baseline.json
           version: '3.37.0'
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert baseline saved
+      - name: Assert baseline file written
         run: |
-          if [ ! -s "$RUNNER_TEMP/fallow-baseline.json" ]; then
+          F="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
+          if [ ! -f "$F" ]; then
             echo "FAIL: baseline file not written"
             exit 1
           fi
-          cat "$RUNNER_TEMP/fallow-baseline.json" | head -c 2000
+          jq -e . "$F" > /dev/null || { echo "FAIL: baseline not JSON"; exit 1; }
+          head -c 1000 "$F"; echo
           echo "PASS"
       - id: load
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dead-code-project
-          baseline: ${{ runner.temp }}/fallow-baseline.json
           version: '3.37.0'
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          fail-on-stale-baseline: 'true'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert baseline suppresses issues
+      - name: Assert baselined run has no new issues
         env:
           ISSUES: ${{ steps.load.outputs.issues }}
-          PATH_OUT: ${{ steps.load.outputs.baseline-path }}
+          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
         run: |
           echo "issues: $ISSUES"
-          echo "baseline-path: $PATH_OUT"
+          echo "baseline entries: $ENTRIES"
+          echo "stale entries: $STALE"
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 new issues against baseline"
+            echo "FAIL: expected 0 issues after baselining"
+            exit 1
+          fi
+          if [ -n "$STALE" ] && [ "$STALE" != "0" ]; then
+            echo "FAIL: expected no stale baseline entries"
             exit 1
           fi
           echo "PASS"

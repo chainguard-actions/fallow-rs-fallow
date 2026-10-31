@@ -1440,7 +1440,12 @@ audit_baseline_notices() {
     saved_by=$(read_staleness_saved_by "$file" "$section")
     # Audit resolves all three from project config as well as from inputs, so
     # there is not always a path to echo back.
-    path=$(eval "printf '%s' \"\${${input}:-}\"")
+    # Indirect expansion via ${!name}; only accept a valid shell identifier.
+    if [[ "$input" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      path="${!input:-}"
+    else
+      path=""
+    fi
     if [ "$unrecognised" = "true" ] && [ -n "$saved_by" ]; then
       if [ -n "$path" ]; then
         echo "::warning::fallow: \`fallow ${saved_by}\` saved the ${label} baseline at ${path}, so this command reads nothing from it and it suppresses nothing."

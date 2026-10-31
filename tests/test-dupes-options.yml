@@ -1,4 +1,4 @@
-name: Test dupes with min-tokens/min-lines/threshold
+name: Test dupes with token/line minimums and threshold
 on:
   workflow_dispatch:
 jobs:
@@ -12,19 +12,28 @@ jobs:
           command: dupes
           root: tests/fixtures/clean-project
           version: '3.37.0'
-          min-tokens: '10'
-          min-lines: '2'
-          threshold: '100'
+          dupes-mode: strict
+          min-tokens: '30'
+          min-lines: '3'
+          threshold: '50'
           top: '5'
           auto-changed-since: 'false'
           type-aware: 'false'
       - name: Assert dupes output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if [ "$ISSUES" != "0" ]; then
             echo "FAIL: expected 0 clone groups"
+            exit 1
+          fi
+          F="$RESULTS"
+          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

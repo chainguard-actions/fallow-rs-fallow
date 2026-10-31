@@ -1,4 +1,4 @@
-name: Test regression baseline round trip
+name: Test regression baseline save and compare
 on:
   workflow_dispatch:
 jobs:
@@ -11,36 +11,45 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dead-code-project
-          save-regression-baseline: ${{ runner.temp }}/fallow-regression.json
           version: '3.37.0'
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert regression baseline saved
+      - name: Assert regression baseline written
         run: |
-          if [ ! -s "$RUNNER_TEMP/fallow-regression.json" ]; then
+          F="$GITHUB_WORKSPACE/fallow-regression.json"
+          if [ ! -f "$F" ]; then
             echo "FAIL: regression baseline not written"
             exit 1
           fi
+          jq -e . "$F" > /dev/null || { echo "FAIL: not JSON"; exit 1; }
           echo "PASS"
-      - id: check
+      - id: compare
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dead-code-project
-          regression-baseline: ${{ runner.temp }}/fallow-regression.json
-          fail-on-regression: 'true'
           version: '3.37.0'
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
+          fail-on-regression: 'true'
+          tolerance: '0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert no regression failure
+      - name: Assert no regression
         env:
-          ISSUES: ${{ steps.check.outputs.issues }}
+          OUTCOME: ${{ steps.compare.outcome }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: identical run should not regress"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected the same dead-code issues to still be reported"
             exit 1
           fi
           echo "PASS"

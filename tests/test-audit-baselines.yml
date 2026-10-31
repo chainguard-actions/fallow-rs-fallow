@@ -1,4 +1,4 @@
-name: Test audit with gate, worsened and per-analysis baselines
+name: Test audit with per-analysis baselines and gate
 on:
   workflow_dispatch:
 jobs:
@@ -13,36 +13,36 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/clean-project
-          save-baseline: ${{ runner.temp }}/dc-baseline.json
           version: '3.37.0'
+          save-baseline: ${{ github.workspace }}/bl-dead-code.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - id: hl
+      - id: hb
         uses: .
         with:
           command: health
           root: tests/fixtures/clean-project
-          save-baseline: ${{ runner.temp }}/health-baseline.json
           version: '3.37.0'
+          save-baseline: ${{ github.workspace }}/bl-health.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - id: dp
+      - id: db
         uses: .
         with:
           command: dupes
           root: tests/fixtures/clean-project
-          save-baseline: ${{ runner.temp }}/dupes-baseline.json
           version: '3.37.0'
+          save-baseline: ${{ github.workspace }}/bl-dupes.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert baselines saved
+      - name: Assert baselines exist
         run: |
-          for f in dc-baseline.json health-baseline.json dupes-baseline.json; do
-            if [ ! -f "$RUNNER_TEMP/$f" ]; then
-              echo "FAIL: $f not written"
+          for f in bl-dead-code.json bl-health.json bl-dupes.json; do
+            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: missing $f"
               exit 1
             fi
           done
@@ -52,17 +52,17 @@ jobs:
         with:
           command: audit
           root: tests/fixtures/clean-project
+          version: '3.37.0'
           changed-since: HEAD
           gate: new-only
           worsened: warn
-          dead-code-baseline: ${{ runner.temp }}/dc-baseline.json
-          health-baseline: ${{ runner.temp }}/health-baseline.json
-          dupes-baseline: ${{ runner.temp }}/dupes-baseline.json
-          version: '3.37.0'
+          dead-code-baseline: ${{ github.workspace }}/bl-dead-code.json
+          health-baseline: ${{ github.workspace }}/bl-health.json
+          dupes-baseline: ${{ github.workspace }}/bl-dupes.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert audit output
+      - name: Assert audit verdict and gate
         env:
           VERDICT: ${{ steps.action.outputs.verdict }}
           GATE: ${{ steps.action.outputs.gate }}
@@ -75,8 +75,12 @@ jobs:
             pass|warn|fail) ;;
             *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
           esac
-          if [ -n "$GATE" ] && [ "$GATE" != "new-only" ]; then
-            echo "FAIL: expected gate new-only"
+          if [ "$GATE" != "new-only" ]; then
+            echo "FAIL: expected gate 'new-only'"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"
