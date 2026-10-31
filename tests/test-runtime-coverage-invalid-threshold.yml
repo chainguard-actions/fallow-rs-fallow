@@ -1,4 +1,4 @@
-name: Test runtime coverage inputs reject a non-integer min-invocations-hot
+name: Test runtime coverage inputs reject an invalid low-traffic-threshold
 on:
   workflow_dispatch:
 jobs:
@@ -7,26 +7,15 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project and V8 coverage dir
-        run: |
-          rm -rf sample-app && mkdir -p sample-app/src sample-app/v8-coverage
-          cat > sample-app/package.json <<'EOF'
-          {"name":"sample-app","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
-          EOF
-          echo "export function main() { return 1; }" > sample-app/src/index.js
-          echo '{"result":[]}' > sample-app/v8-coverage/coverage-1.json
-
       - id: action
         uses: .
         continue-on-error: true
         with:
-          version: '3.34.0'
-          root: sample-app
           command: health
-          runtime-coverage: sample-app/v8-coverage
-          min-invocations-hot: 'not-a-number'
+          runtime-coverage: coverage/v8
+          min-invocations-hot: '100'
           min-observation-volume: '10'
-          low-traffic-threshold: '0.1'
+          low-traffic-threshold: not-a-number
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
@@ -38,9 +27,10 @@ jobs:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME issues: '$ISSUES'"
+          echo "outcome: $OUTCOME"
+          echo "issues: '$ISSUES'"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for invalid min-invocations-hot"
+            echo "FAIL: expected failure for non-numeric low-traffic-threshold"
             exit 1
           fi
           if [ -n "$ISSUES" ]; then

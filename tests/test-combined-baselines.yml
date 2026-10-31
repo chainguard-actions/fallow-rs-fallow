@@ -1,0 +1,110 @@
+name: Test combined run with dead-code, health and dupes baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fixture project
+        run: |
+          mkdir -p proj/src baselines
+          cat > proj/package.json <<'EOF'
+          {"name":"fallow-fixture","version":"1.0.0","private":true,"main":"src/index.js","type":"module"}
+          EOF
+          cat > proj/src/index.js <<'EOF'
+          import { add } from './math.js';
+          console.log(add(1, 2));
+          EOF
+          cat > proj/src/math.js <<'EOF'
+          export function add(a, b) {
+            return a + b;
+          }
+          export function unusedHelper() {
+            return 42;
+          }
+          EOF
+
+      - id: save-dead-code
+        uses: .
+        with:
+          command: dead-code
+          root: proj
+          save-baseline: ${{ github.workspace }}/baselines/dead-code.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - id: save-health
+        uses: .
+        with:
+          command: health
+          root: proj
+          save-baseline: ${{ github.workspace }}/baselines/health.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - id: save-dupes
+        uses: .
+        with:
+          command: dupes
+          root: proj
+          save-baseline: ${{ github.workspace }}/baselines/dupes.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert baselines were saved
+        run: |
+          ls -la baselines
+          for f in dead-code health dupes; do
+            if [ ! -s "baselines/$f.json" ]; then
+              echo "FAIL: baselines/$f.json was not written"
+              exit 1
+            fi
+            jq empty "baselines/$f.json" || { echo "FAIL: baselines/$f.json invalid JSON"; exit 1; }
+          done
+          echo "PASS"
+
+      - id: action
+        uses: .
+        with:
+          root: proj
+          baseline: ${{ github.workspace }}/baselines/dead-code.json
+          health-baseline: ${{ github.workspace }}/baselines/health.json
+          dupes-baseline: ${{ github.workspace }}/baselines/dupes.json
+          skip: architecture
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert combined run used the baseline
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          BASELINE_PATH: ${{ steps.action.outputs.baseline-path }}
+          ENTRIES: ${{ steps.action.outputs.baseline-entries }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          echo "baseline-path: $BASELINE_PATH"
+          echo "baseline-entries: $ENTRIES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a non-negative integer"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          echo "PASS"

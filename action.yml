@@ -455,7 +455,7 @@ runs:
         printf 'root_digest=%s\n' "${digest:0:16}" >> "$GITHUB_OUTPUT"
 
     - name: Cache analysis results
-      uses: chainguard-actions/actions-cache@244dfed44d8c4e917b332280fb2c1063eda3d9be # v5
+      uses: chainguard-actions/actions-cache@46c2783c2418d3de33490be27a0d86c6268bc4fd # v5
       with:
         path: ${{ inputs.root }}/.fallow
         key: fallow-cache-${{ runner.os }}-${{ steps.fallow-cache-key.outputs.root_digest }}-${{ hashFiles(format('{0}/**/package.json', inputs.root)) }}

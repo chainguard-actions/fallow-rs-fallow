@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend comparison
+name: Test health save-snapshot followed by trend
 on:
   workflow_dispatch:
 jobs:
@@ -7,26 +7,27 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project
+      - name: Create fixture project
         run: |
-          rm -rf sample-app && mkdir -p sample-app/src
-          cat > sample-app/package.json <<'EOF'
-          {"name":"sample-app","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          mkdir -p proj/src
+          cat > proj/package.json <<'EOF'
+          {"name":"fallow-fixture","version":"1.0.0","private":true,"main":"src/index.js","type":"module"}
           EOF
-          cat > sample-app/src/math.js <<'EOF'
-          export function add(a, b) { return a + b; }
-          EOF
-          cat > sample-app/src/index.js <<'EOF'
+          cat > proj/src/index.js <<'EOF'
           import { add } from './math.js';
-          export function main() { return add(1, 2); }
+          console.log(add(1, 2));
+          EOF
+          cat > proj/src/math.js <<'EOF'
+          export function add(a, b) {
+            return a + b;
+          }
           EOF
 
       - id: snapshot
         uses: .
         with:
-          version: '3.34.0'
-          root: sample-app
           command: health
+          root: proj
           save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -34,16 +35,24 @@ jobs:
           sarif: 'false'
           format: json
 
-      - name: Show saved snapshots
+      - name: Assert snapshot run produced results
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
         run: |
-          find sample-app -path '*snapshots*' -print || true
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a non-negative integer"
+            exit 1
+          fi
+          echo "snapshot files:"
+          find proj/.fallow -type f 2>/dev/null || true
+          echo "PASS"
 
       - id: trend
         uses: .
         with:
-          version: '3.34.0'
-          root: sample-app
           command: health
+          root: proj
           trend: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -51,21 +60,18 @@ jobs:
           sarif: 'false'
           format: json
 
-      - name: Assert both runs produced numeric issue counts
+      - name: Assert trend run produced results
         env:
-          SNAP_ISSUES: ${{ steps.snapshot.outputs.issues }}
-          TREND_ISSUES: ${{ steps.trend.outputs.issues }}
-          TREND_RESULTS: ${{ steps.trend.outputs.results }}
+          ISSUES: ${{ steps.trend.outputs.issues }}
+          RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "snapshot issues: $SNAP_ISSUES trend issues: $TREND_ISSUES"
-          for v in "$SNAP_ISSUES" "$TREND_ISSUES"; do
-            if ! echo "$v" | grep -qE '^[0-9]+$'; then
-              echo "FAIL: expected numeric issues, got '$v'"
-              exit 1
-            fi
-          done
-          if [ ! -f "$TREND_RESULTS" ] || ! jq empty "$TREND_RESULTS"; then
-            echo "FAIL: trend results file missing or invalid"
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not a non-negative integer"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"

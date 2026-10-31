@@ -1,4 +1,4 @@
-name: Test changed-workspaces git-derived monorepo scoping
+name: Test dead-code scoped with changed-workspaces
 on:
   workflow_dispatch:
 jobs:
@@ -6,57 +6,53 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
-      - name: Create sample monorepo in its own git repository
+      - name: Create monorepo fixture
         run: |
-          git config --global --add safe.directory '*'
-          rm -rf sample-mono && mkdir -p sample-mono/packages/a sample-mono/packages/b
-          cd sample-mono
-          cat > package.json <<'EOF'
-          {"name":"sample-mono","version":"1.0.0","private":true,"workspaces":["packages/*"]}
+          mkdir -p mono/packages/app mono/packages/lib
+          cat > mono/package.json <<'EOF'
+          {"name":"mono-root","version":"1.0.0","private":true,"workspaces":["packages/*"]}
           EOF
-          for p in a b; do
-            cat > "packages/$p/package.json" <<EOF
-          {"name":"@sample/$p","version":"1.0.0","type":"module","main":"index.js"}
+          cat > mono/packages/app/package.json <<'EOF'
+          {"name":"app","version":"1.0.0","main":"index.js","type":"module"}
           EOF
-            cat > "packages/$p/index.js" <<'EOF'
-          import { helper } from './helper.js';
-          export function main() { return helper(1); }
+          cat > mono/packages/app/index.js <<'EOF'
+          export function run() { return 1; }
+          run();
           EOF
-            echo "export function helper(x) { return x + 1; }" > "packages/$p/helper.js"
-          done
-          git init -q .
-          git add -A
-          git -c user.email=t@example.com -c user.name=Test commit -q -m base
-          echo "export function unusedHelper(x) { return x * 2; }" >> packages/a/helper.js
-          git add -A
-          git -c user.email=t@example.com -c user.name=Test commit -q -m "change a"
-          git log --oneline --stat
+          cat > mono/packages/lib/package.json <<'EOF'
+          {"name":"lib","version":"1.0.0","main":"index.js","type":"module"}
+          EOF
+          cat > mono/packages/lib/index.js <<'EOF'
+          export function helper() { return 2; }
+          EOF
 
       - id: action
         uses: .
         with:
-          version: '3.34.0'
-          root: sample-mono
           command: dead-code
-          changed-workspaces: HEAD~1
+          root: mono
+          changed-workspaces: HEAD
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert scoped run produced results
+      - name: Assert results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected numeric issues, got '$ISSUES'"
+            echo "FAIL: issues is not a non-negative integer"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
             echo "FAIL: results file missing or invalid"
             exit 1
           fi

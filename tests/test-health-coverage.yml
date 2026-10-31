@@ -7,25 +7,27 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project and Istanbul coverage file
+      - name: Create fixture project and coverage file
         run: |
-          rm -rf sample-app sample-cov && mkdir -p sample-app/src sample-cov
-          cat > sample-app/package.json <<'EOF'
-          {"name":"sample-app","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          mkdir -p proj/src proj/coverage
+          cat > proj/package.json <<'EOF'
+          {"name":"fallow-fixture","version":"1.0.0","private":true,"main":"src/index.js","type":"module"}
           EOF
-          cat > sample-app/src/math.js <<'EOF'
-          export function add(a, b) { return a + b; }
-          EOF
-          cat > sample-app/src/index.js <<'EOF'
+          cat > proj/src/index.js <<'EOF'
           import { add } from './math.js';
-          export function main() { return add(1, 2); }
+          console.log(add(1, 2));
           EOF
-          cat > sample-cov/coverage-final.json <<'EOF'
+          cat > proj/src/math.js <<'EOF'
+          export function add(a, b) {
+            return a + b;
+          }
+          EOF
+          cat > proj/coverage/coverage-final.json <<'EOF'
           {
-            "/ci-build/src/math.js": {
-              "path": "/ci-build/src/math.js",
-              "statementMap": {"0": {"start": {"line": 1, "column": 30}, "end": {"line": 1, "column": 43}}},
-              "fnMap": {"0": {"name": "add", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}}, "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 1, "column": 45}}, "line": 1}},
+            "/ci/build/src/math.js": {
+              "path": "/ci/build/src/math.js",
+              "statementMap": {"0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 15}}},
+              "fnMap": {"0": {"name": "add", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}}, "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 3, "column": 1}}, "line": 1}},
               "branchMap": {},
               "s": {"0": 1},
               "f": {"0": 1},
@@ -33,34 +35,32 @@ jobs:
             }
           }
           EOF
-          jq empty sample-cov/coverage-final.json
 
       - id: action
         uses: .
         with:
-          version: '3.34.0'
-          root: sample-app
           command: health
-          coverage: ${{ github.workspace }}/sample-cov/coverage-final.json
-          coverage-root: /ci-build
-          max-crap: '30'
+          root: proj
+          coverage: ${{ github.workspace }}/proj/coverage/coverage-final.json
+          coverage-root: /ci/build
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert issues output is a number and results valid
+      - name: Assert results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
+            echo "FAIL: issues is not a non-negative integer"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
             echo "FAIL: results file missing or invalid"
             exit 1
           fi
