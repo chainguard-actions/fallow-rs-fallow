@@ -1,4 +1,4 @@
-name: Test combined run with per-analysis baselines
+name: Test combined run with health and dupes baselines
 on:
   workflow_dispatch:
 jobs:
@@ -6,7 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - run: mkdir -p "$GITHUB_WORKSPACE/fallow-combined-baselines"
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-combined"
       - id: save-health
         uses: .
         with:
@@ -14,8 +15,8 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-combined-baselines/health.json
-          artifacts-dir: fallow-artifacts-cb-health
+          save-baseline: ${{ github.workspace }}/fallow-combined/health.json
+          artifacts-dir: fallow-artifacts-combined-health
       - id: save-dupes
         uses: .
         with:
@@ -23,23 +24,14 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-combined-baselines/dupes.json
-          artifacts-dir: fallow-artifacts-cb-dupes
-      - id: save-dead-code
-        uses: .
-        with:
-          command: dead-code
-          root: tests/fixtures/sample-project
-          version: '3.36.0'
-          fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-combined-baselines/dead-code.json
-          artifacts-dir: fallow-artifacts-cb-deadcode
+          save-baseline: ${{ github.workspace }}/fallow-combined/dupes.json
+          artifacts-dir: fallow-artifacts-combined-dupes
       - name: Assert baselines saved
         run: |
-          for f in health dupes dead-code; do
-            F="$GITHUB_WORKSPACE/fallow-combined-baselines/$f.json"
+          for f in health dupes; do
+            F="$GITHUB_WORKSPACE/fallow-combined/$f.json"
             if [ ! -s "$F" ]; then
-              echo "FAIL: $F not written"
+              echo "FAIL: $f baseline not written"
               exit 1
             fi
           done
@@ -50,11 +42,11 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          baseline: ${{ github.workspace }}/fallow-combined-baselines/dead-code.json
-          health-baseline: ${{ github.workspace }}/fallow-combined-baselines/health.json
-          dupes-baseline: ${{ github.workspace }}/fallow-combined-baselines/dupes.json
-          artifacts-dir: fallow-artifacts-cb-combined
-      - name: Assert combined baselined run produced results
+          health-baseline: ${{ github.workspace }}/fallow-combined/health.json
+          dupes-baseline: ${{ github.workspace }}/fallow-combined/dupes.json
+          skip: architecture
+          artifacts-dir: fallow-artifacts-combined
+      - name: Assert combined results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

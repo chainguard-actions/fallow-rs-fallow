@@ -1,4 +1,4 @@
-name: Test dead-code with explicit config and issue-types
+name: Test dead-code restricted issue types
 on:
   workflow_dispatch:
 jobs:
@@ -11,10 +11,10 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/sample-project
-          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
-          issue-types: unused-files
           version: '3.36.0'
           fail-on-issues: 'false'
+          issue-types: unused-files
+          threads: '2'
           artifacts-dir: fallow-artifacts-issue-types
       - name: Assert unused file reported
         env:
@@ -28,20 +28,17 @@ jobs:
             exit 1
           fi
           if [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected orphan.ts to be reported as an unused file"
+            echo "FAIL: expected orphan.ts as unused file"
             exit 1
           fi
           case "$RESULTS" in
             /*) FILE="$RESULTS" ;;
             *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
           esac
-          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
-            echo "FAIL: results file missing"
-            exit 1
-          fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
           if ! grep -q "orphan" "$FILE"; then
-            echo "FAIL: expected orphan.ts in results"
+            echo "FAIL: orphan.ts not reported"
+            cat "$FILE"
             exit 1
           fi
           echo "PASS"

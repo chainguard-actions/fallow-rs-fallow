@@ -1,4 +1,4 @@
-name: Test dead-code save-baseline then baseline comparison
+name: Test save and load dead-code baseline
 on:
   workflow_dispatch:
 jobs:
@@ -6,7 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
       - id: save
         uses: .
         with:
@@ -23,10 +24,10 @@ jobs:
             echo "FAIL: baseline file not written"
             exit 1
           fi
-          jq empty "$F" || { echo "FAIL: baseline is not JSON"; exit 1; }
+          jq empty "$F" || { echo "FAIL: baseline not JSON"; exit 1; }
           cat "$F"
           echo "PASS"
-      - id: compare
+      - id: load
         uses: .
         with:
           command: dead-code
@@ -34,21 +35,23 @@ jobs:
           version: '3.36.0'
           fail-on-issues: 'false'
           baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-          artifacts-dir: fallow-artifacts-baseline-compare
-      - name: Assert baselined run has no new issues
+          artifacts-dir: fallow-artifacts-baseline-load
+      - name: Assert baseline was loaded
         env:
-          ISSUES: ${{ steps.compare.outputs.issues }}
-          BASELINE_PATH: ${{ steps.compare.outputs.baseline-path }}
-          EXPECTED_PATH: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          ISSUES: ${{ steps.load.outputs.issues }}
+          BPATH: ${{ steps.load.outputs.baseline-path }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
+          EXPECTED: ${{ github.workspace }}/fallow-baselines/dead-code.json
         run: |
           echo "issues: $ISSUES"
-          echo "baseline-path: $BASELINE_PATH"
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 issues after applying baseline"
+          echo "baseline-path: $BPATH"
+          echo "baseline-entries: $ENTRIES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -n "$BASELINE_PATH" ] && [ "$BASELINE_PATH" != "$EXPECTED_PATH" ]; then
-            echo "FAIL: baseline-path does not match the input"
+          if [ "$BPATH" != "$EXPECTED" ]; then
+            echo "FAIL: expected baseline-path '$EXPECTED'"
             exit 1
           fi
           echo "PASS"

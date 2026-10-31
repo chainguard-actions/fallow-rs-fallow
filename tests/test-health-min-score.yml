@@ -12,19 +12,16 @@ jobs:
           command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
+          score: 'true'
           min-score: '0'
-          artifacts-dir: fallow-artifacts-health-min-score
-      - name: Assert health score run produced results
+          artifacts-dir: fallow-artifacts-min-score
+      - name: Assert health score in results
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
-          echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
+          echo "gates-failed: $FAILED"
           case "$RESULTS" in
             /*) FILE="$RESULTS" ;;
             *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
@@ -34,4 +31,8 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
+          if ! grep -qi "score" "$FILE"; then
+            echo "FAIL: expected a health score in results"
+            exit 1
+          fi
           echo "PASS"

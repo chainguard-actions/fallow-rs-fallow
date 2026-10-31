@@ -34,4 +34,8 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
+          if ! grep -q "orphan" "$FILE"; then
+            echo "FAIL: dead-code analysis should have reported orphan.ts"
+            exit 1
+          fi
           echo "PASS"

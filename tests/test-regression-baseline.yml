@@ -6,7 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - run: mkdir -p "$GITHUB_WORKSPACE/fallow-regression"
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-regression"
       - id: save
         uses: .
         with:
@@ -36,13 +37,19 @@ jobs:
           tolerance: '0'
           regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
           artifacts-dir: fallow-artifacts-regression-compare
-      - name: Assert no regression reported
+      - name: Assert no regression against identical baseline
         env:
           ISSUES: ${{ steps.compare.outputs.issues }}
+          SAVED: ${{ steps.save.outputs.issues }}
         run: |
+          echo "saved issues: $SAVED"
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          echo "PASS: unchanged code did not regress against its own baseline"
+          if [ "$ISSUES" != "$SAVED" ]; then
+            echo "FAIL: issue count changed between identical runs"
+            exit 1
+          fi
+          echo "PASS"

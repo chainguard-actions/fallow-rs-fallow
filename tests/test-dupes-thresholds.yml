@@ -1,4 +1,4 @@
-name: Test dupes with token/line/threshold limits
+name: Test dupes with token/line minimums and threshold
 on:
   workflow_dispatch:
 jobs:

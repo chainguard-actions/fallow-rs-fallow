@@ -1,4 +1,4 @@
-name: Test health hotspots with git history window
+name: Test health hotspots with since and min-commits
 on:
   workflow_dispatch:
 jobs:
@@ -18,7 +18,7 @@ jobs:
           hotspots: 'true'
           since: 1y
           min-commits: '1'
-          artifacts-dir: fallow-artifacts-health-hotspots
+          artifacts-dir: fallow-artifacts-hotspots
       - name: Assert health results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}

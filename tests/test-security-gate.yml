@@ -1,4 +1,4 @@
-name: Test security command with security-gate
+name: Test security command with security gate
 on:
   workflow_dispatch:
 jobs:
@@ -30,7 +30,7 @@ jobs:
             exit 1
           fi
           if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new'"
+            echo "FAIL: expected gate 'new' when set"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-workspaces
+name: Test changed-workspaces git-derived scoping
 on:
   workflow_dispatch:
 jobs:
@@ -8,22 +8,37 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      - name: Modify a file in app-a so it counts as changed
+        run: |
+          echo 'export const touched = 1;' >> tests/fixtures/monorepo/packages/app-a/src/index.ts
+          git status --short || true
       - id: action
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          changed-workspaces: HEAD
           version: '3.36.0'
           fail-on-issues: 'false'
+          changed-workspaces: HEAD
           artifacts-dir: fallow-artifacts-changed-workspaces
-      - name: Assert scoped run produced results
+      - name: Assert scoped results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
+          case "$RESULTS" in
+            /*) FILE="$RESULTS" ;;
+            *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
+          esac
+          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

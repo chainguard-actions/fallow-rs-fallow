@@ -1,4 +1,4 @@
-name: Test combined run with skip
+name: Test custom config file ignores orphan
 on:
   workflow_dispatch:
 jobs:
@@ -9,12 +9,13 @@ jobs:
       - id: action
         uses: .
         with:
+          command: dead-code
           root: tests/fixtures/sample-project
+          config: ${{ github.workspace }}/tests/fixtures/sample-project/fallow-custom.json
           version: '3.36.0'
           fail-on-issues: 'false'
-          skip: dupes
-          artifacts-dir: fallow-artifacts-skip
-      - name: Assert combined results produced
+          artifacts-dir: fallow-artifacts-config
+      - name: Assert orphan.ts not reported as unused file
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -34,4 +35,9 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
+          if grep -q "orphan" "$FILE"; then
+            echo "FAIL: orphan.ts should be ignored via config ignorePatterns"
+            cat "$FILE"
+            exit 1
+          fi
           echo "PASS"
