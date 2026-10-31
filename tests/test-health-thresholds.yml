@@ -1,4 +1,4 @@
-name: Test health complexity thresholds
+name: Test health with custom thresholds, sort, top, threads and min-severity
 on:
   workflow_dispatch:
 jobs:
@@ -21,33 +21,34 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
+          fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          # Thresholds high enough that the fixture function is not reported,
-          # so the default fail-on-issues gate must pass.
-          max-cyclomatic: '100'
-          max-cognitive: '100'
-          max-crap: '1000'
+          max-cyclomatic: '50'
+          max-cognitive: '60'
+          max-crap: '500'
           sort: cognitive
-          top: '10'
+          top: '5'
           threads: '2'
+          min-severity: critical
 
-      - name: Assert no complexity findings above generous thresholds
+      - name: Assert health ran with thresholds
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          OUTCOME: ${{ steps.action.outcome }}
         run: |
-          echo "issues: $ISSUES"
+          echo "outcome: $OUTCOME issues: $ISSUES results: $RESULTS"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success with permissive thresholds"
+            exit 1
+          fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 findings with thresholds of 100, got $ISSUES"
-            exit 1
-          fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"

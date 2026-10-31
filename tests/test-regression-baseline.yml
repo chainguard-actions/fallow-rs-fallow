@@ -1,4 +1,4 @@
-name: Test regression baseline save and compare
+name: Test dead-code regression baseline save and compare
 on:
   workflow_dispatch:
 jobs:
@@ -26,17 +26,16 @@ jobs:
           annotations: 'false'
           save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
-      - name: Assert regression baseline was saved
+      - name: Assert regression baseline saved
         run: |
           F="$GITHUB_WORKSPACE/fallow-regression.json"
           if [ ! -f "$F" ]; then
             echo "FAIL: regression baseline not saved at $F"
             exit 1
           fi
-          cat "$F"
+          cat "$F"; echo
           echo "PASS"
 
-      # Same code, so counts are equal and fail-on-regression must not trip.
       - id: compare
         uses: .
         env:
@@ -51,18 +50,19 @@ jobs:
           fail-on-regression: 'true'
           regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
-      - name: Assert comparison succeeded
+      - name: Assert no regression detected
         env:
-          OUTCOME: ${{ steps.compare.outcome }}
           ISSUES: ${{ steps.compare.outputs.issues }}
+          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
+          OUTCOME: ${{ steps.compare.outcome }}
         run: |
-          echo "outcome: $OUTCOME issues: $ISSUES"
+          echo "outcome: $OUTCOME issues: $ISSUES (saved run: $SAVED_ISSUES)"
           if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: expected success"
+            echo "FAIL: unexpected regression failure"
             exit 1
           fi
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if [ "$ISSUES" != "$SAVED_ISSUES" ]; then
+            echo "FAIL: issue count changed between identical runs"
             exit 1
           fi
           echo "PASS"

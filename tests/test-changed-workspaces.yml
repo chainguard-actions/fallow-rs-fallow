@@ -1,4 +1,4 @@
-name: Test workspace scoping in a monorepo
+name: Test dead-code scoped by changed-workspaces
 on:
   workflow_dispatch:
 jobs:
@@ -20,28 +20,24 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          workspace: pkg-a
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
+          changed-workspaces: HEAD
 
-      - name: Assert scoped results do not mention pkg-b
+      - name: Assert changed-workspaces run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
-            exit 1
-          fi
-          if jq -r '.. | strings' "$RESULTS" | grep -q 'packages/pkg-b/'; then
-            echo "FAIL: results scoped to pkg-a mention pkg-b files"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test dead-code with explicit config and issue types
+name: Test dead-code with explicit config and issue-types filter
 on:
   workflow_dispatch:
 jobs:
@@ -21,24 +21,29 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           config: ${{ github.workspace }}/tests/fixtures/simple-js/.fallowrc.json
-          issue-types: unused-files,unused-exports
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
+          issue-types: unused-exports, unused-files
 
-      - name: Assert dead-code results
+      - name: Assert filtered results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          # unusedFunction in index.js is an unused export; the filter keeps it.
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one unused export (unusedFunction)"
             exit 1
           fi
           echo "PASS"

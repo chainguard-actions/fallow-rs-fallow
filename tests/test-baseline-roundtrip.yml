@@ -1,4 +1,4 @@
-name: Test save-baseline then baseline comparison
+name: Test dead-code save-baseline then compare against baseline
 on:
   workflow_dispatch:
 jobs:
@@ -24,20 +24,20 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-dc-baseline.json
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
 
       - name: Assert baseline file was saved
         run: |
-          F="$GITHUB_WORKSPACE/fallow-dc-baseline.json"
+          F="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
           if [ ! -f "$F" ]; then
             echo "FAIL: baseline not saved at $F"
             exit 1
           fi
-          cat "$F"
           if ! jq empty "$F"; then
             echo "FAIL: baseline is not valid JSON"
             exit 1
           fi
+          head -c 500 "$F"; echo
           echo "PASS"
 
       - id: compare
@@ -50,26 +50,24 @@ jobs:
           format: json
           auto-changed-since: 'false'
           annotations: 'false'
-          baseline: ${{ github.workspace }}/fallow-dc-baseline.json
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
 
-      - name: Assert baseline comparison outputs
+      - name: Assert baseline suppresses all known issues
         env:
           ISSUES: ${{ steps.compare.outputs.issues }}
-          BPATH: ${{ steps.compare.outputs.baseline-path }}
-          EXPECTED: ${{ github.workspace }}/fallow-dc-baseline.json
+          OUTCOME: ${{ steps.compare.outcome }}
+          BASELINE_PATH: ${{ steps.compare.outputs.baseline-path }}
+          ENTRIES: ${{ steps.compare.outputs.baseline-entries }}
           STALE: ${{ steps.compare.outputs.baseline-stale-entries }}
         run: |
-          echo "issues: $ISSUES baseline-path: $BPATH stale: $STALE"
+          echo "outcome: $OUTCOME issues: $ISSUES"
+          echo "baseline-path: '$BASELINE_PATH' entries: '$ENTRIES' stale: '$STALE'"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: compare run failed even though baseline matches (fail-on-issues default true)"
+            exit 1
+          fi
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 new issues against a fresh baseline, got $ISSUES"
-            exit 1
-          fi
-          if [ -n "$BPATH" ] && [ "$BPATH" != "$EXPECTED" ]; then
-            echo "FAIL: baseline-path '$BPATH' != '$EXPECTED'"
-            exit 1
-          fi
-          if [ -n "$STALE" ] && [ "$STALE" != "0" ]; then
-            echo "FAIL: fresh baseline should have no stale entries, got $STALE"
+            echo "FAIL: expected 0 new issues against fresh baseline, got '$ISSUES'"
             exit 1
           fi
           echo "PASS"

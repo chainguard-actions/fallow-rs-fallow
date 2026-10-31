@@ -10,18 +10,18 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.32.0** was hardened automatically. 1 finding(s) were identified and resolved across 2 iteration(s).
+Action **fallow-rs--fallow/v3.32.0** was hardened automatically. 1 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Rule (a), direct expression interpolation: 8 composite steps put a GitHub expression straight into the run: shell string, for example `run: bash ${{ github.action_path }}/action/scripts/install.sh`. The affected steps are Install fallow (install.sh), Fallow branded token (broker-token.sh), Run analysis (analyze.sh), Check Code Scanning availability (check-code-scanning.sh), Post PR comment (comment.sh), Emit inline annotations (annotate.sh), Job summary (summary.sh) and Post review comments (review.sh). The check says any ${{ ... }} inside run: is a finding, because it is substituted into the script before the shell parses it. Fix: use the runner-provided env var instead, quoted, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
+Rule (a) direct expression interpolation, plus an unquoted path. 8 composite steps put the expression ${{ github.action_path }} straight into the run: string, unquoted. The 8 steps are Install fallow, Fallow branded token, Run analysis, Check Code Scanning availability, Post PR comment, Emit inline annotations, Job summary and Post review comments. Example offending line: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. The others are the same line with broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh and review.sh. Fix: use the runner env var with quotes instead, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
-- `action.yml:411`
-- `action.yml:419`
+- `action.yml:412`
+- `action.yml:420`
 - `action.yml:532`
 - `action.yml:545`
 - `action.yml:592`
@@ -37,13 +37,5 @@ Locations:
 
 **Notes:**
 
-Replaced `bash ${{ github.action_path }}/action/scripts/<x>.sh` with `bash "$GITHUB_ACTION_PATH/action/scripts/<x>.sh"` in all 8 composite steps: install, broker-token, analyze, check-code-scanning, comment, annotate, summary and review. Every step uses shell: bash, so the $VAR syntax is correct there. Three of the edits didn't save on the first try, so I made them again and then searched the file to confirm all 8 are done. The env: entries that still use github.action_path (ACTION_JQ_DIR) are left as they are, since an expression in env: is not injectable.
-
-### Iteration 2
-
-**Fixes applied:** invalid-yaml
-
-**Notes:**
-
-Fixed malformed action.yml at line 545: the 'Check Code Scanning availability' step's run: was over-indented and the following '- name: Upload SARIF' step had been merged onto the same line. Restored run: to step-level indentation and split Upload SARIF into its own list item. No other changes.
+In action.yml, replaced `run: bash ${{ github.action_path }}/action/scripts/X.sh` with `run: bash "$GITHUB_ACTION_PATH"/action/scripts/X.sh` in all 8 named steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review). All of them use shell: bash. The ACTION_JQ_DIR env entries were left unchanged because values set in env: are not inserted into the shell script.
 
