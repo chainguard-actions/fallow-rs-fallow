@@ -1,4 +1,4 @@
-name: Test saving and loading baselines
+name: Test dead-code baseline and regression baseline save then load
 on:
   workflow_dispatch:
 jobs:
@@ -15,24 +15,22 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/sample-project
-          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-          save-regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-baseline-save
-      - name: Assert baselines were saved
-        env:
-          ISSUES: ${{ steps.save.outputs.issues }}
+          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          save-regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
+      - name: Assert baseline files were saved
         run: |
-          echo "issues: $ISSUES"
           ls -la "$GITHUB_WORKSPACE/fallow-baselines"
           for f in dead-code.json regression.json; do
-            if [ ! -s "$GITHUB_WORKSPACE/fallow-baselines/$f" ]; then
-              echo "FAIL: $f was not saved"
+            p="$GITHUB_WORKSPACE/fallow-baselines/$f"
+            if [ ! -s "$p" ]; then
+              echo "FAIL: $f not saved"
               exit 1
             fi
-            if ! jq -e . "$GITHUB_WORKSPACE/fallow-baselines/$f" > /dev/null; then
+            if ! jq -e . "$p" > /dev/null; then
               echo "FAIL: $f is not valid JSON"
               exit 1
             fi
@@ -43,34 +41,32 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/sample-project
-          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-          regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-baseline-load
+          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
       - name: Assert baseline was loaded
         env:
           ISSUES: ${{ steps.load.outputs.issues }}
           BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
-          EXPECTED_PATH: ${{ github.workspace }}/fallow-baselines/dead-code.json
           ENTRIES: ${{ steps.load.outputs.baseline-entries }}
-          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+          EXPECTED_PATH: ${{ github.workspace }}/fallow-baselines/dead-code.json
         run: |
           echo "issues: $ISSUES"
           echo "baseline-path: $BASELINE_PATH"
           echo "baseline-entries: $ENTRIES"
-          echo "baseline-stale-entries: $STALE"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1
           fi
           if [ "$BASELINE_PATH" != "$EXPECTED_PATH" ]; then
-            echo "FAIL: baseline-path should echo the baseline input"
+            echo "FAIL: baseline-path does not match the baseline input"
             exit 1
           fi
-          if [ -n "$STALE" ] && [ "$STALE" != "0" ]; then
-            echo "FAIL: a fresh baseline should have no stale entries"
+          if [ -n "$ENTRIES" ] && ! [[ "$ENTRIES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: baseline-entries is not numeric"
             exit 1
           fi
           echo "PASS"

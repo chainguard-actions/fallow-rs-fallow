@@ -1,4 +1,4 @@
-name: Test health save-snapshot then trend
+name: Test health save-snapshot followed by trend
 on:
   workflow_dispatch:
 jobs:
@@ -11,17 +11,24 @@ jobs:
         with:
           command: health
           root: tests/fixtures/sample-project
-          save-snapshot: 'true'
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-snapshot
-      - name: Assert a snapshot was saved
+          save-snapshot: 'true'
+      - name: Assert snapshot saved
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
         run: |
-          found=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
-          echo "snapshots: $found"
-          if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file saved under .fallow/snapshots"
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not numeric"
+            exit 1
+          fi
+          FOUND=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
+          echo "snapshots: $FOUND"
+          if [ -z "$FOUND" ]; then
+            echo "FAIL: no snapshot file written under .fallow/snapshots"
             exit 1
           fi
           echo "PASS"
@@ -30,24 +37,27 @@ jobs:
         with:
           command: health
           root: tests/fixtures/sample-project
-          trend: 'true'
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-trend
+          trend: 'true'
       - name: Assert trend run produced results
         env:
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq -e . "$RESULTS" > /dev/null; then
-            echo "FAIL: results file missing or invalid JSON"
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if ! grep -q -- '--trend' fallow-out-trend/fallow-analysis-args.sh; then
+            echo "FAIL: --trend not forwarded"
             exit 1
           fi
           echo "PASS"

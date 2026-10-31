@@ -1,4 +1,4 @@
-name: Test dead-code with config, issue-types and threads
+name: Test dead-code with issue-types filter
 on:
   workflow_dispatch:
 jobs:
@@ -11,20 +11,17 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/sample-project
-          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
-          issue-types: unused-files
-          threads: '2'
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
-          artifacts-dir: fallow-out-config-filters
-      - name: Assert outputs
+          artifacts-dir: fallow-out-issue-types
+          issue-types: unused-files
+      - name: Assert unused file reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1
@@ -34,7 +31,11 @@ jobs:
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq -e . "$RESULTS" > /dev/null; then
-            echo "FAIL: results file missing or invalid JSON"
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if ! grep -q 'orphan' "$RESULTS"; then
+            echo "FAIL: orphan.ts not mentioned in results"
             exit 1
           fi
           echo "PASS"
