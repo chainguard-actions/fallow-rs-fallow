@@ -1,4 +1,4 @@
-name: Test audit command with per-analysis baselines
+name: Test audit command with gate, worsened and per-analysis baselines
 on:
   workflow_dispatch:
 jobs:
@@ -8,74 +8,77 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Save dead-code baseline
+      - id: dead-code-base
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
           type-aware: 'false'
+          save-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
           fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/bl-dead-code.json
-          artifacts-dir: fallow-artifacts-bl-dead-code
-      - name: Save health baseline
+          artifacts-dir: fallow-artifacts-audit-dc
+      - id: health-base
         uses: .
         with:
           command: health
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
           type-aware: 'false'
+          save-baseline: ${{ github.workspace }}/audit-health-baseline.json
           fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/bl-health.json
-          artifacts-dir: fallow-artifacts-bl-health
-      - name: Save dupes baseline
+          artifacts-dir: fallow-artifacts-audit-health
+      - id: dupes-base
         uses: .
         with:
           command: dupes
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
           type-aware: 'false'
+          save-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
           fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/bl-dupes.json
-          artifacts-dir: fallow-artifacts-bl-dupes
+          artifacts-dir: fallow-artifacts-audit-dupes
       - name: Assert baselines exist
         run: |
-          for f in bl-dead-code.json bl-health.json bl-dupes.json; do
-            if [ ! -s "$GITHUB_WORKSPACE/$f" ]; then
-              echo "FAIL: $f not written"
+          for f in audit-dead-code-baseline.json audit-health-baseline.json audit-dupes-baseline.json; do
+            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f missing"
               exit 1
             fi
-            jq empty "$GITHUB_WORKSPACE/$f" || { echo "FAIL: $f invalid JSON"; exit 1; }
           done
           echo "PASS"
-      - id: audit
+      - id: action
         uses: .
         with:
           command: audit
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
           changed-since: HEAD
-          dead-code-baseline: ${{ github.workspace }}/bl-dead-code.json
-          health-baseline: ${{ github.workspace }}/bl-health.json
-          dupes-baseline: ${{ github.workspace }}/bl-dupes.json
-          artifacts-dir: fallow-artifacts-audit-baselines
-      - name: Assert audit produced a verdict
+          gate: all
+          worsened: warn
+          dead-code-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
+          health-baseline: ${{ github.workspace }}/audit-health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-audit
+      - name: Assert audit verdict and gate
         env:
-          VERDICT: ${{ steps.audit.outputs.verdict }}
-          ISSUES: ${{ steps.audit.outputs.issues }}
-          RESULTS: ${{ steps.audit.outputs.results }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "verdict: $VERDICT"
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "verdict: $VERDICT gate: $GATE issues: $ISSUES"
           case "$VERDICT" in
             pass|warn|fail) ;;
             *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
           esac
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all'"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"

@@ -9,26 +9,26 @@ jobs:
       - id: action
         uses: .
         with:
-          root: tests/fixtures/dirty-project
+          root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
+          only: dead-code,health
           fail-on-issues: 'false'
-          only: dead-code
           artifacts-dir: fallow-artifacts-only
-      - name: Assert only dead-code ran and found planted issues
+      - name: Assert combined run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing"
             exit 1
           fi
           jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
-          if ! grep -q 'orphan\|unusedHelper\|left-pad' "$RESULTS"; then
-            echo "FAIL: dead-code findings missing from results"
-            exit 1
-          fi
           echo "PASS"

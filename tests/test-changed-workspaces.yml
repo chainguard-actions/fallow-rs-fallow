@@ -1,4 +1,4 @@
-name: Test changed-workspaces scoping against HEAD
+name: Test dead-code with changed-workspaces
 on:
   workflow_dispatch:
 jobs:
@@ -18,7 +18,7 @@ jobs:
           type-aware: 'false'
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-changed-workspaces
-      - name: Assert changed-workspaces run succeeded
+      - name: Assert changed-workspaces run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -33,4 +33,5 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

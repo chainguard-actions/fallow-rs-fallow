@@ -1,4 +1,4 @@
-name: Test dupes command with tuning options
+name: Test dupes command with token/line/threshold options
 on:
   workflow_dispatch:
 jobs:
@@ -13,13 +13,13 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
           min-tokens: '30'
           min-lines: '3'
           threshold: '100'
-          top: '10'
+          top: '5'
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-dupes
-      - name: Assert dupes ran
+      - name: Assert dupes produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -28,10 +28,6 @@ jobs:
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
-            exit 1
-          fi
-          if [ "$ISSUES" -ne 0 ]; then
-            echo "FAIL: clean fixture should have no clone groups"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then

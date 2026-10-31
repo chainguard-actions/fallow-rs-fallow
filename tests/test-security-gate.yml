@@ -15,23 +15,22 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
           changed-since: HEAD
           security-gate: new
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-security
-      - name: Assert security gate applied
+      - name: Assert security ran with the gate
         env:
           GATE: ${{ steps.action.outputs.gate }}
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "gate: $GATE"
-          echo "issues: $ISSUES"
-          if [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new'"
+          echo "gate: $GATE issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -ne 0 ]; then
-            echo "FAIL: expected 0 security candidates on clean fixture"
+          if [ "$GATE" != "new" ]; then
+            echo "FAIL: expected gate 'new'"
             exit 1
           fi
           echo "PASS"

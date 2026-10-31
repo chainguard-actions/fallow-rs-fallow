@@ -1,4 +1,4 @@
-name: Test dead-code with config file and issue-types filter
+name: Test dead-code with explicit config and issue-types
 on:
   workflow_dispatch:
 jobs:
@@ -17,7 +17,7 @@ jobs:
           type-aware: 'false'
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-config
-      - name: Assert dead-code ran with the filter
+      - name: Assert issues were found with the filtered types
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -25,7 +25,7 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected a positive issue count from the dirty fixture"
+            echo "FAIL: expected a positive issue count"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then

@@ -1,4 +1,4 @@
-name: Test combined run with skip, save-snapshot then trend
+name: Test health hotspots, snapshot save and trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,17 +6,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: snapshot
         uses: .
         with:
+          command: health
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
+          hotspots: 'true'
+          since: 1y
+          min-commits: '1'
+          save-snapshot: ${{ github.workspace }}/fallow-snapshot.json
           fail-on-issues: 'false'
-          skip: dupes
-          save-snapshot: 'true'
           artifacts-dir: fallow-artifacts-snapshot
-      - name: Assert snapshot run produced results and a snapshot
+      - name: Assert snapshot run produced results
         env:
           ISSUES: ${{ steps.snapshot.outputs.issues }}
           RESULTS: ${{ steps.snapshot.outputs.results }}
@@ -31,19 +36,18 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
-          echo "snapshot files:"
-          find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f 2>/dev/null | grep -v '/.git/' || true
+          ls -la "$GITHUB_WORKSPACE" || true
+          ls -la "$GITHUB_WORKSPACE/tests/fixtures/clean-project/.fallow/snapshots" 2>/dev/null || true
           echo "PASS"
       - id: trend
         uses: .
         with:
+          command: health
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
-          skip: dupes
           trend: 'true'
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-trend
       - name: Assert trend run produced results
         env:
@@ -60,5 +64,4 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

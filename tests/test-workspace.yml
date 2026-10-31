@@ -1,4 +1,4 @@
-name: Test workspace scoping in a monorepo
+name: Test dead-code scoped to a workspace
 on:
   workflow_dispatch:
 jobs:
@@ -11,7 +11,7 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          workspace: app-a
+          workspace: pkg-a
           version: '3.38.1'
           type-aware: 'false'
           fail-on-issues: 'false'
@@ -32,8 +32,8 @@ jobs:
             exit 1
           fi
           jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
-          if grep -q 'app-b/src' "$RESULTS"; then
-            echo "FAIL: results leaked findings from app-b"
+          if grep -q 'pkg-b/src' "$RESULTS"; then
+            echo "FAIL: results include files outside the pkg-a workspace"
             exit 1
           fi
           echo "PASS"

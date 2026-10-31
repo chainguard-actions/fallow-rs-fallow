@@ -1,4 +1,4 @@
-name: Test health with Istanbul coverage and coverage-root
+name: Test combined run with skip
 on:
   workflow_dispatch:
 jobs:
@@ -9,16 +9,13 @@ jobs:
       - id: action
         uses: .
         with:
-          command: health
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
+          skip: dupes
           fail-on-issues: 'false'
-          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /ci/project
-          max-crap: '30'
-          artifacts-dir: fallow-artifacts-coverage
-      - name: Assert health ran with coverage data
+          artifacts-dir: fallow-artifacts-skip
+      - name: Assert combined run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

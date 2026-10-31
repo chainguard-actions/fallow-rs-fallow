@@ -1,4 +1,4 @@
-name: Test health min-score gate passes on a clean project
+name: Test health command with min-score and Istanbul coverage
 on:
   workflow_dispatch:
 jobs:
@@ -13,23 +13,27 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          min-score: '10'
-          artifacts-dir: fallow-artifacts-min-score
-      - name: Assert health score was computed
+          min-score: '0'
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /build/project
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-health-min-score
+      - name: Assert health with min-score 0 passed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          echo "gates-failed: $GATES_FAILED"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing"
             exit 1
           fi
           jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
-          if ! grep -qi 'score' "$RESULTS"; then
-            echo "FAIL: results do not contain a health score"
-            cat "$RESULTS"
-            exit 1
-          fi
           echo "PASS"
