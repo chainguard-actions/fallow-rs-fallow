@@ -1,0 +1,47 @@
+name: Test security command with security-gate
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Create a JS project
+        run: |
+          P="$GITHUB_WORKSPACE/fallow-proj-security"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
+          { "name": "security-project", "version": "1.0.0", "type": "module", "main": "src/index.js" }
+          EOF
+          cat > "$P/src/index.js" <<'EOF'
+          export function greet(name) { return 'hello ' + name; }
+          console.log(greet('world'));
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          command: security
+          root: fallow-proj-security
+          format: json
+          changed-since: HEAD
+          security-gate: new
+          fail-on-issues: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert security run completed
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "issues: $ISSUES gate: $GATE"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a number: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS"

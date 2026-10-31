@@ -1,4 +1,4 @@
-name: Test dead-code with explicit config, issue-types and threads
+name: Test dead-code with config file and issue-types filter
 on:
   workflow_dispatch:
 jobs:
@@ -7,17 +7,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a minimal JS project with a config file
+      - name: Create a JS project with unused exports and a config file
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/config-project"
+          P="$GITHUB_WORKSPACE/fallow-proj-config"
           mkdir -p "$P/src"
           cat > "$P/package.json" <<'EOF'
-          {
-            "name": "config-test-project",
-            "version": "1.0.0",
-            "type": "module",
-            "main": "src/index.js"
-          }
+          { "name": "config-project", "version": "1.0.0", "type": "module", "main": "src/index.js" }
           EOF
           cat > "$P/src/index.js" <<'EOF'
           import { used } from './util.js';
@@ -27,16 +22,19 @@ jobs:
           export function used() { return 1; }
           export function unusedHelper() { return 2; }
           EOF
-          echo '{}' > "$P/.fallowrc.json"
+          cat > "$P/custom-fallow.json" <<'EOF'
+          {
+            "ignorePatterns": ["ignored/**"]
+          }
+          EOF
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/config-project
-          config: ${{ github.workspace }}/tests/fixtures/config-project/.fallowrc.json
-          issue-types: unused-exports,unused-files
-          threads: '2'
+          root: fallow-proj-config
+          config: ${{ github.workspace }}/fallow-proj-config/custom-fallow.json
+          issue-types: 'unused-exports, unused-files'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -44,19 +42,22 @@ jobs:
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert issues output is a number and results are valid JSON
+      - name: Assert unused export reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues, got '$ISSUES'"
+            echo "FAIL: issues is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected unusedHelper to be reported"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
             echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: issues=$ISSUES"

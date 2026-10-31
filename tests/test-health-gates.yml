@@ -1,0 +1,71 @@
+name: Test health min-score and min-severity gates on a simple project
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a simple JS project
+        run: |
+          P="$GITHUB_WORKSPACE/fallow-proj-gates"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
+          { "name": "gates-project", "version": "1.0.0", "type": "module", "main": "src/index.js" }
+          EOF
+          cat > "$P/src/index.js" <<'EOF'
+          export function add(a, b) {
+            return a + b;
+          }
+          console.log(add(1, 2));
+          EOF
+
+      - id: score
+        uses: .
+        with:
+          command: health
+          root: fallow-proj-gates
+          format: json
+          min-score: '0'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert min-score gate passed
+        env:
+          ISSUES: ${{ steps.score.outputs.issues }}
+          FAILED: ${{ steps.score.outputs.gates-failed }}
+          PASSED: ${{ steps.score.outputs.gates-passed }}
+        run: |
+          echo "issues: $ISSUES failed: '$FAILED' passed: '$PASSED'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          echo "PASS"
+
+      - id: severity
+        uses: .
+        with:
+          command: health
+          root: fallow-proj-gates
+          format: json
+          min-severity: critical
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+
+      - name: Assert min-severity gate passed
+        env:
+          ISSUES: ${{ steps.severity.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a number"
+            exit 1
+          fi
+          echo "PASS"

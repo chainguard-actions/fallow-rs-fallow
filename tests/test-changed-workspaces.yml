@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-workspaces
+name: Test dead-code with changed-workspaces scoping
 on:
   workflow_dispatch:
 jobs:
@@ -9,22 +9,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create a monorepo
+      - name: Create a monorepo with two workspaces
         run: |
-          P="$GITHUB_WORKSPACE/tests/fixtures/changed-ws-monorepo"
-          mkdir -p "$P/packages/web/src" "$P/packages/admin/src"
-          echo '{"name":"monorepo","version":"1.0.0","private":true,"workspaces":["packages/*"]}' > "$P/package.json"
-          for w in web admin; do
-            echo "{\"name\":\"$w\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"src/index.js\"}" > "$P/packages/$w/package.json"
-            printf 'import { a } from "./util.js";\nconsole.log(a);\n' > "$P/packages/$w/src/index.js"
-            printf 'export const a = 1;\nexport const unused = 2;\n' > "$P/packages/$w/src/util.js"
+          P="$GITHUB_WORKSPACE/fallow-proj-chws"
+          mkdir -p "$P/packages/pkg-a/src" "$P/packages/pkg-b/src"
+          cat > "$P/package.json" <<'EOF'
+          { "name": "chws-root", "version": "1.0.0", "private": true, "workspaces": ["packages/*"] }
+          EOF
+          for n in a b; do
+            cat > "$P/packages/pkg-$n/package.json" <<EOF
+          { "name": "pkg-$n", "version": "1.0.0", "type": "module", "main": "src/index.js" }
+          EOF
+            echo 'export const x = 1; console.log(x);' > "$P/packages/pkg-$n/src/index.js"
           done
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/changed-ws-monorepo
+          root: fallow-proj-chws
           changed-workspaces: HEAD
           format: json
           fail-on-issues: 'false'
@@ -33,18 +36,18 @@ jobs:
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert outputs
+      - name: Assert run completed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues"
+            echo "FAIL: issues is not a number: '$ISSUES'"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results missing or invalid"
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"
