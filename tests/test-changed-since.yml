@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-since
+name: Test changed-since scoping
 on:
   workflow_dispatch:
 
@@ -18,8 +18,9 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          changed-since: HEAD
           fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          changed-since: HEAD
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
@@ -29,15 +30,17 @@ jobs:
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          UNAPPLIED: ${{ steps.action.outputs.requests-unapplied }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          echo "requests-unapplied: $UNAPPLIED"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
+            echo "FAIL: results file missing: $RESULTS"
             exit 1
           fi
           echo "PASS"

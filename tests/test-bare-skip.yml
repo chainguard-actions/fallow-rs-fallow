@@ -1,4 +1,4 @@
-name: Test combined run with skip
+name: Test combined run with skip selector
 on:
   workflow_dispatch:
 
@@ -15,13 +15,13 @@ jobs:
         with:
           root: tests/fixtures/simple-js
           format: json
-          skip: dupes
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          skip: dupes
 
       - name: Assert outputs
         env:
@@ -35,7 +35,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
+            echo "FAIL: results file missing: $RESULTS"
             exit 1
           fi
           echo "PASS"

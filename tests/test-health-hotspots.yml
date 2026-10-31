@@ -18,15 +18,15 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          hotspots: 'true'
-          since: 1y
-          min-commits: '1'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          hotspots: 'true'
+          since: 1y
+          min-commits: '1'
 
       - name: Assert outputs
         env:
@@ -40,7 +40,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
+            echo "FAIL: results file missing: $RESULTS"
             exit 1
           fi
           echo "PASS"

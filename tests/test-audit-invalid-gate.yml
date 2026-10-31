@@ -17,17 +17,18 @@ jobs:
           command: audit
           root: tests/fixtures/simple-js
           format: json
-          gate: bogus-gate
-          dead-code-baseline: dead-code-baseline.json
-          health-baseline: health-baseline.json
-          dupes-baseline: dupes-baseline.json
+          fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          gate: bogus-gate
+          dead-code-baseline: dead-code-baseline.json
+          health-baseline: health-baseline.json
+          dupes-baseline: dupes-baseline.json
 
-      - name: Assert action rejected invalid gate
+      - name: Assert action failed validation
         env:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
@@ -39,7 +40,7 @@ jobs:
             exit 1
           fi
           if [ -n "$ISSUES" ]; then
-            echo "FAIL: analysis should not have run"
+            echo "FAIL: analysis should not have run, but issues='$ISSUES'"
             exit 1
           fi
-          echo "PASS: invalid gate rejected"
+          echo "PASS"

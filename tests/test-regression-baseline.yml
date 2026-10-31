@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend
+name: Test dead-code save-regression-baseline then regression-baseline
 on:
   workflow_dispatch:
 
@@ -10,56 +10,50 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - id: snapshot
+      - id: save
         uses: .
         with:
-          command: health
+          command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          save-regression-baseline: ${{ github.workspace }}/fallow-test-regression.json
 
-      - name: Assert snapshot was saved
+      - name: Assert regression baseline saved
         run: |
-          find "$GITHUB_WORKSPACE/tests/fixtures/simple-js/.fallow" -type f 2>/dev/null || true
-          if ! find "$GITHUB_WORKSPACE/tests/fixtures/simple-js/.fallow/snapshots" -type f 2>/dev/null | grep -q .; then
-            echo "FAIL: no snapshot file under .fallow/snapshots"
+          if [ ! -f "$GITHUB_WORKSPACE/fallow-test-regression.json" ]; then
+            echo "FAIL: regression baseline file not saved"
             exit 1
           fi
-          echo "PASS: snapshot saved"
+          echo "PASS"
 
-      - id: trend
+      - id: compare
         uses: .
         with:
-          command: health
+          command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          trend: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          fail-on-regression: 'true'
+          regression-baseline: ${{ github.workspace }}/fallow-test-regression.json
 
-      - name: Assert trend run produced results
+      - name: Assert no regression on unchanged code
         env:
-          ISSUES: ${{ steps.trend.outputs.issues }}
-          RESULTS: ${{ steps.trend.outputs.results }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
-            exit 1
-          fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
             exit 1
           fi
           echo "PASS"
