@@ -1,0 +1,81 @@
+name: Test audit command with per-analysis baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Save dead-code baseline
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/bl-dead-code.json
+          artifacts-dir: fallow-artifacts-bl-dead-code
+      - name: Save health baseline
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/bl-health.json
+          artifacts-dir: fallow-artifacts-bl-health
+      - name: Save dupes baseline
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/bl-dupes.json
+          artifacts-dir: fallow-artifacts-bl-dupes
+      - name: Assert baselines exist
+        run: |
+          for f in bl-dead-code.json bl-health.json bl-dupes.json; do
+            if [ ! -s "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f not written"
+              exit 1
+            fi
+            jq empty "$GITHUB_WORKSPACE/$f" || { echo "FAIL: $f invalid JSON"; exit 1; }
+          done
+          echo "PASS"
+      - id: audit
+        uses: .
+        with:
+          command: audit
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          changed-since: HEAD
+          dead-code-baseline: ${{ github.workspace }}/bl-dead-code.json
+          health-baseline: ${{ github.workspace }}/bl-health.json
+          dupes-baseline: ${{ github.workspace }}/bl-dupes.json
+          artifacts-dir: fallow-artifacts-audit-baselines
+      - name: Assert audit produced a verdict
+        env:
+          VERDICT: ${{ steps.audit.outputs.verdict }}
+          ISSUES: ${{ steps.audit.outputs.issues }}
+          RESULTS: ${{ steps.audit.outputs.results }}
+        run: |
+          echo "verdict: $VERDICT"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+          esac
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          echo "PASS"

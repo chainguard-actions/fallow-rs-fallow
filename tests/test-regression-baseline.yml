@@ -1,0 +1,56 @@
+name: Test regression baseline save then compare
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+          artifacts-dir: fallow-artifacts-regression-save
+      - name: Assert regression baseline file was saved
+        run: |
+          F="$GITHUB_WORKSPACE/fallow-regression-baseline.json"
+          if [ ! -s "$F" ]; then
+            echo "FAIL: regression baseline not written"
+            exit 1
+          fi
+          jq empty "$F" || { echo "FAIL: regression baseline is not valid JSON"; exit 1; }
+          cat "$F"
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          fail-on-regression: 'true'
+          tolerance: '0'
+          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+          artifacts-dir: fallow-artifacts-regression-compare
+      - name: Assert no regression against identical code
+        env:
+          OUTCOME: ${{ steps.compare.outcome }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: identical code should not regress"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          echo "PASS"

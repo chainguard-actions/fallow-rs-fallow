@@ -1,0 +1,65 @@
+name: Test dead-code baseline save then load
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          artifacts-dir: fallow-artifacts-baseline-save
+      - name: Assert baseline file was saved
+        env:
+          ISSUES: ${{ steps.save.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          F="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
+          if [ ! -s "$F" ]; then
+            echo "FAIL: baseline file not written"
+            exit 1
+          fi
+          jq empty "$F" || { echo "FAIL: baseline is not valid JSON"; exit 1; }
+          cat "$F"
+          echo "PASS"
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          artifacts-dir: fallow-artifacts-baseline-load
+      - name: Assert baseline suppressed known issues
+        env:
+          SAVED: ${{ steps.save.outputs.issues }}
+          LOADED: ${{ steps.load.outputs.issues }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
+          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+        run: |
+          echo "saved-run issues: $SAVED"
+          echo "baseline-run issues: $LOADED"
+          echo "baseline-entries: $ENTRIES"
+          echo "baseline-stale-entries: $STALE"
+          if ! [[ "$SAVED" =~ ^[0-9]+$ ]] || ! [[ "$LOADED" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issue counts are not numbers"
+            exit 1
+          fi
+          if [ "$SAVED" -lt 1 ]; then
+            echo "FAIL: first run should find issues in the dirty fixture"
+            exit 1
+          fi
+          if [ "$LOADED" -ge "$SAVED" ]; then
+            echo "FAIL: baseline did not reduce the issue count"
+            exit 1
+          fi
+          echo "PASS"

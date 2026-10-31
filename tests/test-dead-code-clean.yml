@@ -1,0 +1,42 @@
+name: Test dead-code on a clean project
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          fail-on-issues: 'true'
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-clean
+      - name: Assert zero issues and a valid results file
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues on clean project"
+            [ -n "$RESULTS" ] && [ -f "$RESULTS" ] && cat "$RESULTS"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
+          echo "PASS"
+      - name: Assert fallow binary is installed
+        run: |
+          fallow --version || { echo "FAIL: fallow not on PATH"; exit 1; }
+          echo "PASS"

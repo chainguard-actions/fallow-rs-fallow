@@ -1,0 +1,32 @@
+name: Test fail-on-issues gate fails the step
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.1'
+          fail-on-issues: 'true'
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-gate
+      - name: Assert the action failed because issues were found
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected failure when issues exist and fail-on-issues is true"
+            exit 1
+          fi
+          echo "PASS"
+      - name: Assert fallow itself was installed (failure came from the gate)
+        run: |
+          fallow --version || { echo "FAIL: install did not complete"; exit 1; }
+          echo "PASS"

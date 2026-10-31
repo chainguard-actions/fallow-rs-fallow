@@ -1,0 +1,47 @@
+name: Test health command with custom thresholds
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          max-cyclomatic: '10'
+          max-cognitive: '8'
+          max-crap: '25'
+          max-file-lines: '500'
+          sort: cognitive
+          top: '5'
+          threads: '2'
+          min-severity: critical
+          artifacts-dir: fallow-artifacts-health-thresholds
+      - name: Assert health ran with thresholds
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ "$ISSUES" -ne 0 ]; then
+            echo "FAIL: trivial fixture should have no complexity findings"
+            cat "$RESULTS"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          echo "PASS"

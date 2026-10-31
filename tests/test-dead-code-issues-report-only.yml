@@ -1,0 +1,39 @@
+name: Test dead-code reports issues with fail-on-issues false
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.1'
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-dirty
+      - name: Assert issues were found
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected a positive issue count"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          if ! grep -q 'orphan\|unusedHelper\|left-pad' "$RESULTS"; then
+            echo "FAIL: results do not mention any planted dead code"
+            cat "$RESULTS"
+            exit 1
+          fi
+          echo "PASS"

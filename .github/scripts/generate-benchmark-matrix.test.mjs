@@ -1,0 +1,205 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+  allFastTargets,
+  changedFilesFromEnvironment,
+  selectFastTargets,
+} from "./generate-benchmark-matrix.mjs";
+
+const names = (targets) => targets.map((target) => target.bench).toSorted();
+
+test("manual and merge queue runs select every fast benchmark", () => {
+  assert.deepEqual(names(selectFastTargets(null)), names(allFastTargets()));
+});
+
+test("global benchmark files select every fast benchmark", () => {
+  assert.deepEqual(
+    names(selectFastTargets([".github/workflows/bench.yml"])),
+    names(allFastTargets()),
+  );
+  assert.deepEqual(
+    names(selectFastTargets(["crates/benchmarks/Cargo.toml"])),
+    names(allFastTargets()),
+  );
+  assert.deepEqual(
+    names(selectFastTargets(["crates/benchmarks/benches/support/threads.rs"])),
+    names(allFastTargets()),
+  );
+});
+
+test("similar-code changes select the similar-code shard", () => {
+  assert.deepEqual(names(selectFastTargets(["crates/engine/benches/similar_code.rs"])), [
+    "component_engine",
+    "dupes_detect",
+    "lsp_save_publish",
+    "programmatic_stable",
+    "similar_code",
+  ]);
+  assert.ok(
+    names(selectFastTargets(["crates/engine/src/similar_code.rs"])).includes("similar_code"),
+  );
+});
+
+test("output-only changes select the output component and API stable surface", () => {
+  assert.deepEqual(names(selectFastTargets(["crates/output/src/health.rs"])), [
+    "component_engine",
+    "component_output",
+    "programmatic_stable",
+  ]);
+  assert.deepEqual(names(selectFastTargets(["crates/cli/src/cli_report.rs"])), [
+    "component_output",
+  ]);
+  assert.deepEqual(names(selectFastTargets(["crates/cli/src/report/github_summary.rs"])), [
+    "component_output",
+  ]);
+});
+
+test("graph changes select graph-sensitive targets", () => {
+  assert.deepEqual(names(selectFastTargets(["crates/graph/src/project.rs"])), [
+    "analysis",
+    "component_engine",
+    "component_graph",
+    "lsp_save_publish",
+    "programmatic_stable",
+  ]);
+});
+
+test("LSP changes select the save-to-publish lab", () => {
+  assert.deepEqual(names(selectFastTargets(["crates/lsp/src/lib.rs"])), ["lsp_save_publish"]);
+  assert.deepEqual(names(selectFastTargets(["crates/benchmarks/benches/lsp_save_publish.rs"])), [
+    "lsp_save_publish",
+  ]);
+  assert.deepEqual(names(selectFastTargets(["crates/api/src/editor.rs"])), [
+    "lsp_save_publish",
+    "programmatic_stable",
+  ]);
+});
+
+test("component bench file changes select the matching shard", () => {
+  assert.deepEqual(names(selectFastTargets(["crates/benchmarks/benches/component_config.rs"])), [
+    "component_config",
+  ]);
+  assert.deepEqual(names(selectFastTargets(["crates/benchmarks/benches/component_engine.rs"])), [
+    "component_engine",
+  ]);
+  assert.deepEqual(names(selectFastTargets(["crates/benchmarks/benches/component_cache.rs"])), [
+    "component_cache",
+  ]);
+});
+
+test("discovery changes select the entry point discovery shard", () => {
+  assert.deepEqual(names(selectFastTargets(["crates/core/src/discover/entry_points.rs"])), [
+    "analysis",
+    "component_engine",
+    "entry_point_discovery",
+    "lsp_save_publish",
+    "programmatic_stable",
+    "representative_sources",
+  ]);
+  assert.ok(
+    names(selectFastTargets(["crates/core/benches/entry_point_discovery.rs"])).includes(
+      "entry_point_discovery",
+    ),
+  );
+});
+
+test("health ingestion and CRAP scoring changes select engine benchmark coverage", () => {
+  for (const file of [
+    "crates/engine/src/health/coverage_settings.rs",
+    "crates/engine/src/health/scoring.rs",
+  ]) {
+    assert.deepEqual(names(selectFastTargets([file])), [
+      "component_engine",
+      "dupes_detect",
+      "lsp_save_publish",
+      "programmatic_stable",
+    ]);
+  }
+});
+
+test("stable CLI production changes select the stable programmatic shard", () => {
+  for (const file of [
+    "crates/cli/src/audit.rs",
+    "crates/cli/src/audit_brief.rs",
+    "crates/cli/src/audit_decision_surface.rs",
+    "crates/cli/src/audit_focus.rs",
+    "crates/cli/src/audit_output.rs",
+    "crates/cli/src/audit_review_deltas.rs",
+    "crates/cli/src/audit_routing.rs",
+    "crates/cli/src/audit_walkthrough.rs",
+    "crates/cli/src/audit_weakening.rs",
+    "crates/cli/src/check/mod.rs",
+    "crates/cli/src/fix/mod.rs",
+    "crates/cli/src/init.rs",
+    "crates/cli/src/inspect.rs",
+    "crates/cli/src/json_style.rs",
+    "crates/cli/src/lib.rs",
+    "crates/cli/src/list.rs",
+    "crates/cli/src/onboarding.rs",
+    "crates/cli/src/output_runtime.rs",
+    "crates/cli/src/rule_pack/mod.rs",
+    "crates/cli/src/security.rs",
+    "crates/cli/src/viz/mod.rs",
+    "crates/cli/src/watch.rs",
+  ]) {
+    assert.deepEqual(names(selectFastTargets([file])), ["programmatic_stable"]);
+  }
+});
+
+test("local runtime coverage analysis changes select the stable programmatic shard", () => {
+  for (const file of [
+    "crates/cli/src/coverage/analyze.rs",
+    "crates/cli/src/coverage/mod.rs",
+    "crates/cli/src/health/coverage.rs",
+    "crates/cli/src/health/mod.rs",
+  ]) {
+    assert.deepEqual(names(selectFastTargets([file])), ["programmatic_stable"]);
+  }
+});
+
+test("trace API and benchmark changes select the stable programmatic shard", () => {
+  for (const file of [
+    "crates/api/src/runtime/trace.rs",
+    "crates/api/src/runtime_json.rs",
+    "crates/benchmarks/benches/programmatic_stable.rs",
+  ]) {
+    assert.deepEqual(names(selectFastTargets([file])), ["programmatic_stable"]);
+  }
+});
+
+test("unrelated files select no benchmark shards", () => {
+  assert.deepEqual(names(selectFastTargets(["README.md"])), []);
+});
+
+test("changed files can be injected for local tests", () => {
+  const files = changedFilesFromEnvironment({
+    BENCH_CHANGED_FILES: "crates/output/src/lib.rs\nREADME.md\n",
+  });
+
+  assert.deepEqual(files, ["crates/output/src/lib.rs", "README.md"]);
+});
+
+test("a CI run of generate-benchmark-matrix.mjs prints the matrix for the changed files", () => {
+  const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+  const result = spawnSync(process.execPath, [".github/scripts/generate-benchmark-matrix.mjs"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: {
+      PATH: process.env.PATH,
+      BENCH_CHANGED_FILES: "crates/benchmarks/benches/component_cache.rs\n",
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), [
+    {
+      label: "cache component",
+      cache_key: "component-cache",
+      package: "fallow-benchmarks",
+      bench: "component_cache",
+    },
+  ]);
+});

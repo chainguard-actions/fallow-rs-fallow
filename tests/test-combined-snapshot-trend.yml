@@ -1,0 +1,64 @@
+name: Test combined run with skip, save-snapshot then trend
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: snapshot
+        uses: .
+        with:
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          skip: dupes
+          save-snapshot: 'true'
+          artifacts-dir: fallow-artifacts-snapshot
+      - name: Assert snapshot run produced results and a snapshot
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
+          RESULTS: ${{ steps.snapshot.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          echo "snapshot files:"
+          find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f 2>/dev/null | grep -v '/.git/' || true
+          echo "PASS"
+      - id: trend
+        uses: .
+        with:
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          skip: dupes
+          trend: 'true'
+          artifacts-dir: fallow-artifacts-trend
+      - name: Assert trend run produced results
+        env:
+          ISSUES: ${{ steps.trend.outputs.issues }}
+          RESULTS: ${{ steps.trend.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          echo "PASS"
