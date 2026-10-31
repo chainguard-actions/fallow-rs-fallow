@@ -1,0 +1,65 @@
+name: Test health min-score, save-snapshot and trend
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare scratch project
+        run: |
+          rm -rf scratch-score
+          mkdir scratch-score
+          cp -R tests/fixtures/dirty-project/. scratch-score/
+          chmod -R u+w scratch-score
+      - id: snapshot
+        uses: .
+        with:
+          command: health
+          root: scratch-score
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          min-score: '0'
+          save-snapshot: 'true'
+      - name: Assert snapshot saved
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          find scratch-score/.fallow -type f 2>/dev/null || true
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -z "$(find scratch-score/.fallow/snapshots -type f 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot written under scratch-score/.fallow/snapshots"
+            exit 1
+          fi
+          echo "PASS"
+      - id: trend
+        uses: .
+        with:
+          command: health
+          root: scratch-score
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          trend: 'true'
+      - name: Assert trend run produced results
+        env:
+          ISSUES: ${{ steps.trend.outputs.issues }}
+          RESULTS: ${{ steps.trend.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ ! -s "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          echo "PASS"

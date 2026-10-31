@@ -1,0 +1,68 @@
+name: Test audit with gate, worsened, dead-code-baseline and changed-since
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare scratch git repo with a change
+        run: |
+          rm -rf scratch-audit
+          mkdir scratch-audit
+          cp -R tests/fixtures/dirty-project/. scratch-audit/
+          chmod -R u+w scratch-audit
+          cd scratch-audit
+          git init -q
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          git add -A
+          git commit -qm "init"
+          echo "export const introduced = 42;" >> src/helper.ts
+          git commit -qam "introduce change"
+          mkdir -p "$GITHUB_WORKSPACE/baselines"
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: scratch-audit
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/baselines/audit-dead-code.json
+      - id: action
+        uses: .
+        with:
+          command: audit
+          root: scratch-audit
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          changed-since: HEAD~1
+          gate: new-only
+          worsened: error
+          dead-code-baseline: ${{ github.workspace }}/baselines/audit-dead-code.json
+      - name: Assert audit verdict and gate
+        env:
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE"
+          echo "issues: $ISSUES"
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+          esac
+          if [ "$GATE" != "new-only" ]; then
+            echo "FAIL: expected gate 'new-only'"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,0 +1,53 @@
+name: Test health hotspots with since and min-commits
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare scratch git repo with history
+        run: |
+          rm -rf scratch-hot
+          mkdir scratch-hot
+          cp -R tests/fixtures/dirty-project/. scratch-hot/
+          chmod -R u+w scratch-hot
+          cd scratch-hot
+          git init -q
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          git add -A
+          git commit -qm "init"
+          for i in 1 2 3; do
+            echo "export const extra$i = $i;" >> src/helper.ts
+            git commit -qam "change $i"
+          done
+          git log --oneline
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: scratch-hot
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          hotspots: 'true'
+          since: 1y
+          min-commits: '1'
+      - name: Assert hotspots ran
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,4 +1,4 @@
-name: Test explicit config file ignores orphan
+name: Test combined run with skip
 on:
   workflow_dispatch:
 jobs:
@@ -9,25 +9,29 @@ jobs:
       - id: action
         uses: .
         with:
-          command: dead-code
           root: tests/fixtures/dirty-project
-          config: ${{ github.workspace }}/tests/fixtures/config/fallowrc.json
           version: '3.38.0'
           type-aware: 'false'
-          fail-on-issues: 'false'
           format: json
-      - name: Assert orphan.ts ignored via config
+          fail-on-issues: 'false'
+          skip: dupes,health
+      - name: Assert combined run still reports dead code
         env:
+          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
+          echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results missing or invalid"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if grep -q 'orphan.ts' "$RESULTS"; then
-            echo "FAIL: orphan.ts should be ignored by config ignorePatterns"
-            cat "$RESULTS"
+          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if ! grep -q "orphan" "$RESULTS"; then
+            echo "FAIL: expected dead-code finding for orphan.ts"
             exit 1
           fi
           echo "PASS"

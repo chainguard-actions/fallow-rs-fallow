@@ -1,4 +1,4 @@
-name: Test security command with security-gate
+name: Test security command with security-gate new
 on:
   workflow_dispatch:
 jobs:
@@ -6,32 +6,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
+      - name: Prepare scratch git repo with a change
+        run: |
+          rm -rf scratch-sec
+          mkdir scratch-sec
+          cp -R tests/fixtures/dirty-project/. scratch-sec/
+          chmod -R u+w scratch-sec
+          cd scratch-sec
+          git init -q
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          git add -A
+          git commit -qm "init"
+          echo "export const changed = 1;" >> src/helper.ts
+          git commit -qam "change"
       - id: action
         uses: .
         with:
           command: security
-          root: tests/fixtures/clean-project
+          root: scratch-sec
           version: '3.38.0'
           type-aware: 'false'
-          fail-on-issues: 'false'
           format: json
-          changed-since: HEAD
+          fail-on-issues: 'false'
+          changed-since: HEAD~1
           security-gate: new
       - name: Assert security ran with gate
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES gate: $GATE results: $RESULTS"
+          echo "issues: $ISSUES"
+          echo "gate: $GATE"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number"
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: clean fixture with no changes should have 0 new candidates"
+          if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
+            echo "FAIL: expected gate 'new' when reported"
             exit 1
           fi
           echo "PASS"

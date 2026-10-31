@@ -1,0 +1,9 @@
+{
+  "result": [
+    {
+      "scriptId": "1",
+      "url": "file:///ci-build/src/helper.ts",
+      "functions": []
+    }
+  ]
+}

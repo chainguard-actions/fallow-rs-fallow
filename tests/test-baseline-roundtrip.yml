@@ -1,0 +1,62 @@
+name: Test dead-code baseline and regression baseline roundtrip
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/baselines"
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/baselines/dead-code.json
+          save-regression-baseline: ${{ github.workspace }}/baselines/regression.json
+      - name: Assert baselines saved
+        run: |
+          ls -la "$GITHUB_WORKSPACE/baselines"
+          for f in dead-code.json regression.json; do
+            if [ ! -s "$GITHUB_WORKSPACE/baselines/$f" ]; then
+              echo "FAIL: baseline $f not written"
+              exit 1
+            fi
+          done
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'true'
+          baseline: ${{ github.workspace }}/baselines/dead-code.json
+          regression-baseline: ${{ github.workspace }}/baselines/regression.json
+          fail-on-regression: 'true'
+          tolerance: '0'
+          issue-types: unused-files,unused-exports
+      - name: Assert baseline suppressed known issues
+        env:
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          BASELINE_PATH: ${{ steps.compare.outputs.baseline-path }}
+          EXPECTED_PATH: ${{ github.workspace }}/baselines/dead-code.json
+        run: |
+          echo "issues: $ISSUES"
+          echo "baseline-path: $BASELINE_PATH"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected baseline to absorb all existing issues"
+            exit 1
+          fi
+          if [ -n "$BASELINE_PATH" ] && [ "$BASELINE_PATH" != "$EXPECTED_PATH" ]; then
+            echo "FAIL: baseline-path output does not match input"
+            exit 1
+          fi
+          echo "PASS"

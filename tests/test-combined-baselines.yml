@@ -1,0 +1,67 @@
+name: Test combined run with only, health-baseline and dupes-baseline
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/baselines"
+      - id: save-health
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/baselines/health.json
+      - id: save-dupes
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/baselines/dupes.json
+      - name: Assert baselines saved
+        run: |
+          ls -la "$GITHUB_WORKSPACE/baselines"
+          for f in health.json dupes.json; do
+            if [ ! -f "$GITHUB_WORKSPACE/baselines/$f" ]; then
+              echo "FAIL: $f not written"
+              exit 1
+            fi
+          done
+          echo "PASS"
+      - id: action
+        uses: .
+        with:
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          only: dead-code,health,dupes
+          health-baseline: ${{ github.workspace }}/baselines/health.json
+          dupes-baseline: ${{ github.workspace }}/baselines/dupes.json
+      - name: Assert combined run produced results
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          echo "PASS"
