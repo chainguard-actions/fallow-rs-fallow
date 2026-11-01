@@ -21,16 +21,17 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq -e . "$RESULTS" > /dev/null; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
-          if ! grep -q -- '--skip' fallow-out-skip/fallow-analysis-args.sh; then
-            echo "FAIL: --skip not forwarded"
+          if ! grep -q -- '--skip' fallow-out-skip/fallow-analysis-args.sh 2>/dev/null; then
+            echo "FAIL: --skip was not forwarded"
             exit 1
           fi
           echo "PASS"
