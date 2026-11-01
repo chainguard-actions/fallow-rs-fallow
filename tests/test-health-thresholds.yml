@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds, top and sort
+name: Test health thresholds (max-cyclomatic, max-cognitive, max-crap, sort, top)
 on:
   workflow_dispatch:
 jobs:
@@ -7,58 +7,62 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create fixture project
+      - name: Create fixture project with a complex function
         run: |
-          mkdir -p proj/src
-          cat > proj/package.json <<'EOF'
-          {"name":"fallow-fixture","version":"1.0.0","private":true,"main":"src/index.js","type":"module"}
-          EOF
-          cat > proj/src/index.js <<'EOF'
-          import { add } from './math.js';
-          console.log(add(1, 2));
-          EOF
-          cat > proj/src/math.js <<'EOF'
-          export function add(a, b) {
-            return a + b;
-          }
-          export function unusedHelper() {
-            return 42;
-          }
-          EOF
+          set -e
+          P="$GITHUB_WORKSPACE/fx-project"
+          rm -rf "$P"
+          mkdir -p "$P/src"
+          printf '%s\n' '{"name":"fx-project","private":true,"version":"1.0.0","main":"src/index.ts"}' > "$P/package.json"
+          printf '%s\n' \
+            'export function classify(a: number, b: number, c: number): string {' \
+            '  if (a > 0) {' \
+            '    if (b > 0) {' \
+            '      if (c > 0) { return "ppp"; } else if (c < -5) { return "ppn5"; } else { return "ppn"; }' \
+            '    } else if (b < -10) {' \
+            '      for (let i = 0; i < a; i++) { if (i % 2 === 0 && c > i) { return "loop"; } }' \
+            '    }' \
+            '  } else if (a < -100 || b > 100) {' \
+            '    while (a < 0) { a++; if (a === -50) { break; } }' \
+            '  }' \
+            '  return a > b ? "a" : b > c ? "b" : "c";' \
+            '}' \
+            'console.log(classify(1, 2, 3));' > "$P/src/index.ts"
 
       - id: action
         uses: .
         with:
           command: health
-          root: proj
-          max-cyclomatic: '30'
-          max-cognitive: '25'
-          max-crap: '40.5'
-          top: '5'
+          root: fx-project
+          max-cyclomatic: '2'
+          max-cognitive: '2'
+          max-crap: '30'
           sort: cognitive
+          top:          top: '10'
+ion: '3.34.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert issues output is a number and results file is valid JSON
+      - name: Assert health outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues is not a non-negative integer"
+            echo "FAIL: issues not numeric: '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
-          if ! jq empty "$RESULTS"; then
-            echo "FAIL: results file is not valid JSON"
+          jq '.summary // {}' "$RESULTS"
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected the complex function to exceed max-cyclomatic=2 / max-cognitive=2"
             exit 1
           fi
           echo "PASS"

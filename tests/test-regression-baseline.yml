@@ -1,4 +1,4 @@
-name: Test dead-code save-regression-baseline then regression-baseline comparison
+name: Test save-regression-baseline then regression-baseline (dead-code)
 on:
   workflow_dispatch:
 jobs:
@@ -9,29 +9,24 @@ jobs:
 
       - name: Create fixture project
         run: |
-          mkdir -p proj/src baselines
-          cat > proj/package.json <<'EOF'
-          {"name":"fallow-fixture","version":"1.0.0","private":true,"main":"src/index.js","type":"module"}
-          EOF
-          cat > proj/src/index.js <<'EOF'
-          import { add } from './math.js';
-          console.log(add(1, 2));
-          EOF
-          cat > proj/src/math.js <<'EOF'
-          export function add(a, b) {
-            return a + b;
-          }
-          export function unusedHelper() {
-            return 42;
-          }
-          EOF
+          set -e
+          P="$GITHUB_WORKSPACE/fx-project"
+          rm -rf "$P" "$GITHUB_WORKSPACE/fx-baselines"
+          mkdir -p "$P/packages/web/src" "$P/packages/admin/src" "$GITHUB_WORKSPACE/fx-baselines"
+          printf '%s\n' '{"name":"fx-project","private":true,"version":"1.0.0","workspaces":["packages/*"]}' > "$P/package.json"
+          printf '%s\n' '{"name":"web","version":"1.0.0","main":"src/index.ts"}' > "$P/packages/web/package.json"
+          printf '%s\n' '{"name":"admin","version":"1.0.0","main":"src/index.ts"}' > "$P/packages/admin/package.json"
+          printf '%s\n' 'import { used } from "./util";' 'console.log(used(1));' > "$P/packages/web/src/index.ts"
+          printf '%s\n' 'export function used(x: number): number { return x + 1; }' 'export function neverUsed(): string { return "unused"; }' > "$P/packages/web/src/util.ts"
+          printf '%s\n' 'console.log("admin");' > "$P/packages/admin/src/index.ts"
 
       - id: save
         uses: .
         with:
           command: dead-code
-          root: proj
-          save-regression-baseline: ${{ github.workspace }}/baselines/regression.json
+          root: fx-project
+          save-regression-baseline: ${{ github.workspace }}/fx-baselines/regression.json
+          version: '3.34.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
@@ -40,34 +35,40 @@ jobs:
 
       - name: Assert regression baseline was saved
         run: |
-          ls -la baselines || true
-          if [ ! -s baselines/regression.json ]; then
-            echo "FAIL: regression baseline file was not written"
+          F="$GITHUB_WORKSPACE/fx-baselines/regression.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: regression baseline not written at $F"
             exit 1
           fi
-          jq empty baselines/regression.json || { echo "FAIL: regression baseline is not valid JSON"; exit 1; }
+          cat "$F"
           echo "PASS"
 
       - id: compare
         uses: .
         with:
           command: dead-code
-          root: proj
-          regression-baseline: ${{ github.workspace }}/baselines/regression.json
+          root: fx-project
+          regression-baseline: ${{ github.workspace }}/fx-baselines/regression.json
           fail-on-regression: 'true'
+          version: '3.34.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert comparison ran without regression
+      - name: Assert unchanged code does not regress
         env:
+          OUTCOME: ${{ steps.compare.outcome }}
           ISSUES: ${{ steps.compare.outputs.issues }}
         run: |
-          echo "issues: $ISSUES"
+          echo "outcome: $OUTCOME issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: regression compare step did not succeed"
+            exit 1
+          fi
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues is not a non-negative integer"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           echo "PASS"

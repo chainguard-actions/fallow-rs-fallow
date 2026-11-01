@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-since
+name: Test changed-since scopes findings to changed files
 on:
   workflow_dispatch:
 jobs:
@@ -6,51 +6,57 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
 
-      - name: Create fixture project
+      - name: Create fixture project with git history
         run: |
-          mkdir -p proj/src
-          cat > proj/package.json <<'EOF'
-          {"name":"fallow-fixture","version":"1.0.0","private":true,"main":"src/index.js","type":"module"}
-          EOF
-          cat > proj/src/index.js <<'EOF'
-          import { add } from './math.js';
-          console.log(add(1, 2));
-          EOF
-          cat > proj/src/math.js <<'EOF'
-          export function add(a, b) {
-            return a + b;
-          }
-          EOF
+          set -e
+          P="$GITHUB_WORKSPACE/fx-project"
+          rm -rf "$P"
+          mkdir -p "$P/src"
+          printf '%s\n' '{"name":"fx-project","private":true,"version":"1.0.0","main":"src/index.ts"}' > "$P/package.json"
+          printf '%s\n' 'import { a } from "./old";' 'import { b } from "./new";' 'console.log(a(), b());' > "$P/src/index.ts"
+          printf '%s\n' 'export function a(): number { return 1; }' 'export function oldUnused(): number { return 2; }' > "$P/src/old.ts"
+          printf '%s\n' 'export function b(): number { return 3; }' > "$P/src/new.ts"
+          cd "$P"
+          git init -q
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          git add -A
+          git commit -qm initial
+          printf '%s\n' 'export function newUnused(): number { return 4; }' >> src/new.ts
+          git add -A
+          git commit -qm "change new.ts"
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: proj
-          changed-since: HEAD
+          root: fx-project
+          changed-since: HEAD~1
+          version: '3.34.0'
           fail-on-issues: 'false'
+          auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert results
+      - name: Assert scoped results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
           UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          echo "changed-files-unavailable: $UNAVAILABLE"
+          echo "issues: $ISSUES changed-files-unavailable: $UNAVAILABLE"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues is not a non-negative integer"
+            echo "FAIL: issues not numeric: '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results invalid"
+            exit 1
+          fi
+          if grep -q 'oldUnused' "$RESULTS"; then
+            echo "FAIL: finding in unchanged file old.ts was not filtered out"
             exit 1
           fi
           echo "PASS"
