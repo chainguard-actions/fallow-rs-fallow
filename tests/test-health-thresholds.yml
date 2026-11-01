@@ -15,15 +15,14 @@ jobs:
           type-aware: 'false'
           format: json
           fail-on-issues: 'false'
-          max-cyclomatic: '20'
-          max-cognitive: '15'
+          max-cyclomatic: '10'
+          max-cognitive: '8'
           max-crap: '30'
           max-file-lines: '500'
           top: '5'
           sort: cognitive
-          min-severity: critical
           threads: '2'
-      - name: Assert health ran
+      - name: Assert health results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -39,7 +38,7 @@ jobs:
             exit 1
           fi
           if ! jq empty "$RESULTS"; then
-            echo "FAIL: results is not valid JSON"
+            echo "FAIL: results file is not valid JSON"
             exit 1
           fi
           echo "PASS"
