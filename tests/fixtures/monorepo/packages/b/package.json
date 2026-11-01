@@ -1,5 +1,5 @@
 {
-  "name": "@fixture/app-a",
+  "name": "@demo/b",
   "version": "1.0.0",
   "private": true,
   "main": "src/index.ts"

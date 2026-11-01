@@ -1,0 +1,74 @@
+name: Test audit with gate, worsened and per-analysis baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Prepare baseline directory
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
+      - uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          artifacts-dir: fallow-artifacts-audit-dc
+      - uses: .
+        with:
+          command: health
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-baselines/health.json
+          artifacts-dir: fallow-artifacts-audit-health
+      - uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-baselines/dupes.json
+          artifacts-dir: fallow-artifacts-audit-dupes
+      - name: Show baselines
+        run: ls -la "$GITHUB_WORKSPACE/fallow-baselines"
+      - id: action
+        uses: .
+        with:
+          command: audit
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          changed-since: HEAD
+          gate: all
+          worsened: warn
+          dead-code-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          health-baseline: ${{ github.workspace }}/fallow-baselines/health.json
+          dupes-baseline: ${{ github.workspace }}/fallow-baselines/dupes.json
+          artifacts-dir: fallow-artifacts-audit
+      - name: Assert audit verdict and gate
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE"
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+          esac
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all'"
+            exit 1
+          fi
+          echo "PASS"

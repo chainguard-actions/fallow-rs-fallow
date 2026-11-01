@@ -1,4 +1,4 @@
-name: Test health snapshot then trend
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -13,30 +13,33 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
+          score: 'true'
           save-snapshot: 'true'
           artifacts-dir: fallow-artifacts-snapshot
-      - name: Assert snapshot written
+      - name: Assert a snapshot was saved
         run: |
-          ls -la tests/fixtures/sample-project/.fallow/snapshots || true
-          if ! ls tests/fixtures/sample-project/.fallow/snapshots/* >/dev/null 2>&1 \
-             && ! ls tests/fixtures/sample-project/true >/dev/null 2>&1; then
-            echo "FAIL: no snapshot written"
+          ls -laR "$GITHUB_WORKSPACE/tests/fixtures/sample-project/.fallow" || true
+          COUNT=$(find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f -name '*.json' 2>/dev/null | wc -l)
+          echo "snapshot files: $COUNT"
+          if [ "$COUNT" -lt 1 ]; then
+            echo "FAIL: no snapshot file found"
             exit 1
           fi
           echo "PASS"
-      - id: action
+      - id: trend
         uses: .
         with:
           command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
+          score: 'true'
           trend: 'true'
           artifacts-dir: fallow-artifacts-trend
       - name: Assert trend run produced results
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.trend.outputs.issues }}
+          RESULTS: ${{ steps.trend.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
@@ -48,5 +51,9 @@ jobs:
             /*) FILE="$RESULTS" ;;
             *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
           esac
+          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

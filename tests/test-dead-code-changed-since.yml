@@ -1,4 +1,4 @@
-name: Test health with Istanbul coverage and coverage-root
+name: Test dead-code scoped with changed-since
 on:
   workflow_dispatch:
 jobs:
@@ -6,17 +6,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: action
         uses: .
         with:
-          command: health
+          command: dead-code
           root: tests/fixtures/sample-project
+          changed-since: HEAD
           version: '3.36.0'
           fail-on-issues: 'false'
-          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /ci-build
-          artifacts-dir: fallow-artifacts-coverage
-      - name: Assert health results produced
+          artifacts-dir: fallow-artifacts-changed-since
+      - name: Assert scoped run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
