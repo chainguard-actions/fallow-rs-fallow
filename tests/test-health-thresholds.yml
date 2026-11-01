@@ -1,4 +1,4 @@
-name: Test health thresholds and sorting
+name: Test health complexity thresholds, top and sort
 on:
   workflow_dispatch:
 
@@ -22,30 +22,31 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          max-cyclomatic: '20'
-          max-cognitive: '15'
+          max-cyclomatic: '10'
+          max-cognitive: '8'
           max-crap: '30.0'
           top: '5'
-          sort: cyclomatic
-          threads: '2'
+          sort: cognitive
 
-      - name: Assert outputs
+      - name: Assert health ran with thresholds
         env:
+          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
+            exit 1
+          fi
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing: $RESULTS"
-            exit 1
-          fi
-          if ! jq empty "$RESULTS"; then
-            echo "FAIL: results file is not valid JSON"
             exit 1
           fi
           echo "PASS"

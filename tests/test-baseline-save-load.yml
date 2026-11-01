@@ -1,4 +1,4 @@
-name: Test dead-code save-baseline then baseline
+name: Test save-baseline then load baseline
 on:
   workflow_dispatch:
 
@@ -22,15 +22,15 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          save-baseline: ${{ github.workspace }}/fallow-test-baseline.json
+          save-baseline: ${{ github.workspace }}/fallow-baseline.json
 
       - name: Assert baseline file saved
         run: |
-          ls -la "$GITHUB_WORKSPACE" | grep fallow || true
-          if [ ! -f "$GITHUB_WORKSPACE/fallow-test-baseline.json" ]; then
+          if [ ! -f "$GITHUB_WORKSPACE/fallow-baseline.json" ]; then
             echo "FAIL: baseline file not saved"
             exit 1
           fi
+          cat "$GITHUB_WORKSPACE/fallow-baseline.json"
           echo "PASS"
 
       - id: load
@@ -39,30 +39,29 @@ jobs:
           command: dead-code
           root: tests/fixtures/simple-js
           format: json
-          fail-on-issues: 'false'
+          fail-on-issues: 'true'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          baseline: ${{ github.workspace }}/fallow-test-baseline.json
+          baseline: ${{ github.workspace }}/fallow-baseline.json
 
-      - name: Assert baseline run outputs
+      - name: Assert baseline suppresses known findings
         env:
+          OUTCOME: ${{ steps.load.outcome }}
           ISSUES: ${{ steps.load.outputs.issues }}
-          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
           BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
-          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
         run: |
-          echo "issues with baseline: $ISSUES (before: $SAVED_ISSUES)"
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
           echo "baseline-path: $BASELINE_PATH"
-          echo "baseline-entries: $ENTRIES"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success with all findings baselined"
             exit 1
           fi
-          if [ "$ISSUES" -gt "$SAVED_ISSUES" ]; then
-            echo "FAIL: baseline run reported more issues than the baseline-save run"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues against baseline, got '$ISSUES'"
             exit 1
           fi
           echo "PASS"

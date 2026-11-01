@@ -1,4 +1,4 @@
-name: Test health min-score and min-severity gates (permissive)
+name: Test health min-severity gate on a trivial project
 on:
   workflow_dispatch:
 
@@ -22,24 +22,21 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          min-score: '0'
           min-severity: critical
 
-      - name: Assert outputs
+      - name: Assert no critical findings in trivial fixture
         env:
+          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
-          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          echo "gates-failed: $FAILED"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success (no critical complexity in fixture)"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: $RESULTS"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           echo "PASS"

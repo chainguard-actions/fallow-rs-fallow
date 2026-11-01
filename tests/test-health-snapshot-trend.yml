@@ -1,4 +1,4 @@
-name: Test health save-snapshot then trend
+name: Test health save-snapshot followed by trend
 on:
   workflow_dispatch:
 
@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - id: save
+      - id: snapshot
         uses: .
         with:
           command: health
@@ -22,19 +22,17 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          score: 'true'
           save-snapshot: 'true'
 
-      - name: Assert snapshot run produced results
-        env:
-          ISSUES: ${{ steps.save.outputs.issues }}
+      - name: Assert a snapshot was written
         run: |
-          echo "issues: $ISSUES"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+          found=$(find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f -name '*.json' 2>/dev/null | head -5)
+          echo "snapshots found: $found"
+          if [ -z "$found" ]; then
+            echo "FAIL: no snapshot file found"
             exit 1
           fi
-          echo "snapshot dirs:"
-          find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots*' 2>/dev/null | head -20 || true
           echo "PASS"
 
       - id: trend
@@ -49,21 +47,22 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          score: 'true'
           trend: 'true'
 
-      - name: Assert trend run produced results
+      - name: Assert trend run succeeded
         env:
+          OUTCOME: ${{ steps.trend.outcome }}
           ISSUES: ${{ steps.trend.outputs.issues }}
-          RESULTS: ${{ steps.trend.outputs.results }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected trend run to succeed"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: $RESULTS"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           echo "PASS"

@@ -1,0 +1,74 @@
+name: Test health with Istanbul coverage and coverage-root
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FALLOW_SKIP_BINARY_VERIFY: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Write Istanbul coverage-final.json
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/coverage-data"
+          FILE="$GITHUB_WORKSPACE/tests/fixtures/simple-js/index.js"
+          cat > "$GITHUB_WORKSPACE/coverage-data/coverage-final.json" <<EOF
+          {
+            "$FILE": {
+              "path": "$FILE",
+              "statementMap": {
+                "0": {"start": {"line": 3, "column": 2}, "end": {"line": 3, "column": 27}},
+                "1": {"start": {"line": 7, "column": 2}, "end": {"line": 7, "column": 12}}
+              },
+              "fnMap": {
+                "0": {"name": "greet", "decl": {"start": {"line": 2, "column": 9}, "end": {"line": 2, "column": 14}}, "loc": {"start": {"line": 2, "column": 21}, "end": {"line": 4, "column": 1}}, "line": 2},
+                "1": {"name": "unusedHelper", "decl": {"start": {"line": 6, "column": 9}, "end": {"line": 6, "column": 21}}, "loc": {"start": {"line": 6, "column": 24}, "end": {"line": 8, "column": 1}}, "line": 6}
+              },
+              "branchMap": {},
+              "s": {"0": 3, "1": 0},
+              "f": {"0": 3, "1": 0},
+              "b": {}
+            }
+          }
+          EOF
+          cat "$GITHUB_WORKSPACE/coverage-data/coverage-final.json"
+
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/simple-js
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+          coverage: ${{ github.workspace }}/coverage-data/coverage-final.json
+          coverage-root: ${{ github.workspace }}/tests/fixtures/simple-js
+          max-crap: '30'
+
+      - name: Assert health ran with coverage
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
+            exit 1
+          fi
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing: $RESULTS"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,4 +1,4 @@
-name: Test dead-code save-regression-baseline then regression-baseline
+name: Test save-regression-baseline then regression-baseline
 on:
   workflow_dispatch:
 
@@ -22,14 +22,15 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          save-regression-baseline: ${{ github.workspace }}/fallow-test-regression.json
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
       - name: Assert regression baseline saved
         run: |
-          if [ ! -f "$GITHUB_WORKSPACE/fallow-test-regression.json" ]; then
-            echo "FAIL: regression baseline file not saved"
+          if [ ! -f "$GITHUB_WORKSPACE/fallow-regression.json" ]; then
+            echo "FAIL: regression baseline not saved"
             exit 1
           fi
+          cat "$GITHUB_WORKSPACE/fallow-regression.json"
           echo "PASS"
 
       - id: compare
@@ -45,13 +46,19 @@ jobs:
           comment: 'false'
           no-cache: 'true'
           fail-on-regression: 'true'
-          regression-baseline: ${{ github.workspace }}/fallow-test-regression.json
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
-      - name: Assert no regression on unchanged code
+      - name: Assert no regression against identical baseline
         env:
+          OUTCOME: ${{ steps.compare.outcome }}
           ISSUES: ${{ steps.compare.outputs.issues }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected no regression"
+            exit 1
+          fi
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1

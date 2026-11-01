@@ -1,4 +1,4 @@
-name: Test dupes with min-tokens, min-lines, threshold
+name: Test dupes min-tokens, min-lines, threshold and top
 on:
   workflow_dispatch:
 
@@ -24,15 +24,21 @@ jobs:
           no-cache: 'true'
           min-tokens: '30'
           min-lines: '3'
-          threshold: '100'
+          threshold: '0'
+          top: '5'
 
-      - name: Assert outputs
+      - name: Assert dupes ran with options
         env:
+          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
+            exit 1
+          fi
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1

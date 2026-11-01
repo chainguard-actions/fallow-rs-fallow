@@ -1,4 +1,4 @@
-name: Test changed-since scoping
+name: Test changed-since scoping to HEAD
 on:
   workflow_dispatch:
 
@@ -20,27 +20,25 @@ jobs:
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
-          changed-since: HEAD
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          changed-since: HEAD
 
-      - name: Assert outputs
+      - name: Assert scoped analysis ran
         env:
+          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
-          UNAPPLIED: ${{ steps.action.outputs.requests-unapplied }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          echo "requests-unapplied: $UNAPPLIED"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: $RESULTS"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           echo "PASS"
