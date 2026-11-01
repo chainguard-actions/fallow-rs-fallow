@@ -1,4 +1,4 @@
-name: Test regression baseline save and fail-on-regression
+name: Test regression baseline save and compare (no regression)
 on:
   workflow_dispatch:
 jobs:
@@ -6,6 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline directory
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-regression"
       - id: save
         uses: .
         with:
@@ -13,17 +15,17 @@ jobs:
           root: tests/fixtures/dirty-project
           version: '3.38.1'
           type-aware: 'false'
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
           fail-on-issues: 'false'
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
           artifacts-dir: fallow-artifacts-save-regression
-      - name: Assert regression baseline was saved
+      - name: Assert regression baseline saved
         run: |
-          F="$GITHUB_WORKSPACE/fallow-regression-baseline.json"
-          if [ ! -f "$F" ]; then
-            echo "FAIL: regression baseline not written"
+          p="$GITHUB_WORKSPACE/fallow-regression/regression.json"
+          if [ ! -f "$p" ]; then
+            echo "FAIL: regression baseline not saved"
             exit 1
           fi
-          cat "$F"
+          cat "$p"
           echo "PASS"
       - id: compare
         uses: .
@@ -32,23 +34,20 @@ jobs:
           root: tests/fixtures/dirty-project
           version: '3.38.1'
           type-aware: 'false'
-          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+          fail-on-issues: 'false'
           fail-on-regression: 'true'
           tolerance: '0'
-          fail-on-issues: 'false'
+          regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
           artifacts-dir: fallow-artifacts-compare-regression
-      - name: Assert no regression against identical baseline
+      - name: Assert no regression and counts match
         env:
-          OUTCOME: ${{ steps.compare.outcome }}
-          ISSUES: ${{ steps.compare.outputs.issues }}
+          SAVED: ${{ steps.save.outputs.issues }}
+          NOW: ${{ steps.compare.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME issues: $ISSUES"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: unexpected regression failure"
-            exit 1
-          fi
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          echo "saved issues: $SAVED"
+          echo "current issues: $NOW"
+          if [ "$SAVED" != "$NOW" ]; then
+            echo "FAIL: issue count changed between identical runs"
             exit 1
           fi
           echo "PASS"

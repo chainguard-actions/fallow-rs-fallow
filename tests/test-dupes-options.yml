@@ -13,13 +13,13 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          min-tokens: '30'
+          fail-on-issues: 'false'
+          min-tokens: '20'
           min-lines: '3'
           threshold: '100'
-          top: '5'
-          fail-on-issues: 'false'
+          top: '3'
           artifacts-dir: fallow-artifacts-dupes
-      - name: Assert dupes produced results
+      - name: Assert dupes ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

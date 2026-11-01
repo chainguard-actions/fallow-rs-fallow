@@ -1,0 +1,34 @@
+name: Test health command with min-score gate that passes
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          min-score: '0'
+          artifacts-dir: fallow-artifacts-min-score
+      - name: Assert score gate passed
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
+        run: |
+          echo "results: $RESULTS"
+          echo "gates-failed: $FAILED"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          if ! grep -qi 'score' "$RESULTS"; then
+            echo "FAIL: results do not contain a health score"
+            exit 1
+          fi
+          echo "PASS"
