@@ -7,26 +7,18 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a JS project
+      - name: Create a minimal JS project
         run: |
-          P="$GITHUB_WORKSPACE/fallow-proj-trend"
+          P="$GITHUB_WORKSPACE/fallow-fixtures/health-snapshot"
           mkdir -p "$P/src"
-          cat > "$P/package.json" <<'EOF'
-          { "name": "trend-project", "version": "1.0.0", "type": "module", "main": "src/index.js" }
-          EOF
-          cat > "$P/src/index.js" <<'EOF'
-          export function add(a, b) {
-            if (a > b) { return a - b; }
-            return a + b;
-          }
-          console.log(add(1, 2));
-          EOF
+          echo '{"name":"health-snapshot","version":"1.0.0","type":"module","main":"src/index.js","scripts":{"start":"node src/index.js"}}' > "$P/package.json"
+          echo 'export function add(a, b) { return a > b ? a - b : a + b; }' > "$P/src/index.js"
 
-      - id: snapshot
+      - id: save
         uses: .
         with:
           command: health
-          root: fallow-proj-trend
+          root: fallow-fixtures/health-snapshot
           format: json
           save-snapshot: 'true'
           fail-on-issues: 'false'
@@ -35,20 +27,21 @@ jobs:
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert a snapshot was saved
+      - name: Assert a snapshot was written
         run: |
-          find "$GITHUB_WORKSPACE/fallow-proj-trend/.fallow" -type f 2>/dev/null || true
-          if [ -z "$(find "$GITHUB_WORKSPACE/fallow-proj-trend/.fallow/snapshots" -type f 2>/dev/null)" ]; then
-            echo "FAIL: no snapshot found under .fallow/snapshots"
+          D="$GITHUB_WORKSPACE/fallow-fixtures/health-snapshot/.fallow/snapshots"
+          ls -la "$D" || true
+          if [ -z "$(ls -A "$D" 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot written under $D"
             exit 1
           fi
-          echo "PASS: snapshot saved"
+          echo "PASS"
 
       - id: trend
         uses: .
         with:
           command: health
-          root: fallow-proj-trend
+          root: fallow-fixtures/health-snapshot
           format: json
           trend: 'true'
           fail-on-issues: 'false'
@@ -57,14 +50,15 @@ jobs:
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert trend run succeeded
+      - name: Assert trend run produced results
         env:
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number: '$ISSUES'"
+            echo "FAIL: expected numeric issues, got '$ISSUES'"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then

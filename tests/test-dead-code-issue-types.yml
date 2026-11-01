@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-since
+name: Test dead-code with issue-types, explicit config and changed-since
 on:
   workflow_dispatch:
 jobs:
@@ -9,43 +9,45 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create a JS project
+      - name: Create a JS project with an unused export and a config file
         run: |
-          P="$GITHUB_WORKSPACE/fallow-proj-changed"
+          P="$GITHUB_WORKSPACE/fallow-fixtures/dead-code-types"
           mkdir -p "$P/src"
-          cat > "$P/package.json" <<'EOF'
-          { "name": "changed-project", "version": "1.0.0", "type": "module", "main": "src/index.js" }
-          EOF
+          echo '{"name":"dead-code-types","version":"1.0.0","type":"module","main":"src/index.js","scripts":{"start":"node src/index.js"}}' > "$P/package.json"
           cat > "$P/src/index.js" <<'EOF'
-          import { used } from './util.js';
+          import { used } from './lib.js';
           console.log(used());
           EOF
-          cat > "$P/src/util.js" <<'EOF'
+          cat > "$P/src/lib.js" <<'EOF'
           export function used() { return 1; }
-          export function unusedHelper() { return 2; }
+          export function neverUsed() { return 2; }
           EOF
+          echo '{}' > "$P/.fallowrc.json"
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: fallow-proj-changed
-          changed-since: HEAD
+          root: fallow-fixtures/dead-code-types
+          config: fallow-fixtures/dead-code-types/.fallowrc.json
           format: json
+          issue-types: unused-exports, unused-files
+          changed-since: HEAD
           fail-on-issues: 'false'
+          auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
 
-      - name: Assert run completed
+      - name: Assert issues output and results file
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
-          echo "issues: $ISSUES changed-files-unavailable: $UNAVAILABLE"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a number: '$ISSUES'"
+            echo "FAIL: expected numeric issues, got '$ISSUES'"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
