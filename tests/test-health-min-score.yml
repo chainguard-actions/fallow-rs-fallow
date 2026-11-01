@@ -1,4 +1,4 @@
-name: Test health min-score gate (passing)
+name: Test health command with min-score gate
 on:
   workflow_dispatch:
 jobs:
@@ -15,7 +15,7 @@ jobs:
           min-score: '0'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert min-score run succeeded with results
+      - name: Assert health score run succeeded
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -28,13 +28,13 @@ jobs:
           fi
           F="$RESULTS"
           [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
-            echo "FAIL: results file missing or invalid JSON"
+          if ! jq -e . "$F" > /dev/null; then
+            echo "FAIL: results not valid JSON"
             exit 1
           fi
           if ! grep -qi 'score' "$F"; then
-            echo "FAIL: expected a health score in results (min-score implies --score)"
-            head -c 2000 "$F"
+            echo "FAIL: expected a health score in results"
+            head -c 3000 "$F"
             exit 1
           fi
           echo "PASS"

@@ -13,12 +13,12 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          version: '3.37.0'
           changed-workspaces: HEAD
+          version: '3.37.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert changed-workspaces output
+      - name: Assert scoped output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |

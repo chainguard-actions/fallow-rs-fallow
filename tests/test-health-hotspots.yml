@@ -15,7 +15,7 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.37.0'
           hotspots: 'true'
-          since: 1y
+          since: '1y'
           min-commits: '1'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -33,8 +33,8 @@ jobs:
           fi
           F="$RESULTS"
           [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
-            echo "FAIL: results file missing or invalid JSON"
+          if ! jq -e . "$F" > /dev/null; then
+            echo "FAIL: results not valid JSON"
             exit 1
           fi
           echo "PASS"
