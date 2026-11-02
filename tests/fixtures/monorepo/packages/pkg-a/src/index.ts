@@ -1,7 +1,3 @@
-export function greet(name: string): string {
-  return `hello ${name}`;
-}
-
-export function unusedHelper(): number {
-  return 42;
+export function greetA(name: string): string {
+  return `hello ${name} from a`;
 }

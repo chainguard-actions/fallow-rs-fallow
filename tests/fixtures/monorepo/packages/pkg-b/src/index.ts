@@ -1,1 +1,3 @@
-export const VERSION = "1.0.0";
+export function greetB(name: string): string {
+  return `hello ${name} from b`;
+}
