@@ -25,18 +25,18 @@ jobs:
           annotations: 'false'
           skip: dupes,health
 
-      - name: Assert skip run produced results
+      - name: Assert results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+            echo "FAIL: issues not numeric: '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid: $RESULTS"
             exit 1
           fi
           echo "PASS"

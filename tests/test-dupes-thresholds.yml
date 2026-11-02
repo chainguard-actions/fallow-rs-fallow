@@ -1,4 +1,4 @@
-name: Test dupes with token/line/threshold/top inputs
+name: Test dupes with token/line/threshold options
 on:
   workflow_dispatch:
 jobs:
@@ -29,19 +29,23 @@ jobs:
           threshold: '100'
           top: '5'
 
-      - name: Assert issues numeric and results valid
+      - name: Assert issues output is numeric and results valid
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "clone groups: $ISSUES"
+          echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: results file is not valid JSON"
             exit 1
           fi
           echo "PASS"

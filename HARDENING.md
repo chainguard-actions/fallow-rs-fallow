@@ -16,12 +16,12 @@ Action **fallow-rs--fallow/v3.32.0** was hardened automatically. 1 finding(s) we
 
 ### script-injection (severity: high)
 
-Rule (a) direct expression interpolation, plus an unquoted path. 8 composite steps put the expression ${{ github.action_path }} straight into the run: string, unquoted. The 8 steps are Install fallow, Fallow branded token, Run analysis, Check Code Scanning availability, Post PR comment, Emit inline annotations, Job summary and Post review comments. Example offending line: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. The others are the same line with broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh and review.sh. Fix: use the runner env var with quotes instead, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
+Rule (a), direct expression interpolation: 10 composite steps put a GitHub Actions expression straight into the run: shell string, e.g. `run: bash ${{ github.action_path }}/action/scripts/install.sh`. The same pattern appears in the Install fallow, Fallow branded token, Run analysis, Check Code Scanning availability, Post PR comment, Emit inline annotations, Job summary and Post review comments steps. Because of YAML template substitution, the value goes into the script text before the shell quotes it. Fix: use the runner-provided env var quoted, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
-- `action.yml:412`
-- `action.yml:420`
+- `action.yml:411`
+- `action.yml:419`
 - `action.yml:532`
 - `action.yml:545`
 - `action.yml:592`
@@ -37,5 +37,5 @@ Locations:
 
 **Notes:**
 
-In action.yml, replaced `run: bash ${{ github.action_path }}/action/scripts/X.sh` with `run: bash "$GITHUB_ACTION_PATH"/action/scripts/X.sh` in all 8 named steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review). All of them use shell: bash. The ACTION_JQ_DIR env entries were left unchanged because values set in env: are not inserted into the shell script.
+In action.yml, I changed all 8 composite steps from `run: bash ${{ github.action_path }}/action/scripts/<x>.sh` to `run: bash "$GITHUB_ACTION_PATH"/action/scripts/<x>.sh`. The steps are Install fallow, branded token, Run analysis, Check Code Scanning availability, Post PR comment, Emit inline annotations, Job summary and Post review comments. The finding mentions 10 steps, but it lists 8 locations and there were 8 matches. A search afterwards finds no `${{ }}` expressions left in any action.yml `run:` line. The only remaining matches are example text in a docs file (npm/fallow/skills/fallow/references/patterns.md), which isn't part of the action and was left alone. Expressions inside `env:` blocks, such as ACTION_JQ_DIR, can't inject into the shell and were also left alone. Every changed step uses `shell: bash`, so the `$GITHUB_ACTION_PATH` form works there. I didn't run the action to test the change.
 

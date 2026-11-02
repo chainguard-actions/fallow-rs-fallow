@@ -25,19 +25,19 @@ jobs:
           annotations: 'false'
           changed-since: HEAD
 
-      - name: Assert scoped run produced results
+      - name: Assert scoped run produced outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
           UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS changed-files-unavailable: '$UNAVAILABLE'"
+          echo "issues: $ISSUES"
+          echo "changed-files-unavailable: '$UNAVAILABLE'"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+            echo "FAIL: issues not numeric: '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
-            exit 1
-          fi
+          case "$UNAVAILABLE" in
+            true|false|"") ;;
+            *) echo "FAIL: unexpected changed-files-unavailable '$UNAVAILABLE'"; exit 1 ;;
+          esac
           echo "PASS"

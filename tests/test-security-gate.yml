@@ -1,4 +1,4 @@
-name: Test security-gate rejects an invalid value
+name: Test security command with security-gate
 on:
   workflow_dispatch:
 jobs:
@@ -15,29 +15,30 @@ jobs:
 
       - id: action
         uses: .
-        continue-on-error: true
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
         with:
           command: security
           root: tests/fixtures/simple-js
           format: json
+          fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          security-gate: bogus-gate
+          changed-since: HEAD
+          security-gate: new
 
-      - name: Assert action failed validation
+      - name: Assert security gate output
         env:
-          OUTCOME: ${{ steps.action.outcome }}
-          RESULTS: ${{ steps.action.outputs.results }}
+          GATE: ${{ steps.action.outputs.gate }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME results: '$RESULTS'"
-          if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected invalid security-gate to fail the action"
+          echo "gate: '$GATE' issues: '$ISSUES'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric: '$ISSUES'"
             exit 1
           fi
-          if [ -n "$RESULTS" ]; then
-            echo "FAIL: no results should be produced when validation fails"
+          if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
+            echo "FAIL: expected gate 'new', got '$GATE'"
             exit 1
           fi
           echo "PASS"

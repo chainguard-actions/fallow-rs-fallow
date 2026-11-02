@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -26,16 +26,15 @@ jobs:
           annotations: 'false'
           save-snapshot: 'true'
 
-      - name: Assert a snapshot was written
+      - name: Assert snapshot was saved
         run: |
-          FOUND=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
-          echo "snapshots found:"
-          echo "$FOUND"
-          if [ -z "$FOUND" ]; then
-            echo "FAIL: no snapshot file found under any .fallow/snapshots directory"
+          DIR="$GITHUB_WORKSPACE/tests/fixtures/simple-js/.fallow/snapshots"
+          ls -la "$DIR" || true
+          if [ -z "$(ls -A "$DIR" 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot written to $DIR"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: snapshot saved"
 
       - id: trend
         uses: .
@@ -55,13 +54,13 @@ jobs:
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid: $RESULTS"
             exit 1
           fi
           echo "PASS"
