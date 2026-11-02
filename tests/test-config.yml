@@ -1,4 +1,4 @@
-name: Test explicit config file
+name: Test dead-code with explicit config file
 on:
   workflow_dispatch:
 
@@ -24,7 +24,7 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert analysis ran with config
+      - name: Assert issues numeric and results file exists
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -36,7 +36,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: $RESULTS"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test dead-code issue-types filter
+name: Test dead-code with issue-types filter and threads
 on:
   workflow_dispatch:
 
@@ -15,9 +15,9 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          issue-types: 'unused-exports, unused-files'
-          threads: '2'
           format: json
+          issue-types: unused-files,unused-exports
+          threads: '2'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -25,7 +25,7 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert analysis ran with issue-types filter
+      - name: Assert issues numeric and results file exists
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -37,7 +37,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: $RESULTS"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"

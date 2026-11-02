@@ -1,4 +1,4 @@
-name: Test dupes min-tokens, min-lines, threshold, top
+name: Test dupes with min-tokens, min-lines, threshold and top
 on:
   workflow_dispatch:
 
@@ -15,11 +15,11 @@ jobs:
         with:
           command: dupes
           root: tests/fixtures/simple-js
-          min-tokens: '20'
-          min-lines: '3'
+          format: json
+          min-tokens: '10'
+          min-lines: '2'
           threshold: '100'
           top: '3'
-          format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -27,7 +27,7 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert dupes ran within threshold
+      - name: Assert issues numeric and results file exists
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -39,7 +39,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: $RESULTS"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"

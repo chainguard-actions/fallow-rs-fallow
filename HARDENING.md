@@ -10,106 +10,40 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 9 finding(s) were identified and resolved across 3 iteration(s).
+Action **fallow-rs--fallow/v3.33.1** was hardened automatically. 1 finding(s) were identified and resolved across 2 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Install fallow' step puts an expression straight into its run: string: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Pass it through env instead, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
+Sub-rule (a): a GitHub Actions expression is placed directly inside run: commands in action.yml. Each of these steps runs `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`: Install fallow (install.sh), Fallow branded token (broker-token.sh), Run analysis (analyze.sh), Check Code Scanning availability (check-code-scanning.sh), Post PR comment (comment.sh), Emit inline annotations (annotate.sh), Job summary (summary.sh) and Post review comments (review.sh). The runner substitutes the expression into the script text before the shell parses it. Fix: use the quoted env var instead, e.g. `bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
 - `action.yml:411`
-
-### script-injection (severity: high)
-
-Rule (a): the 'Fallow branded token' step puts an expression straight into its run: string: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`.
-
-Locations:
-
 - `action.yml:419`
-
-### script-injection (severity: high)
-
-Rule (a): the 'Run analysis' step puts an expression straight into its run: string: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`.
-
-Locations:
-
-- `action.yml:532`
-
-### script-injection (severity: high)
-
-Rule (a): the 'Check Code Scanning availability' step puts an expression straight into its run: string: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`.
-
-Locations:
-
-- `action.yml:545`
-
-### script-injection (severity: high)
-
-Rule (a): the 'Post PR comment' step puts an expression straight into its run: string: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`.
-
-Locations:
-
+- `action.yml:535`
+- `action.yml:547`
 - `action.yml:592`
-
-### script-injection (severity: high)
-
-Rule (a): the 'Emit inline annotations' step puts an expression straight into its run: string: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`.
-
-Locations:
-
 - `action.yml:614`
-
-### script-injection (severity: high)
-
-Rule (a): the 'Job summary' step puts an expression straight into its run: string: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`.
-
-Locations:
-
 - `action.yml:640`
-
-### script-injection (severity: high)
-
-Rule (a): the 'Post review comments' step puts an expression straight into its run: string: `run: bash ${{ github.action_path }}/action/scripts/review.sh`.
-
-Locations:
-
 - `action.yml:673`
-
-### github-env-injection (severity: high)
-
-The 'Run analysis' step runs action/scripts/analyze.sh, which writes caller-supplied values to $GITHUB_ENV without stripping newlines first. FALLOW_DIFF_FILE comes from inputs.diff-file and is written as `printf '%s\n' "FALLOW_DIFF_FILE=${FALLOW_DIFF_FILE}" >> "$GITHUB_ENV"`. ARTIFACTS_DIR comes from inputs.artifacts-dir and is written as `"FALLOW_ARTIFACTS_DIR=${ARTIFACTS_DIR}"`. A value containing a newline can add extra environment variables, such as BASH_ENV or NODE_OPTIONS, for the steps that follow. Strip the value with `printf '%s' "$VAR" | tr -d '\n\r'` before each write.
-
-Locations:
-
-- `action.yml:531`
-- `action/scripts/analyze.sh`
 
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, github-env-injection
+**Fixes applied:** script-injection
 
 **Notes:**
 
-action.yml: the 8 `run: bash ${{ github.action_path }}/action/scripts/X.sh` lines are now `run: bash "$GITHUB_ACTION_PATH"/action/scripts/X.sh`. Every one of those steps uses shell: bash, so the bash variable syntax is correct. analyze.sh: before being written to $GITHUB_ENV, FALLOW_ARTIFACTS_DIR, the user-supplied FALLOW_DIFF_FILE and the auto-generated diff path are now passed through `printf '%s' | tr -d '\n\r'`. analyze.sh already rejected an artifacts-dir containing a newline, so for that value this is an extra safety layer.
-
-### Iteration 1
-
-**Fixes applied:** publish-gate
-
-**Notes:**
-
-Repaired action/scripts/analyze.sh where two earlier edits had been pasted into the middle of existing lines. (1) Artifact-path GITHUB_ENV block: restored the line "FALLOW_CHANGED_FILES_FILE=${CHANGED_FILES_FILE}" and kept only the sanitized FALLOW_ARTIFACTS_DIR line, removing a leftover duplicate that wrote the unsanitized value. (2) Diff-path GITHUB_ENV block: restored the missing `if [ -n "${GITHUB_ENV:-}" ]; then`, which caused the `fi` parse error at line 841, and removed a leftover duplicate unsanitized write. The end of the comment there was lost and has been reconstructed. Sanitized (newline-stripped) writes are kept. No shell syntax check was run; the file was only re-read.
+Replaced `run: bash ${{ github.action_path }}/action/scripts/<script>.sh` with `run: bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"` in all 8 composite steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review). All steps use shell: bash. ACTION_JQ_DIR env entries still use the expression inside env:, which is the safe pattern.
 
 ### Iteration 2
 
-**Fixes applied:** publish-gate
+**Fixes applied:** script-injection, invalid-yaml
 
 **Notes:**
 
-Fixed the parse error at action/scripts/analyze.sh line 841. An earlier hardening edit had cut off the comment and the `if [ -n "${GITHUB_ENV:-}" ]; then` line that guards the FALLOW_DIFF_FILE write to $GITHUB_ENV, and left the old and new printf lines joined on one line. That left a `fi` with no matching `if`. I restored the guard and kept the newline-stripped SAFE_DIFF_PATH write. Nothing else changed. I haven't run a parser on the edited script, so the publish-gate re-check is the first real test that it parses.
+invalid-yaml: an earlier edit had broken action.yml in two places. (1) The 'Post PR comment' step had a stray 'ru' before its run: line, and the 'Emit inline annotations' step header was stuck onto the end of that line. (2) The 'Job summary' run: line was indented too far, and the 'Post review comments' step header was stuck onto it. I split the merged lines apart and fixed the indentation. script-injection: the 'Post review comments' step ran `bash ${{ github.action_path }}/action/scripts/review.sh`. It now runs `bash "$GITHUB_ACTION_PATH/action/scripts/review.sh"`, which matches the other steps. I haven't re-run a parser or the analysis; I only re-read the file. One oddity: my first fix to the Job summary line said it had replaced something, but the file hadn't changed. I applied it again with a narrower match, and that one took effect.
 

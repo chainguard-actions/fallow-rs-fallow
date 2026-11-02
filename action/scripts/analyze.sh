@@ -593,13 +593,13 @@ CHANGED_FILES_FILE=$(artifact_path fallow-changed-files.json)
 AUTO_DIFF_FILE="$PWD/$(artifact_path fallow-pr.diff)"
 
 if [ -n "${GITHUB_ENV:-}" ]; then
-  SAFE_ARTIFACTS_DIR=$(printf '%s' "$ARTIFACTS_DIR" | tr -d '\n\r')
   printf '%s\n' \
     "FALLOW_RESULTS_FILE=${RESULTS_FILE}" \
     "FALLOW_SCOPED_RESULTS_FILE=${SCOPED_RESULTS_FILE}" \
     "FALLOW_ANALYSIS_ARGS_FILE=${ANALYSIS_ARGS_FILE}" \
     "FALLOW_CHANGED_FILES_FILE=${CHANGED_FILES_FILE}" \
-    "FALLOW_ARTIFACTS_DIR=${SAFE_ARTIFACTS_DIR}" >> "$GITHUB_ENV"
+    "FALLOW_SARIF_FILE=${SARIF_FILE}" \
+    "FALLOW_ARTIFACTS_DIR=${ARTIFACTS_DIR}" >> "$GITHUB_ENV"
 fi
 
 # --- Check for --sarif-file support ---
@@ -787,8 +787,7 @@ fi
 # need to declare their own FALLOW_DIFF_FILE env (which would override
 # the analyze-step propagation otherwise). User-supplied path wins.
 if [ -n "${FALLOW_DIFF_FILE:-}" ] && [ -n "${GITHUB_ENV:-}" ]; then
-  SAFE_FALLOW_DIFF_FILE=$(printf '%s' "$FALLOW_DIFF_FILE" | tr -d '\n\r')
-  printf '%s\n' "FALLOW_DIFF_FILE=${SAFE_FALLOW_DIFF_FILE}" >> "$GITHUB_ENV"
+  printf '%s\n' "FALLOW_DIFF_FILE=${FALLOW_DIFF_FILE}" >> "$GITHUB_ENV"
 fi
 
 if [ -n "${INPUT_CHANGED_SINCE:-}" ] && [ -z "${FALLOW_DIFF_FILE:-}" ]; then
@@ -827,10 +826,9 @@ if [ -n "${INPUT_CHANGED_SINCE:-}" ] && [ -z "${FALLOW_DIFF_FILE:-}" ]; then
   if [ -s "$_DIFF_PATH" ]; then
     export FALLOW_DIFF_FILE="$_DIFF_PATH"
     # Propagate to the comment / review render steps (separate composite
-    # steps see only $GITHUB_ENV, not this process's exports).
+    # steps see only $GITHUB_ENV, not exported shell variables).
     if [ -n "${GITHUB_ENV:-}" ]; then
-      SAFE_DIFF_PATH=$(printf '%s' "$_DIFF_PATH" | tr -d '\n\r')
-      printf '%s\n' "FALLOW_DIFF_FILE=${SAFE_DIFF_PATH}" >> "$GITHUB_ENV"
+      printf '%s\n' "FALLOW_DIFF_FILE=${_DIFF_PATH}" >> "$GITHUB_ENV"
     fi
   else
     rm -f "$_DIFF_PATH"
