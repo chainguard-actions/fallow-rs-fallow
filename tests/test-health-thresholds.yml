@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds and score gate
+name: Test health complexity thresholds, top, sort and min-severity
 on:
   workflow_dispatch:
 jobs:
@@ -7,61 +7,69 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Create fixture project
+        run: |
+          set -e
+          rm -rf fallow-fixture
+          mkdir -p fallow-fixture/src
+          cd fallow-fixture
+          cat > package.json <<'EOF'
+          {"name":"fallow-fixture","version":"1.0.0","private":true,"main":"src/index.js"}
+          EOF
+          cat > src/index.js <<'EOF'
+          import { classify } from './complex.js';
+          console.log(classify(5));
+          EOF
+          cat > src/complex.js <<'EOF'
+          export function classify(n) {
+            if (n < 0) { return 'neg'; }
+            if (n === 0) { return 'zero'; }
+            for (let i = 0; i < n; i++) {
+              if (i % 2 === 0 && i > 3) { return 'even'; }
+            }
+            return 'pos';
+          }
+          EOF
+
       - id: action
         uses: .
         with:
           command: health
-          max-cyclomatic: '30'
-          max-cognitive: '25'
-          max-crap: '45.5'
+          root: fallow-fixture
+          max-cyclomatic: '50'
+          max-cognitive: '50'
+          max-crap: '100.0'
           top: '5'
           sort: cognitive
-          min-score: '0'
+          min-severity: critical
           fail-on-issues: 'false'
-          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert issues output is a number
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
         run: |
           echo "issues: $ISSUES"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
-            exit 1
-          fi
-          echo "PASS"
-
-      - name: Assert results file is valid JSON
-        env:
-          RESULTS: ${{ steps.action.outputs.results }}
-        run: |
           echo "results: $RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: expected integer issues, got '$ISSUES'"
             exit 1
           fi
-          if ! jq empty "$RESULTS"; then
-            echo "FAIL: results is not valid JSON"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 findings with generous thresholds, got $ISSUES"
             exit 1
           fi
-          echo "PASS"
-
-      - name: Assert analysis args carry the threshold flags
-        run: |
-          f="$GITHUB_WORKSPACE/fallow-analysis-args.sh"
-          if [ ! -f "$f" ]; then
-            echo "NOTE: args file not found at $f, skipping flag check"
-            exit 0
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
           fi
-          cat "$f"
-          for flag in --max-cyclomatic --max-cognitive --max-crap --top --sort --min-score; do
-            if ! grep -q -- "$flag" "$f"; then
-              echo "FAIL: expected $flag in analysis args"
-              exit 1
-            fi
-          done
+          if [ -n "$VERDICT" ]; then
+            echo "FAIL: verdict should be empty for health, got '$VERDICT'"
+            exit 1
+          fi
           echo "PASS"

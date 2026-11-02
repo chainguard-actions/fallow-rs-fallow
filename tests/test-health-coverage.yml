@@ -1,0 +1,84 @@
+name: Test health with Istanbul coverage and coverage-root
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fixture project with coverage data
+        run: |
+          set -e
+          rm -rf fallow-fixture
+          mkdir -p fallow-fixture/src fallow-fixture/coverage
+          cd fallow-fixture
+          cat > package.json <<'EOF'
+          {"name":"fallow-fixture","version":"1.0.0","private":true,"main":"src/index.js"}
+          EOF
+          cat > src/index.js <<'EOF'
+          import { classify } from './complex.js';
+          console.log(classify(5));
+          EOF
+          cat > src/complex.js <<'EOF'
+          export function classify(n) {
+            if (n < 0) { return 'neg'; }
+            if (n === 0) { return 'zero'; }
+            return 'pos';
+          }
+          EOF
+          cat > coverage/coverage-final.json <<'EOF'
+          {
+            "/build/src/complex.js": {
+              "path": "/build/src/complex.js",
+              "statementMap": {
+                "0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 30}},
+                "1": {"start": {"line": 3, "column": 2}, "end": {"line": 3, "column": 33}},
+                "2": {"start": {"line": 4, "column": 2}, "end": {"line": 4, "column": 15}}
+              },
+              "fnMap": {
+                "0": {
+                  "name": "classify",
+                  "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 24}},
+                  "loc": {"start": {"line": 1, "column": 28}, "end": {"line": 5, "column": 1}},
+                  "line": 1
+                }
+              },
+              "branchMap": {},
+              "s": {"0": 3, "1": 2, "2": 1},
+              "f": {"0": 3},
+              "b": {}
+            }
+          }
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: fallow-fixture
+          coverage: ${{ github.workspace }}/fallow-fixture/coverage/coverage-final.json
+          coverage-root: /build
+          max-crap: '30'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: expected integer issues, got '$ISSUES'"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          echo "PASS"

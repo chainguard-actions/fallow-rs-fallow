@@ -1,0 +1,74 @@
+name: Test dupes min-tokens, min-lines and threshold
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fixture project with duplicated code
+        run: |
+          set -e
+          rm -rf fallow-fixture
+          mkdir -p fallow-fixture/src
+          cd fallow-fixture
+          cat > package.json <<'EOF'
+          {"name":"fallow-fixture","version":"1.0.0","private":true,"main":"src/index.js"}
+          EOF
+          cat > src/index.js <<'EOF'
+          import { a } from './dup1.js';
+          import { b } from './dup2.js';
+          console.log(a([1, 2, 3]), b([4, 5, 6]));
+          EOF
+          for name in a b; do
+            file=src/dup1.js
+            [ "$name" = b ] && file=src/dup2.js
+            cat > "$file" <<EOF
+          export function $name(items) {
+            const result = [];
+            for (const item of items) {
+              if (item > 1) {
+                result.push(item * 2);
+              } else {
+                result.push(item + 10);
+              }
+            }
+            const total = result.reduce((acc, v) => acc + v, 0);
+            const avg = total / result.length;
+            console.log('total', total, 'avg', avg);
+            return { total, avg, result };
+          }
+          EOF
+          done
+
+      - id: action
+        uses: .
+        with:
+          command: dupes
+          root: fallow-fixture
+          min-tokens: '20'
+          min-lines: '3'
+          threshold: '100'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: expected integer issues, got '$ISSUES'"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          echo "PASS"

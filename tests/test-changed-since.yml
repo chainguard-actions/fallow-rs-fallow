@@ -1,0 +1,68 @@
+name: Test changed-since scoping
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fixture git project with two commits
+        run: |
+          set -e
+          rm -rf fallow-fixture
+          mkdir -p fallow-fixture/src
+          cd fallow-fixture
+          git init -q
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          cat > package.json <<'EOF'
+          {"name":"fallow-fixture","version":"1.0.0","private":true,"main":"src/index.js"}
+          EOF
+          cat > src/index.js <<'EOF'
+          import { used } from './used.js';
+          console.log(used());
+          EOF
+          cat > src/used.js <<'EOF'
+          export function used() { return 1; }
+          EOF
+          git add -A
+          git commit -q -m "initial"
+          cat > src/used.js <<'EOF'
+          export function used() { return 1; }
+          export function unusedExport() { return 2; }
+          EOF
+          git add -A
+          git commit -q -m "add unused export"
+          git log --oneline
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: fallow-fixture
+          changed-since: HEAD~1
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          echo "changed-files-unavailable: $UNAVAILABLE"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: expected integer issues, got '$ISSUES'"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          echo "PASS"
