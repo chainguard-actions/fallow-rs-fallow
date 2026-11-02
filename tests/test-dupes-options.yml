@@ -1,4 +1,4 @@
-name: Test dupes with token/line/threshold options
+name: Test dupes with min-tokens, min-lines, threshold and top
 on:
   workflow_dispatch:
 jobs:
@@ -10,15 +10,16 @@ jobs:
         uses: .
         with:
           command: dupes
-          root: tests/fixtures/dirty-project
+          root: tests/fixtures/dupes-project
           version: '3.38.0'
           type-aware: 'false'
           format: json
           fail-on-issues: 'false'
           min-tokens: '10'
-          min-lines: '2'
-          threshold: '100'
-      - name: Assert dupes ran
+          min-lines: '3'
+          threshold: '0'
+          top: '5'
+      - name: Assert clone group detected
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -29,8 +30,13 @@ jobs:
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results missing or invalid JSON"
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one clone group between a.ts and b.ts"
+            cat "$RESULTS"
             exit 1
           fi
           echo "PASS"

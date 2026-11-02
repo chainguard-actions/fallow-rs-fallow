@@ -15,14 +15,15 @@ jobs:
           type-aware: 'false'
           format: json
           fail-on-issues: 'false'
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
       - name: Assert regression baseline saved
         run: |
-          if [ ! -s "$GITHUB_WORKSPACE/fallow-regression.json" ]; then
+          F="$GITHUB_WORKSPACE/fallow-regression-baseline.json"
+          if [ ! -s "$F" ]; then
             echo "FAIL: regression baseline not written"
             exit 1
           fi
-          cat "$GITHUB_WORKSPACE/fallow-regression.json"
+          cat "$F"
           echo "PASS"
       - id: compare
         uses: .
@@ -34,16 +35,21 @@ jobs:
           format: json
           fail-on-issues: 'false'
           fail-on-regression: 'true'
-          regression-baseline: ${{ github.workspace }}/fallow-regression.json
+          tolerance: '0'
+          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
       - name: Assert no regression detected
         env:
-          OUTCOME: ${{ steps.compare.outcome }}
           ISSUES: ${{ steps.compare.outputs.issues }}
+          OUTCOME: ${{ steps.compare.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: unchanged code should not regress"
+            echo "FAIL: unchanged project should not regress"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"
