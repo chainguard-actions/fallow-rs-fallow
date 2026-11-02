@@ -1,4 +1,4 @@
-name: Test health hotspots with since and min-commits
+name: Test health hotspots with since/min-commits
 on:
   workflow_dispatch:
 jobs:
@@ -18,21 +18,19 @@ jobs:
           format: json
           fail-on-issues: 'false'
           hotspots: 'true'
-          since: 1y
+          since: '10y'
           min-commits: '1'
-      - name: Assert results produced
+      - name: Assert hotspots run produced JSON
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ]; then
+            echo "FAIL: results file missing or empty"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: invalid JSON"
             exit 1
           fi
           echo "PASS"

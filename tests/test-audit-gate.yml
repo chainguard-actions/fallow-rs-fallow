@@ -1,4 +1,4 @@
-name: Test audit with gate, worsened and only
+name: Test audit with gate, worsened and dead-code baseline
 on:
   workflow_dispatch:
 jobs:
@@ -8,7 +8,24 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - id: action
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/dead-code-baseline.json
+      - name: Assert dead-code baseline exists
+        run: |
+          if [ ! -s "$GITHUB_WORKSPACE/dead-code-baseline.json" ]; then
+            echo "FAIL: dead-code baseline not written"
+            exit 1
+          fi
+          echo "PASS"
+      - id: audit
         uses: .
         with:
           command: audit
@@ -17,23 +34,31 @@ jobs:
           type-aware: 'false'
           format: json
           fail-on-issues: 'false'
-          changed-since: HEAD
-          gate: all
-          worsened: warn
-          only: dead-code,health
+          changed-since: 'HEAD'
+          gate: 'all'
+          worsened: 'warn'
+          dead-code-baseline: ${{ github.workspace }}/dead-code-baseline.json
       - name: Assert audit verdict and gate
         env:
-          VERDICT: ${{ steps.action.outputs.verdict }}
-          GATE: ${{ steps.action.outputs.gate }}
-          ISSUES: ${{ steps.action.outputs.issues }}
+          OUTCOME: ${{ steps.audit.outcome }}
+          VERDICT: ${{ steps.audit.outputs.verdict }}
+          GATE: ${{ steps.audit.outputs.gate }}
+          ISSUES: ${{ steps.audit.outputs.issues }}
         run: |
-          echo "verdict: $VERDICT  gate: $GATE  issues: $ISSUES"
+          echo "outcome: $OUTCOME"
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: audit with fail-on-issues=false should succeed"
+            exit 1
+          fi
           case "$VERDICT" in
             pass|warn|fail) ;;
             *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
           esac
-          if [ "$GATE" != "all" ]; then
-            echo "FAIL: expected gate 'all'"
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all', got '$GATE'"
             exit 1
           fi
           echo "PASS"

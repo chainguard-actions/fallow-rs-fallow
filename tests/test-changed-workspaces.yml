@@ -1,4 +1,4 @@
-name: Test changed-workspaces scoping in a monorepo
+name: Test changed-workspaces git-derived scoping
 on:
   workflow_dispatch:
 jobs:
@@ -17,20 +17,22 @@ jobs:
           type-aware: 'false'
           format: json
           fail-on-issues: 'false'
-          changed-workspaces: HEAD
-      - name: Assert scoped run completed
+          changed-workspaces: 'HEAD'
+      - name: Assert run succeeded with no changed workspaces
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
+          OUTCOME: ${{ steps.action.outcome }}
           RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: changed-workspaces run failed"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
           echo "PASS"

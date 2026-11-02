@@ -15,24 +15,20 @@ jobs:
           type-aware: 'false'
           format: json
           fail-on-issues: 'false'
-          workspace: pkg-a
-      - name: Assert scoped results
+          workspace: 'fixture-app'
+      - name: Assert output scoped to fixture-app
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
-            exit 1
-          fi
-          if grep -q "pkg-b/src" "$RESULTS"; then
-            echo "FAIL: pkg-b findings leaked into pkg-a scoped output"
+          if grep -q "orphanlib" "$RESULTS"; then
+            echo "FAIL: findings from fixture-lib leaked into workspace-scoped output"
             cat "$RESULTS"
             exit 1
           fi

@@ -1,4 +1,4 @@
-name: Test dead-code with issue-types filter and explicit config
+name: Test dead-code with config file and issue-types filter
 on:
   workflow_dispatch:
 jobs:
@@ -11,13 +11,13 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
-          config: ${{ github.workspace }}/tests/fixtures/configs/.fallowrc.json
+          config: ${{ github.workspace }}/tests/fixtures/fallowrc/.fallowrc.json
           version: '3.38.0'
           type-aware: 'false'
           format: json
           fail-on-issues: 'false'
-          issue-types: unused-files
-      - name: Assert orphan file reported
+          issue-types: 'unused-files'
+      - name: Assert only unused-files reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -25,12 +25,17 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected at least one unused file"
+            echo "FAIL: expected at least one unused file (orphan.ts)"
             exit 1
           fi
-          if [ ! -s "$RESULTS" ] || ! grep -q orphan "$RESULTS"; then
+          if ! grep -q "orphan" "$RESULTS"; then
             echo "FAIL: orphan.ts not in results"
-            [ -f "$RESULTS" ] && cat "$RESULTS"
+            cat "$RESULTS"
+            exit 1
+          fi
+          if grep -q "neverUsedHelper" "$RESULTS"; then
+            echo "FAIL: unused export reported despite issue-types=unused-files"
+            cat "$RESULTS"
             exit 1
           fi
           echo "PASS"

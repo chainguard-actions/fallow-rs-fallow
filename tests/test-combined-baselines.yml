@@ -1,0 +1,63 @@
+name: Test combined run with health and dupes baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save-health
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/health-baseline.json
+      - id: save-dupes
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/dupes-baseline.json
+      - name: Assert baselines saved
+        run: |
+          for f in health-baseline.json dupes-baseline.json; do
+            if [ ! -s "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f not written"
+              exit 1
+            fi
+          done
+          echo "PASS"
+      - id: combined
+        uses: .
+        with:
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          health-baseline: ${{ github.workspace }}/health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/dupes-baseline.json
+      - name: Assert combined run succeeded
+        env:
+          OUTCOME: ${{ steps.combined.outcome }}
+          RESULTS: ${{ steps.combined.outputs.results }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "results: $RESULTS"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: combined run failed"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid JSON"
+            exit 1
+          fi
+          echo "PASS"
