@@ -1,0 +1,51 @@
+name: Test combined run with only and skip selectors
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: only
+        uses: .
+        with:
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          only: dead-code,health
+          artifacts-dir: fallow-artifacts-only
+      - id: skip
+        uses: .
+        with:
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          skip: dupes
+          artifacts-dir: fallow-artifacts-skip
+      - name: Assert both runs produced results
+        env:
+          ONLY_ISSUES: ${{ steps.only.outputs.issues }}
+          ONLY_RESULTS: ${{ steps.only.outputs.results }}
+          SKIP_ISSUES: ${{ steps.skip.outputs.issues }}
+          SKIP_RESULTS: ${{ steps.skip.outputs.results }}
+        run: |
+          echo "only: $ONLY_ISSUES $ONLY_RESULTS"
+          echo "skip: $SKIP_ISSUES $SKIP_RESULTS"
+          for v in "$ONLY_ISSUES" "$SKIP_ISSUES"; do
+            if ! [[ "$v" =~ ^[0-9]+$ ]]; then
+              echo "FAIL: issues output '$v' is not a number"
+              exit 1
+            fi
+          done
+          for r in "$ONLY_RESULTS" "$SKIP_RESULTS"; do
+            case "$r" in
+              /*) FILE="$r" ;;
+              *) FILE="$GITHUB_WORKSPACE/$r" ;;
+            esac
+            if [ -z "$r" ] || [ ! -s "$FILE" ]; then
+              echo "FAIL: results file '$r' missing"
+              exit 1
+            fi
+            jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
+          done
+          echo "PASS"

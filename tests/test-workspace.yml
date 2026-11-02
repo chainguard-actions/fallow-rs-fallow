@@ -11,11 +11,11 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          workspace: '@demo/a'
           version: '3.36.0'
           fail-on-issues: 'false'
+          workspace: '@fx/a'
           artifacts-dir: fallow-artifacts-workspace
-      - name: Assert workspace-scoped results produced
+      - name: Assert workspace-scoped results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -36,7 +36,7 @@ jobs:
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
           if grep -q "packages/b/" "$FILE"; then
-            echo "FAIL: results include findings from out-of-scope workspace @demo/b"
+            echo "FAIL: workspace b findings leaked into @fx/a scoped run"
             exit 1
           fi
           echo "PASS"

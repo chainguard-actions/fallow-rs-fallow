@@ -1,1 +1,24 @@
-{}
+{
+  "/build/project/src/math.ts": {
+    "path": "/build/project/src/math.ts",
+    "statementMap": {
+      "0": { "start": { "line": 1, "column": 0 }, "end": { "line": 3, "column": 1 } }
+    },
+    "fnMap": {},
+    "branchMap": {},
+    "s": { "0": 1 },
+    "f": {},
+    "b": {}
+  },
+  "/build/project/src/index.ts": {
+    "path": "/build/project/src/index.ts",
+    "statementMap": {
+      "0": { "start": { "line": 1, "column": 0 }, "end": { "line": 1, "column": 10 } }
+    },
+    "fnMap": {},
+    "branchMap": {},
+    "s": { "0": 1 },
+    "f": {},
+    "b": {}
+  }
+}

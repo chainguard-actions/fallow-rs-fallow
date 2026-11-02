@@ -1,3 +1,3 @@
-export function greetA(name: string): string {
-  return `hello ${name} from a`;
+export function greet(name: string): string {
+  return `hello ${name}`;
 }

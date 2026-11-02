@@ -1,4 +1,4 @@
-name: Test combined run restricted with only
+name: Test health with complexity thresholds
 on:
   workflow_dispatch:
 jobs:
@@ -9,12 +9,19 @@ jobs:
       - id: action
         uses: .
         with:
+          command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          only: dead-code,health
-          artifacts-dir: fallow-artifacts-only
-      - name: Assert combined results produced
+          max-cyclomatic: '5'
+          max-cognitive: '5'
+          max-crap: '10'
+          sort: cognitive
+          top: '5'
+          threads: '2'
+          min-severity: critical
+          artifacts-dir: fallow-artifacts-health-thresholds
+      - name: Assert health results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

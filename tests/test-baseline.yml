@@ -1,0 +1,52 @@
+name: Test dead-code save-baseline then baseline
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-baseline-dc.json
+          artifacts-dir: fallow-artifacts-save-baseline
+      - name: Assert baseline file written
+        run: |
+          F="$GITHUB_WORKSPACE/fallow-baseline-dc.json"
+          if [ ! -s "$F" ]; then
+            echo "FAIL: baseline file not written"
+            exit 1
+          fi
+          jq empty "$F" || { echo "FAIL: baseline not valid JSON"; exit 1; }
+          cat "$F"
+          echo "PASS"
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'true'
+          baseline: ${{ github.workspace }}/fallow-baseline-dc.json
+          artifacts-dir: fallow-artifacts-load-baseline
+      - name: Assert baseline suppresses known issues
+        env:
+          ISSUES: ${{ steps.load.outputs.issues }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
+          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+        run: |
+          echo "issues: $ISSUES entries: $ENTRIES stale: $STALE"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues against baseline"
+            exit 1
+          fi
+          if [ -n "$ENTRIES" ] && ! [[ "$ENTRIES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: baseline-entries not numeric"
+            exit 1
+          fi
+          echo "PASS"

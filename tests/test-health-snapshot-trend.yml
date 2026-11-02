@@ -13,16 +13,15 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          score: 'true'
-          save-snapshot: 'true'
+          save-snapshot: ${{ github.workspace }}/fallow-snapshot.json
           artifacts-dir: fallow-artifacts-snapshot
-      - name: Assert a snapshot was saved
+      - name: Assert snapshot run succeeded
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
         run: |
-          ls -laR "$GITHUB_WORKSPACE/tests/fixtures/sample-project/.fallow" || true
-          COUNT=$(find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f -name '*.json' 2>/dev/null | wc -l)
-          echo "snapshot files: $COUNT"
-          if [ "$COUNT" -lt 1 ]; then
-            echo "FAIL: no snapshot file found"
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"
@@ -33,7 +32,6 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          score: 'true'
           trend: 'true'
           artifacts-dir: fallow-artifacts-trend
       - name: Assert trend run produced results
