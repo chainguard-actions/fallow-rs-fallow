@@ -1,0 +1,64 @@
+name: Test security command with security-gate new
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a benign JS project with git history
+        run: |
+          P="$GITHUB_WORKSPACE/tests/fixtures/security-project"
+          mkdir -p "$P/src"
+          cd "$P"
+          cat > package.json <<'EOF'
+          {
+            "name": "security-project",
+            "version": "1.0.0",
+            "type": "module",
+            "main": "src/index.js",
+            "scripts": { "start": "node src/index.js" }
+          }
+          EOF
+          cat > src/index.js <<'EOF'
+          export function add(a, b) { return a + b; }
+          console.log(add(1, 2));
+          EOF
+          printf 'fallow-*\n.fallow/\n' > .gitignore
+          git init -q
+          git add -A
+          git -c user.email=test@example.com -c user.name="Test User" commit -q -m initial
+          echo "console.log(add(3, 4));" >> src/index.js
+          git add -A
+          git -c user.email=test@example.com -c user.name="Test User" commit -q -m "more logging"
+
+      - id: action
+        uses: .
+        with:
+          command: security
+          root: tests/fixtures/security-project
+          format: json
+          fail-on-issues: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+          changed-since: HEAD~1
+          security-gate: new
+
+      - name: Assert security run results
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "gate: $GATE"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a number: '$ISSUES'"
+            exit 1
+          fi
+          if [ "$ISSUES" -ne 0 ]; then
+            echo "FAIL: expected no new security candidates in benign code"
+            exit 1
+          fi
+          echo "PASS"

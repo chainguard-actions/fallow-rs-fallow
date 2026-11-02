@@ -1,0 +1,68 @@
+name: Test dead-code scoped with changed-since
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a JS project with two commits
+        run: |
+          P="$GITHUB_WORKSPACE/tests/fixtures/changed-since-project"
+          mkdir -p "$P/src"
+          cd "$P"
+          cat > package.json <<'EOF'
+          {
+            "name": "changed-since-project",
+            "version": "1.0.0",
+            "type": "module",
+            "main": "src/index.js",
+            "scripts": { "start": "node src/index.js" }
+          }
+          EOF
+          cat > src/index.js <<'EOF'
+          import { used } from './lib.js';
+          console.log(used());
+          EOF
+          cat > src/lib.js <<'EOF'
+          export function used() { return 1; }
+          EOF
+          git init -q
+          git add -A
+          git -c user.email=test@example.com -c user.name="Test User" commit -q -m initial
+          cat >> src/lib.js <<'EOF'
+          export function newlyUnused() { return 2; }
+          EOF
+          git add -A
+          git -c user.email=test@example.com -c user.name="Test User" commit -q -m "add unused export"
+          git log --oneline
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/changed-since-project
+          format: json
+          fail-on-issues: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          no-cache: 'true'
+          changed-since: HEAD~1
+
+      - name: Assert scoped analysis ran
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "changed-files-unavailable: $UNAVAILABLE"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a number: '$ISSUES'"
+            exit 1
+          fi
+          if [ "$UNAVAILABLE" != "false" ]; then
+            echo "FAIL: expected changed-files-unavailable=false"
+            exit 1
+          fi
+          echo "PASS"

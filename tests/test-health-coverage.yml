@@ -1,4 +1,4 @@
-name: Test health command with Istanbul coverage and coverage-root
+name: Test health with Istanbul coverage and coverage-root
 on:
   workflow_dispatch:
 jobs:
@@ -7,13 +7,13 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a JS project and Istanbul coverage file
+      - name: Create a JS project with Istanbul coverage data
         run: |
-          P="$GITHUB_WORKSPACE/fallow-fixtures/health-coverage"
+          P="$GITHUB_WORKSPACE/tests/fixtures/coverage-project"
           mkdir -p "$P/src"
           cat > "$P/package.json" <<'EOF'
           {
-            "name": "health-coverage-project",
+            "name": "coverage-project",
             "version": "1.0.0",
             "type": "module",
             "scripts": { "start": "node src/index.js" }
@@ -21,9 +21,6 @@ jobs:
           EOF
           cat > "$P/src/index.js" <<'EOF'
           export function add(a, b) {
-            if (a > b) {
-              return a - b;
-            }
             return a + b;
           }
           add(1, 2);
@@ -33,19 +30,19 @@ jobs:
             "/ci/build/src/index.js": {
               "path": "/ci/build/src/index.js",
               "statementMap": {
-                "0": { "start": { "line": 3, "column": 4 }, "end": { "line": 3, "column": 17 } },
-                "1": { "start": { "line": 5, "column": 2 }, "end": { "line": 5, "column": 15 } }
+                "0": { "start": { "line": 2, "column": 2 }, "end": { "line": 2, "column": 15 } },
+                "1": { "start": { "line": 4, "column": 0 }, "end": { "line": 4, "column": 9 } }
               },
               "fnMap": {
                 "0": {
                   "name": "add",
                   "decl": { "start": { "line": 1, "column": 16 }, "end": { "line": 1, "column": 19 } },
-                  "loc": { "start": { "line": 1, "column": 26 }, "end": { "line": 6, "column": 1 } },
+                  "loc": { "start": { "line": 1, "column": 26 }, "end": { "line": 3, "column": 1 } },
                   "line": 1
                 }
               },
               "branchMap": {},
-              "s": { "0": 0, "1": 1 },
+              "s": { "0": 1, "1": 1 },
               "f": { "0": 1 },
               "b": {}
             }
@@ -56,29 +53,29 @@ jobs:
         uses: .
         with:
           command: health
-          root: fallow-fixtures/health-coverage
+          root: tests/fixtures/coverage-project
           format: json
-          coverage: fallow-fixtures/health-coverage/coverage-final.json
-          coverage-root: /ci/build
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage-project/coverage-final.json
+          coverage-root: /ci/build
+          max-crap: '30'
 
-      - name: Assert issues output and results file
+      - name: Assert results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues, got '$ISSUES'"
+            echo "FAIL: issues is not a number: '$ISSUES'"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+            echo "FAIL: results file missing or invalid JSON: $RESULTS"
             exit 1
           fi
           echo "PASS"

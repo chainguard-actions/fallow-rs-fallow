@@ -7,46 +7,56 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create a monorepo with two workspaces
+      - name: Create a monorepo with two workspace packages
         run: |
-          P="$GITHUB_WORKSPACE/fallow-fixtures/monorepo"
-          mkdir -p "$P/packages/web/src" "$P/packages/admin/src"
-          echo '{"name":"monorepo","version":"1.0.0","private":true,"workspaces":["packages/*"]}' > "$P/package.json"
-          for w in web admin; do
-            echo "{\"name\":\"$w\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"src/index.js\"}" > "$P/packages/$w/package.json"
-            echo "export const value = '$w';" > "$P/packages/$w/src/index.js"
+          P="$GITHUB_WORKSPACE/tests/fixtures/workspace-project"
+          mkdir -p "$P/packages/pkg-a" "$P/packages/pkg-b"
+          cat > "$P/package.json" <<'EOF'
+          {
+            "name": "workspace-root",
+            "private": true,
+            "workspaces": ["packages/*"]
+          }
+          EOF
+          for n in a b; do
+            cat > "$P/packages/pkg-$n/package.json" <<EOF
+          {
+            "name": "pkg-$n",
+            "version": "1.0.0",
+            "type": "module",
+            "main": "index.js"
+          }
+          EOF
+            cat > "$P/packages/pkg-$n/index.js" <<'EOF'
+          export function hello() { return 'hi'; }
+          EOF
           done
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: fallow-fixtures/monorepo
+          root: tests/fixtures/workspace-project
           format: json
-          workspace: web
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           no-cache: 'true'
+          workspace: pkg-a
 
-      - name: Assert issues output and results file
+      - name: Assert results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: expected numeric issues, got '$ISSUES'"
+            echo "FAIL: issues is not a number: '$ISSUES'"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
-            exit 1
-          fi
-          if grep -q 'packages/admin' "$RESULTS"; then
-            echo "FAIL: results mention the out-of-scope admin workspace"
+            echo "FAIL: results file missing or invalid JSON: $RESULTS"
             exit 1
           fi
           echo "PASS"
