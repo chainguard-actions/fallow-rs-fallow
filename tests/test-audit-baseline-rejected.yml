@@ -1,4 +1,4 @@
-name: Test security-gate rejects an invalid value
+name: Test audit rejects generic baseline input
 on:
   workflow_dispatch:
 
@@ -14,18 +14,20 @@ jobs:
         uses: .
         continue-on-error: true
         with:
-          command: security
+          command: audit
           root: tests/fixtures/simple-js
+          baseline: generic-baseline.json
+          dead-code-baseline: dead-code-baseline.json
+          health-baseline: health-baseline.json
+          dupes-baseline: dupes-baseline.json
           format: json
-          fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          security-gate: everything
 
-      - name: Assert invalid security-gate failed validation
+      - name: Assert action failed input validation
         env:
           OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
@@ -33,11 +35,11 @@ jobs:
           echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for security-gate='everything'"
+            echo "FAIL: expected audit + baseline to be rejected, got outcome '$OUTCOME'"
             exit 1
           fi
           if [ -n "$ISSUES" ]; then
-            echo "FAIL: analysis should not have run, but issues='$ISSUES'"
+            echo "FAIL: analysis should not have produced an issues count"
             exit 1
           fi
           echo "PASS"

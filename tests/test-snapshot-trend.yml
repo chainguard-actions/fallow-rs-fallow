@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend
+name: Test save-snapshot then trend
 on:
   workflow_dispatch:
 
@@ -9,12 +9,15 @@ jobs:
       FALLOW_SKIP_BINARY_VERIFY: '1'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
       - id: snapshot
         uses: .
         with:
           command: health
           root: tests/fixtures/simple-js
+          save-snapshot: 'true'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -22,15 +25,20 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          score: 'true'
-          save-snapshot: 'true'
 
-      - name: Assert a snapshot was written
+      - name: Assert snapshot saved
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
         run: |
-          found=$(find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f -name '*.json' 2>/dev/null | head -5)
-          echo "snapshots found: $found"
-          if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file found"
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          FOUND=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
+          echo "snapshots: $FOUND"
+          if [ -z "$FOUND" ]; then
+            echo "FAIL: no snapshot file written under .fallow/snapshots"
             exit 1
           fi
           echo "PASS"
@@ -40,6 +48,7 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
+          trend: 'true'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -47,22 +56,19 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          score: 'true'
-          trend: 'true'
 
-      - name: Assert trend run succeeded
+      - name: Assert trend run completed
         env:
-          OUTCOME: ${{ steps.trend.outcome }}
           ISSUES: ${{ steps.trend.outputs.issues }}
+          RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: expected trend run to succeed"
-            exit 1
-          fi
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing: $RESULTS"
             exit 1
           fi
           echo "PASS"

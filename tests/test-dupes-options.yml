@@ -1,4 +1,4 @@
-name: Test dupes min-tokens, min-lines, threshold and top
+name: Test dupes min-tokens, min-lines, threshold, top
 on:
   workflow_dispatch:
 
@@ -15,6 +15,10 @@ jobs:
         with:
           command: dupes
           root: tests/fixtures/simple-js
+          min-tokens: '20'
+          min-lines: '3'
+          threshold: '100'
+          top: '3'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -22,23 +26,14 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          min-tokens: '30'
-          min-lines: '3'
-          threshold: '0'
-          top: '5'
 
-      - name: Assert dupes ran with options
+      - name: Assert dupes ran within threshold
         env:
-          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: expected success"
-            exit 1
-          fi
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1

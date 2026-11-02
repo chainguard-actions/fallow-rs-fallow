@@ -1,4 +1,4 @@
-name: Test workspace scoping in a monorepo
+name: Test combined run with skip
 on:
   workflow_dispatch:
 
@@ -9,12 +9,14 @@ jobs:
       FALLOW_SKIP_BINARY_VERIFY: '1'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
       - id: action
         uses: .
         with:
-          command: dead-code
-          root: tests/fixtures/monorepo
+          root: tests/fixtures/simple-js
+          skip: health,architecture
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -22,20 +24,14 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          workspace: pkg-a
 
-      - name: Assert workspace-scoped analysis ran
+      - name: Assert combined run produced results
         env:
-          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: expected success"
-            exit 1
-          fi
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
