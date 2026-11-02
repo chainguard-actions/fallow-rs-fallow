@@ -1,0 +1,58 @@
+name: Test save-baseline then baseline comparison
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/sample-project
+          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          version: 3.35.0
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          artifacts-dir: fallow-out-baseline-save
+      - name: Assert baseline file saved
+        run: |
+          F="$GITHUB_WORKSPACE/fallow-baselines/dead-code.json"
+          ls -la "$GITHUB_WORKSPACE/fallow-baselines" || true
+          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
+            echo "FAIL: baseline file missing or not JSON"
+            exit 1
+          fi
+          echo "PASS"
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/sample-project
+          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          version: 3.35.0
+          fail-on-issues: 'true'
+          auto-changed-since: 'false'
+          artifacts-dir: fallow-out-baseline-load
+      - name: Assert baseline suppressed known issues
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          ENTRIES: ${{ steps.action.outputs.baseline-entries }}
+          STALE: ${{ steps.action.outputs.baseline-stale-entries }}
+          BPATH: ${{ steps.action.outputs.baseline-path }}
+        run: |
+          echo "issues: $ISSUES entries: $ENTRIES stale: $STALE path: $BPATH"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues with a fresh baseline"
+            exit 1
+          fi
+          if [ -n "$ENTRIES" ] && ! [[ "$ENTRIES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: baseline-entries not numeric"
+            exit 1
+          fi
+          if [ -n "$STALE" ] && [ "$STALE" != "0" ]; then
+            echo "FAIL: expected no stale entries"
+            exit 1
+          fi
+          echo "PASS"
