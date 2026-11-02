@@ -1,4 +1,4 @@
-name: Test dupes with token/line/threshold options
+name: Test dupes with min-tokens, min-lines, threshold and top
 on:
   workflow_dispatch:
 jobs:
@@ -13,6 +13,7 @@ jobs:
         with:
           node-version: 22
 
+      # threshold 100 can never be exceeded, so the run must succeed.
       - id: action
         uses: .
         env:
@@ -20,32 +21,27 @@ jobs:
         with:
           command: dupes
           root: tests/fixtures/simple-js
-          format: json
-          fail-on-issues: 'false'
-          auto-changed-since: 'false'
-          annotations: 'false'
           min-tokens: '10'
           min-lines: '2'
           threshold: '100'
           top: '5'
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
 
-      - name: Assert issues output is numeric and results valid
+      - name: Assert dupes ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "clone groups: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
-            exit 1
-          fi
-          if ! jq empty "$RESULTS"; then
-            echo "FAIL: results file is not valid JSON"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"

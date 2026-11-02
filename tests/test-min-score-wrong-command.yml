@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-since
+name: Test min-score rejected on non-health command
 on:
   workflow_dispatch:
 jobs:
@@ -15,29 +15,25 @@ jobs:
 
       - id: action
         uses: .
+        continue-on-error: true
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
         with:
           command: dead-code
           root: tests/fixtures/simple-js
+          min-score: '50'
           format: json
           fail-on-issues: 'false'
+          auto-changed-since: 'false'
           annotations: 'false'
-          changed-since: HEAD
 
-      - name: Assert scoped run produced outputs
+      - name: Assert action failed validation
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
+          OUTCOME: ${{ steps.action.outcome }}
         run: |
-          echo "issues: $ISSUES"
-          echo "changed-files-unavailable: '$UNAVAILABLE'"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues not numeric: '$ISSUES'"
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected failure when min-score is used with dead-code"
             exit 1
           fi
-          case "$UNAVAILABLE" in
-            true|false|"") ;;
-            *) echo "FAIL: unexpected changed-files-unavailable '$UNAVAILABLE'"; exit 1 ;;
-          esac
           echo "PASS"

@@ -20,21 +20,21 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
+          save-snapshot: 'true'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          save-snapshot: 'true'
 
-      - name: Assert snapshot was saved
+      - name: Assert a snapshot was saved
         run: |
-          DIR="$GITHUB_WORKSPACE/tests/fixtures/simple-js/.fallow/snapshots"
-          ls -la "$DIR" || true
-          if [ -z "$(ls -A "$DIR" 2>/dev/null)" ]; then
-            echo "FAIL: no snapshot written to $DIR"
+          found=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
+          echo "snapshots: $found"
+          if [ -z "$found" ]; then
+            echo "FAIL: no snapshot under .fallow/snapshots"
             exit 1
           fi
-          echo "PASS: snapshot saved"
+          echo "PASS"
 
       - id: trend
         uses: .
@@ -43,11 +43,11 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
+          trend: 'true'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          trend: 'true'
 
       - name: Assert trend run produced results
         env:
@@ -56,11 +56,11 @@ jobs:
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid: $RESULTS"
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"

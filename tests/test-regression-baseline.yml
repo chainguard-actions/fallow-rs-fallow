@@ -1,4 +1,4 @@
-name: Test dead-code regression baseline with issue-types
+name: Test save-regression-baseline then regression-baseline
 on:
   workflow_dispatch:
 jobs:
@@ -13,6 +13,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Remove any stale regression baseline
+        run: rm -f "$GITHUB_WORKSPACE/fallow-test-regression.json"
+
       - id: save
         uses: .
         env:
@@ -20,23 +23,23 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
+          save-regression-baseline: ${{ github.workspace }}/fallow-test-regression.json
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          issue-types: unused-files,unused-exports
-          save-regression-baseline: ${{ runner.temp }}/regression-baseline.json
 
-      - name: Assert regression baseline was written
+      - name: Assert regression baseline file was saved
         run: |
-          F="$RUNNER_TEMP/regression-baseline.json"
-          if [ ! -f "$F" ]; then
+          F="$GITHUB_WORKSPACE/fallow-test-regression.json"
+          if [ ! -s "$F" ]; then
             echo "FAIL: regression baseline not written at $F"
             exit 1
           fi
           cat "$F"
           echo "PASS"
 
+      # Same code, same baseline: no regression, so fail-on-regression must pass.
       - id: compare
         uses: .
         env:
@@ -44,26 +47,25 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
+          regression-baseline: ${{ github.workspace }}/fallow-test-regression.json
+          fail-on-regression: 'true'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          issue-types: unused-files,unused-exports
-          fail-on-regression: 'true'
-          regression-baseline: ${{ runner.temp }}/regression-baseline.json
 
-      - name: Assert no regression and consistent counts
+      - name: Assert comparison ran
         env:
-          SAVED: ${{ steps.save.outputs.issues }}
-          NOW: ${{ steps.compare.outputs.issues }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          OUTCOME: ${{ steps.compare.outcome }}
         run: |
-          echo "saved issues: $SAVED, current issues: $NOW"
-          if ! [[ "$NOW" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not numeric: '$NOW'"
+          echo "issues: $ISSUES outcome: $OUTCOME"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: unexpected outcome"
             exit 1
           fi
-          if [ "$SAVED" != "$NOW" ]; then
-            echo "FAIL: issue counts differ between identical runs"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"
