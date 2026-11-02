@@ -1,10 +1,30 @@
 {
-  "/build/src/math.js": {
-    "path": "/build/src/math.js",
-    "statementMap": {},
+  "/ci-build/src/math.js": {
+    "path": "/ci-build/src/math.js",
+    "statementMap": {
+      "0": { "start": { "line": 2, "column": 2 }, "end": { "line": 2, "column": 15 } }
+    },
+    "fnMap": {
+      "0": {
+        "name": "add",
+        "decl": { "start": { "line": 1, "column": 16 }, "end": { "line": 1, "column": 19 } },
+        "loc": { "start": { "line": 1, "column": 26 }, "end": { "line": 3, "column": 1 } },
+        "line": 1
+      }
+    },
+    "branchMap": {},
+    "s": { "0": 1 },
+    "f": { "0": 1 },
+    "b": {}
+  },
+  "/ci-build/src/index.js": {
+    "path": "/ci-build/src/index.js",
+    "statementMap": {
+      "0": { "start": { "line": 3, "column": 0 }, "end": { "line": 3, "column": 23 } }
+    },
     "fnMap": {},
     "branchMap": {},
-    "s": {},
+    "s": { "0": 1 },
     "f": {},
     "b": {}
   }

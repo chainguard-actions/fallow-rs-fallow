@@ -13,7 +13,8 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.37.0'
           coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /build
+          coverage-root: /ci-build
+          max-crap: '30'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'

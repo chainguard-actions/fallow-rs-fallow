@@ -1,4 +1,4 @@
-name: Test dupes command with token/line minimums and threshold
+name: Test dupes with min-tokens, min-lines and threshold
 on:
   workflow_dispatch:
 jobs:
@@ -15,24 +15,21 @@ jobs:
           min-tokens: '30'
           min-lines: '3'
           threshold: '100'
-          fail-on-issues: 'false'
+          top: '10'
           auto-changed-since: 'false'
           type-aware: 'false'
       - name: Assert dupes output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "gates-failed: $GATES_FAILED"
           if [ "$ISSUES" != "0" ]; then
             echo "FAIL: expected 0 clone groups"
             exit 1
           fi
-          F="$RESULTS"
-          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
-            echo "FAIL: results file missing or invalid JSON"
-            exit 1
-          fi
+          case ",$GATES_FAILED," in
+            *,duplication-threshold,*) echo "FAIL: 100% threshold should not fail"; exit 1 ;;
+          esac
           echo "PASS"

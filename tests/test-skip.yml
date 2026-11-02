@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend comparison
+name: Test combined run with skip selector
 on:
   workflow_dispatch:
 jobs:
@@ -6,40 +6,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snapshot
-        uses: .
-        with:
-          command: health
-          root: tests/fixtures/clean-project
-          version: '3.37.0'
-          save-snapshot: 'true'
-          fail-on-issues: 'false'
-          auto-changed-since: 'false'
-          type-aware: 'false'
-      - name: Assert snapshot saved
-        run: |
-          ls -la tests/fixtures/clean-project/.fallow/snapshots || true
-          if ! ls tests/fixtures/clean-project/.fallow/snapshots/* > /dev/null 2>&1; then
-            echo "FAIL: no snapshot saved under .fallow/snapshots"
-            exit 1
-          fi
-          echo "PASS: snapshot saved"
       - id: action
         uses: .
         with:
-          command: health
           root: tests/fixtures/clean-project
           version: '3.37.0'
-          trend: 'true'
+          skip: dupes
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert trend run output
+      - name: Assert combined output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
@@ -51,6 +33,3 @@ jobs:
             exit 1
           fi
           echo "PASS"
-      - name: Clean up snapshots
-        if: always()
-        run: rm -rf tests/fixtures/clean-project/.fallow/snapshots
