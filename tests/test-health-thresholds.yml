@@ -18,8 +18,6 @@ jobs:
           max-crap: '10'
           sort: cognitive
           top: '5'
-          threads: '2'
-          min-severity: critical
           artifacts-dir: fallow-artifacts-health-thresholds
       - name: Assert health results produced
         env:

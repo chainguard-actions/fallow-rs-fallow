@@ -1,4 +1,4 @@
-name: Test dead-code scoped by changed-workspaces
+name: Test dead-code scoped with changed-workspaces
 on:
   workflow_dispatch:
 jobs:
@@ -17,13 +17,24 @@ jobs:
           fail-on-issues: 'false'
           changed-workspaces: HEAD
           artifacts-dir: fallow-artifacts-changed-workspaces
-      - name: Assert changed-workspaces run succeeded
+      - name: Assert scoped run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          echo "PASS: no workspace changed since HEAD, run completed"
+          case "$RESULTS" in
+            /*) FILE="$RESULTS" ;;
+            *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
+          esac
+          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
+          echo "PASS"

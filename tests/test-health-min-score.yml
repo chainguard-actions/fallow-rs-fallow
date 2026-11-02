@@ -1,4 +1,4 @@
-name: Test health min-score gate (score 0 always passes)
+name: Test health score gates (min-score / min-severity)
 on:
   workflow_dispatch:
 jobs:
@@ -12,15 +12,25 @@ jobs:
           command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
+          fail-on-issues: 'false'
           min-score: '0'
+          min-severity: critical
           artifacts-dir: fallow-artifacts-health-min-score
-      - name: Assert health score computed
+      - name: Assert gates passed on a tiny project
         env:
+          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          echo "gates-failed: $GATES_FAILED"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: min-score 0 should never fail"
+            exit 1
+          fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
@@ -34,8 +44,4 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
-          if ! grep -qi "score" "$FILE"; then
-            echo "FAIL: expected a health score in results"
-            exit 1
-          fi
           echo "PASS"

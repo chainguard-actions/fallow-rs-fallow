@@ -13,7 +13,7 @@ jobs:
           root: tests/fixtures/monorepo
           version: '3.36.0'
           fail-on-issues: 'false'
-          workspace: '@fx/a'
+          workspace: pkg-a
           artifacts-dir: fallow-artifacts-workspace
       - name: Assert workspace-scoped results
         env:
@@ -35,8 +35,8 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
-          if grep -q "packages/b/" "$FILE"; then
-            echo "FAIL: workspace b findings leaked into @fx/a scoped run"
+          if grep -q "pkg-b/src" "$FILE"; then
+            echo "FAIL: pkg-b findings leaked into pkg-a scoped output"
             exit 1
           fi
           echo "PASS"

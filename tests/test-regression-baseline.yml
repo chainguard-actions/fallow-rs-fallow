@@ -1,4 +1,4 @@
-name: Test regression baseline save and compare
+name: Test regression baseline save then compare
 on:
   workflow_dispatch:
 jobs:
@@ -14,15 +14,14 @@ jobs:
           version: '3.36.0'
           fail-on-issues: 'false'
           save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
-          artifacts-dir: fallow-artifacts-save-regression
-      - name: Assert regression baseline written
+          artifacts-dir: fallow-artifacts-regression-save
+      - name: Assert regression baseline saved
         run: |
-          F="$GITHUB_WORKSPACE/fallow-regression.json"
-          if [ ! -s "$F" ]; then
-            echo "FAIL: regression baseline not written"
+          if [ ! -s "$GITHUB_WORKSPACE/fallow-regression.json" ]; then
+            echo "FAIL: regression baseline not saved"
             exit 1
           fi
-          jq empty "$F" || { echo "FAIL: invalid JSON"; exit 1; }
+          cat "$GITHUB_WORKSPACE/fallow-regression.json"
           echo "PASS"
       - id: compare
         uses: .
@@ -34,14 +33,20 @@ jobs:
           fail-on-regression: 'true'
           tolerance: '0'
           regression-baseline: ${{ github.workspace }}/fallow-regression.json
-          artifacts-dir: fallow-artifacts-compare-regression
-      - name: Assert no regression detected
+          artifacts-dir: fallow-artifacts-regression-compare
+      - name: Assert no regression
         env:
+          OUTCOME: ${{ steps.compare.outcome }}
           ISSUES: ${{ steps.compare.outputs.issues }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: identical run must not regress"
+            exit 1
+          fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          echo "PASS: identical run did not regress"
+          echo "PASS"

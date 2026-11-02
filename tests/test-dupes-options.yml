@@ -1,4 +1,4 @@
-name: Test dupes with min-tokens, min-lines, threshold
+name: Test dupes with token/line minimums and threshold
 on:
   workflow_dispatch:
 jobs:
@@ -20,9 +20,11 @@ jobs:
           artifacts-dir: fallow-artifacts-dupes-options
       - name: Assert dupes results produced
         env:
+          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then

@@ -1,4 +1,4 @@
-name: Test health hotspots with since/min-commits
+name: Test health hotspots with git history window
 on:
   workflow_dispatch:
 jobs:

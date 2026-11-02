@@ -18,12 +18,13 @@ jobs:
           changed-since: HEAD
           security-gate: new
           artifacts-dir: fallow-artifacts-security
-      - name: Assert security run produced a count
+      - name: Assert security run completed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
         run: |
-          echo "issues: $ISSUES gate: $GATE"
+          echo "issues: $ISSUES"
+          echo "gate: $GATE"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
