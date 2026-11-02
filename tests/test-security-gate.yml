@@ -20,25 +20,59 @@ jobs:
         with:
           command: security
           root: tests/fixtures/simple-js
-          security-gate: new
-          changed-since: HEAD
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
+          changed-since: HEAD
+          security-gate: new
 
-      - name: Assert security gate applied
+      - name: Assert outputs
         env:
-          GATE: ${{ steps.action.outputs.gate }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
         run: |
-          echo "gate: '$GATE' issues: '$ISSUES'"
+          echo "issues: '$ISSUES' gate: '$GATE'"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new' (or empty), got '$GATE'"
+            echo "FAIL: expected gate 'new' or empty, got '$GATE'"
+            exit 1
+          fi
+          echo "PASS"
+
+  invalid-security-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: security
+          root: tests/fixtures/simple-js
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          security-gate: bogus
+
+      - name: Assert invalid security-gate is rejected
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected failure for invalid security-gate"
             exit 1
           fi
           echo "PASS"

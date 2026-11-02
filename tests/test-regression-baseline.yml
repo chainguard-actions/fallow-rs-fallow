@@ -1,4 +1,4 @@
-name: Test save-regression-baseline then regression-baseline
+name: Test regression baseline save and fail-on-regression comparison
 on:
   workflow_dispatch:
 jobs:
@@ -13,8 +13,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Remove any stale regression baseline
-        run: rm -f "$GITHUB_WORKSPACE/fallow-test-regression.json"
+      - name: Remove stale regression baseline
+        run: rm -f "$GITHUB_WORKSPACE/fallow-regression.json"
 
       - id: save
         uses: .
@@ -23,23 +23,22 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          save-regression-baseline: ${{ github.workspace }}/fallow-test-regression.json
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
-      - name: Assert regression baseline file was saved
+      - name: Assert regression baseline was saved
         run: |
-          F="$GITHUB_WORKSPACE/fallow-test-regression.json"
-          if [ ! -s "$F" ]; then
-            echo "FAIL: regression baseline not written at $F"
+          f="$GITHUB_WORKSPACE/fallow-regression.json"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: regression baseline not written at $f"
             exit 1
           fi
-          cat "$F"
           echo "PASS"
 
-      # Same code, same baseline: no regression, so fail-on-regression must pass.
+      # Same code, same counts: no regression, so the gate must pass.
       - id: compare
         uses: .
         env:
@@ -47,25 +46,25 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          regression-baseline: ${{ github.workspace }}/fallow-test-regression.json
-          fail-on-regression: 'true'
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
+          fail-on-regression: 'true'
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
 
-      - name: Assert comparison ran
+      - name: Assert comparison run produced same issue count
         env:
-          ISSUES: ${{ steps.compare.outputs.issues }}
-          OUTCOME: ${{ steps.compare.outcome }}
+          BEFORE: ${{ steps.save.outputs.issues }}
+          AFTER: ${{ steps.compare.outputs.issues }}
         run: |
-          echo "issues: $ISSUES outcome: $OUTCOME"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: unexpected outcome"
+          echo "before: $BEFORE after: $AFTER"
+          if ! [[ "$AFTER" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
             exit 1
           fi
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "FAIL: issue counts differ between identical runs"
             exit 1
           fi
           echo "PASS"

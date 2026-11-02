@@ -1,7 +1,5 @@
-export function aUsed() {
-  return 'a';
-}
+import { helper } from './util.js';
 
-export function aUnused() {
-  return 'unused in a';
+export function main() {
+  return helper(1);
 }

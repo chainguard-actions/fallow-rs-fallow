@@ -1,7 +1,3 @@
-export function bUsed() {
-  return 'b';
-}
-
-export function bUnused() {
-  return 'unused in b';
+export function greet(name) {
+  return `hello ${name}`;
 }
