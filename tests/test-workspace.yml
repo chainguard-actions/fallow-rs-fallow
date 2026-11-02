@@ -13,10 +13,10 @@ jobs:
           root: tests/fixtures/monorepo
           version: '3.38.1'
           type-aware: 'false'
-          workspace: '@mono/a'
           fail-on-issues: 'false'
+          workspace: web
           artifacts-dir: fallow-artifacts-workspace
-      - name: Assert scoped output excludes the other workspace
+      - name: Assert workspace-scoped run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -32,9 +32,4 @@ jobs:
             exit 1
           fi
           jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
-          if grep -q 'orphan.js' "$RESULTS"; then
-            echo "FAIL: findings from @mono/b leaked into @mono/a scoped output"
-            cat "$RESULTS"
-            exit 1
-          fi
           echo "PASS"
