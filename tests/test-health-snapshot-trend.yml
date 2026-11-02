@@ -1,4 +1,4 @@
-name: Test save-snapshot then trend comparison
+name: Test health snapshot save then trend comparison
 on:
   workflow_dispatch:
 jobs:
@@ -6,6 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Clear any existing snapshots
+        run: rm -rf tests/fixtures/clean-project/.fallow/snapshots
       - id: snapshot
         uses: .
         with:
@@ -13,15 +15,23 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
           save-snapshot: 'true'
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-snapshot
-      - name: Assert snapshot written
+      - name: Assert snapshot was written
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
         run: |
-          FOUND="$(find tests/fixtures/clean-project/.fallow/snapshots .fallow/snapshots -type f 2>/dev/null || true)"
-          echo "snapshots: $FOUND"
-          if [ -z "$FOUND" ]; then
-            echo "FAIL: no snapshot file saved under .fallow/snapshots"
+          echo "issues: $ISSUES"
+          ls -la tests/fixtures/clean-project/.fallow/snapshots || true
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          count=$(find tests/fixtures/clean-project/.fallow/snapshots -type f 2>/dev/null | wc -l)
+          echo "snapshot files: $count"
+          if [ "$count" -lt 1 ]; then
+            echo "FAIL: no snapshot saved under .fallow/snapshots"
             exit 1
           fi
           echo "PASS"
@@ -32,14 +42,20 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
           trend: 'true'
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-trend
       - name: Assert trend run produced results
         env:
+          ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
+          echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing"
             exit 1

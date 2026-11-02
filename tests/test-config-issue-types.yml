@@ -1,0 +1,51 @@
+name: Test config file suppresses an issue-type filtered finding
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: noconfig
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.1'
+          type-aware: 'false'
+          issue-types: unused-deps
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-issue-types
+      - name: Assert unused dependency is reported without config
+        env:
+          ISSUES: ${{ steps.noconfig.outputs.issues }}
+          RESULTS: ${{ steps.noconfig.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected left-pad to be reported as an unused dependency"
+            exit 1
+          fi
+          grep -q 'left-pad' "$RESULTS" || { echo "FAIL: left-pad not in results"; cat "$RESULTS"; exit 1; }
+          echo "PASS"
+      - id: withconfig
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.1'
+          type-aware: 'false'
+          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
+          issue-types: unused-deps
+          fail-on-issues: 'true'
+          artifacts-dir: fallow-artifacts-config
+      - name: Assert config ignoreDependencies suppressed the finding
+        env:
+          ISSUES: ${{ steps.withconfig.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 unused-deps issues with ignoreDependencies config"
+            exit 1
+          fi
+          echo "PASS"

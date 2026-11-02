@@ -1,4 +1,4 @@
-name: Test dead-code with changed-since and issue-types
+name: Test health with Istanbul coverage and coverage-root
 on:
   workflow_dispatch:
 jobs:
@@ -6,28 +6,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
       - id: action
         uses: .
         with:
-          command: dead-code
-          root: tests/fixtures/dirty-project
+          command: health
+          root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /ci-build
+          max-crap: '30'
           fail-on-issues: 'false'
-          changed-since: HEAD
-          issue-types: unused-files,unused-exports
-          artifacts-dir: fallow-artifacts-changed-since
-      - name: Assert scoped run produced results
+          artifacts-dir: fallow-artifacts-coverage
+      - name: Assert health ran with coverage
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          echo "changed-files-unavailable: $UNAVAILABLE"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1

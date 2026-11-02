@@ -1,4 +1,4 @@
-name: Test explicit config file
+name: Test combined run restricted with only
 on:
   workflow_dispatch:
 jobs:
@@ -9,25 +9,26 @@ jobs:
       - id: action
         uses: .
         with:
-          command: dead-code
           root: tests/fixtures/clean-project
-          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
           version: '3.38.1'
           type-aware: 'false'
-          artifacts-dir: fallow-artifacts-config
-      - name: Assert clean project passes with explicit config
+          only: dead-code,health
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-only
+      - name: Assert combined run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 issues"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing"
             exit 1
           fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

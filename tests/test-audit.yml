@@ -1,4 +1,4 @@
-name: Test audit command with gate, worsened and baselines
+name: Test audit command with gate and dead-code baseline
 on:
   workflow_dispatch:
 jobs:
@@ -9,80 +9,51 @@ jobs:
         with:
           fetch-depth: 0
       - name: Prepare baseline directory
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-audit-baselines"
-      - id: save-dc
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/fallow-audit-baselines"
+          mkdir -p "$GITHUB_WORKSPACE/fallow-audit-baselines"
+      - id: dc-save
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
-          artifacts-dir: fallow-artifacts-audit-save-dc
-      - id: save-health
-        uses: .
-        with:
-          command: health
-          root: tests/fixtures/clean-project
-          version: '3.38.1'
-          type-aware: 'false'
           fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
-          artifacts-dir: fallow-artifacts-audit-save-health
-      - id: save-dupes
-        uses: .
-        with:
-          command: dupes
-          root: tests/fixtures/clean-project
-          version: '3.38.1'
-          type-aware: 'false'
-          fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
-          artifacts-dir: fallow-artifacts-audit-save-dupes
-      # audit compares against a git base; under workflow_dispatch there is no
-      # PR base, so we pass changed-since: HEAD. Accept success (verdict set)
-      # or a clean failure if fallow cannot resolve an audit base.
+          artifacts-dir: fallow-artifacts-audit-dc-save
       - id: action
         uses: .
-        continue-on-error: true
         with:
           command: audit
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
           changed-since: HEAD
           gate: all
           worsened: warn
           dead-code-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
-          health-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
-          dupes-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-audit
-      - name: Assert audit outcome
+      - name: Assert audit verdict and gate
         env:
-          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
           VERDICT: ${{ steps.action.outputs.verdict }}
           GATE: ${{ steps.action.outputs.gate }}
-          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
           echo "verdict: $VERDICT"
           echo "gate: $GATE"
-          echo "issues: $ISSUES"
-          if [ "$OUTCOME" = "success" ]; then
-            case "$VERDICT" in
-              pass|warn|fail) ;;
-              *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
-            esac
-            if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
-              echo "FAIL: expected gate 'all', got '$GATE'"
-              exit 1
-            fi
-            echo "PASS: audit produced verdict '$VERDICT'"
-          elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: audit failed cleanly (no resolvable audit base under workflow_dispatch)"
-          else
-            echo "FAIL: unexpected outcome '$OUTCOME'"
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: verdict must be pass/warn/fail"; exit 1 ;;
+          esac
+          if [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate output 'all'"
             exit 1
           fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          echo "PASS"

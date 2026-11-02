@@ -1,4 +1,4 @@
-name: Test changed-workspaces git-derived scoping
+name: Test dead-code scoped by changed-workspaces
 on:
   workflow_dispatch:
 jobs:
@@ -8,42 +8,30 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      # changed-workspaces derives the workspace set from git; with HEAD as the
-      # ref nothing changed. fallow may scope to an empty set (success) or
-      # treat it as a hard error (exit 2). A skipped step is a bug.
       - id: action
         uses: .
-        continue-on-error: true
         with:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
           changed-workspaces: HEAD
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-changed-ws
-      - name: Assert outcome
+      - name: Assert scoped run produced results
         env:
-          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if [ "$OUTCOME" = "success" ]; then
-            if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-              echo "FAIL: issues output is not a number"
-              exit 1
-            fi
-            if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-              echo "FAIL: results file missing"
-              exit 1
-            fi
-            echo "PASS: changed-workspaces run succeeded"
-          elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: changed-workspaces failed loudly instead of silently widening scope"
-          else
-            echo "FAIL: unexpected outcome '$OUTCOME'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          echo "PASS"
