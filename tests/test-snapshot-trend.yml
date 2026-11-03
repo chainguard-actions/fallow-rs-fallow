@@ -1,4 +1,4 @@
-name: Test save-snapshot then trend comparison
+name: Test save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,38 +6,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snap
+      - id: snapshot
         uses: .
         with:
           command: health
           root: tests/fixtures/clean-project
           version: '3.39.0'
+          save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          save-snapshot: 'true'
       - name: Assert snapshot saved
         run: |
-          find tests/fixtures/clean-project/.fallow -maxdepth 3 2>/dev/null || true
-          if [ -z "$(find tests/fixtures/clean-project/.fallow/snapshots -type f 2>/dev/null)" ]; then
-            echo "FAIL: no snapshot written under .fallow/snapshots"
+          find . -path '*/.fallow/snapshots/*' -type f 2>/dev/null || true
+          count=$(find . -path '*/.fallow/snapshots/*' -type f 2>/dev/null | wc -l)
+          echo "snapshot files: $count"
+          if [ "$count" -lt 1 ]; then
+            echo "FAIL: no snapshot written"
             exit 1
           fi
-          echo "PASS: snapshot saved"
-      - id: action
+          echo "PASS"
+      - id: trend
         uses: .
         with:
           command: health
           root: tests/fixtures/clean-project
           version: '3.39.0'
+          trend: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          trend: 'true'
-      - name: Assert trend run completed
+      - name: Assert trend run produced results
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.trend.outputs.issues }}
+          RESULTS: ${{ steps.trend.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"

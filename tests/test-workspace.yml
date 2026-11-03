@@ -1,4 +1,4 @@
-name: Test dead-code scoped to a single workspace
+name: Test workspace scoping
 on:
   workflow_dispatch:
 jobs:
@@ -12,11 +12,11 @@ jobs:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.39.0'
+          workspace: web
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          workspace: pkg-a
-      - name: Assert workspace-scoped results
+      - name: Assert output scoped to the web workspace
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -31,8 +31,9 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
-          if grep -q 'pkg-b/src' "$RESULTS"; then
-            echo "FAIL: pkg-b findings leaked into pkg-a scoped output"
+          if grep -q 'adminUnusedExport' "$RESULTS"; then
+            echo "FAIL: admin workspace findings leaked into web-scoped output"
+            head -c 4000 "$RESULTS"
             exit 1
           fi
           echo "PASS"
