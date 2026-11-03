@@ -25,10 +25,9 @@ jobs:
           auto-changed-since: 'false'
           annotations: 'false'
           coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /ci/project
-          max-crap: '30.0'
+          coverage-root: /ci-build
 
-      - name: Assert outputs
+      - name: Assert health ran with coverage
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -39,7 +38,7 @@ jobs:
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid: $RESULTS"
             exit 1
           fi
           echo "PASS"

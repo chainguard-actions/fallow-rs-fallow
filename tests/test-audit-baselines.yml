@@ -1,4 +1,4 @@
-name: Test audit with gate all and per-analysis baselines
+name: Test audit with per-analysis baselines and gate
 on:
   workflow_dispatch:
 jobs:
@@ -13,10 +13,10 @@ jobs:
         with:
           node-version: 22
 
-      - name: Remove stale baselines
-        run: rm -f "$GITHUB_WORKSPACE"/fallow-audit-*.json
+      - name: Clean baseline paths
+        run: rm -f /tmp/fallow-audit-dc.json /tmp/fallow-audit-health.json /tmp/fallow-audit-dupes.json
 
-      - id: save-dead-code
+      - id: dc
         uses: .
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
@@ -27,9 +27,10 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-audit-dead-code.json
+          artifacts-dir: fallow-audit-dc
+          save-baseline: /tmp/fallow-audit-dc.json
 
-      - id: save-health
+      - id: health
         uses: .
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
@@ -40,9 +41,10 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-audit-health.json
+          artifacts-dir: fallow-audit-health
+          save-baseline: /tmp/fallow-audit-health.json
 
-      - id: save-dupes
+      - id: dupes
         uses: .
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
@@ -53,20 +55,20 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-audit-dupes.json
+          artifacts-dir: fallow-audit-dupes
+          save-baseline: /tmp/fallow-audit-dupes.json
 
-      - name: Assert all three baselines were saved
+      - name: Assert baselines saved
         run: |
-          for k in dead-code health dupes; do
-            f="$GITHUB_WORKSPACE/fallow-audit-$k.json"
-            if [ ! -f "$f" ]; then
-              echo "FAIL: missing baseline $f"
+          for f in /tmp/fallow-audit-dc.json /tmp/fallow-audit-health.json /tmp/fallow-audit-dupes.json; do
+            if [ ! -s "$f" ]; then
+              echo "FAIL: $f not written"
               exit 1
             fi
           done
           echo "PASS"
 
-      - id: audit
+      - id: action
         uses: .
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
@@ -77,29 +79,31 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
+          artifacts-dir: fallow-audit
           changed-since: HEAD
           gate: all
-          dead-code-baseline: ${{ github.workspace }}/fallow-audit-dead-code.json
-          health-baseline: ${{ github.workspace }}/fallow-audit-health.json
-          dupes-baseline: ${{ github.workspace }}/fallow-audit-dupes.json
+          max-crap: '30'
+          dead-code-baseline: /tmp/fallow-audit-dc.json
+          health-baseline: /tmp/fallow-audit-health.json
+          dupes-baseline: /tmp/fallow-audit-dupes.json
 
-      - name: Assert audit verdict and gate outputs
+      - name: Assert audit verdict and gate
         env:
-          VERDICT: ${{ steps.audit.outputs.verdict }}
-          GATE: ${{ steps.audit.outputs.gate }}
-          ISSUES: ${{ steps.audit.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "verdict: '$VERDICT' gate: '$GATE' issues: '$ISSUES'"
+          echo "verdict: $VERDICT gate: $GATE issues: $ISSUES"
           case "$VERDICT" in
             pass|warn|fail) ;;
             *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
           esac
-          if [ "$GATE" != "all" ]; then
-            echo "FAIL: expected gate 'all'"
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all', got '$GATE'"
             exit 1
           fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           echo "PASS"

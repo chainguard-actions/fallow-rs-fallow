@@ -1,5 +1,7 @@
-import { helper } from './util.js';
+export function greet(name) {
+  return `hello ${name}`;
+}
 
-export function main() {
-  return helper(1);
+export function unusedHelper() {
+  return 42;
 }

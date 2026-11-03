@@ -1,4 +1,4 @@
-name: Test dead-code scoped to a single workspace
+name: Test dupes with min-tokens, min-lines, threshold and top
 on:
   workflow_dispatch:
 jobs:
@@ -18,31 +18,37 @@ jobs:
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
         with:
-          command: dead-code
-          root: tests/fixtures/monorepo
+          command: dupes
+          root: tests/fixtures/simple-js
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          workspace: pkg-a
+          artifacts-dir: fallow-dupes
+          min-tokens: '20'
+          min-lines: '3'
+          threshold: '100'
+          top: '5'
 
-      - name: Assert outputs
+      - name: Assert dupes ran and flags were forwarded
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
             echo "FAIL: results file missing or invalid"
             exit 1
           fi
-          # Nothing from pkg-b should leak into a pkg-a scoped run.
-          if grep -q 'pkg-b/' "$RESULTS"; then
-            echo "FAIL: pkg-b findings present in pkg-a scoped results"
-            exit 1
-          fi
+          cat fallow-dupes/fallow-analysis-args.sh
+          for flag in --min-tokens --min-lines --threshold --top; do
+            if ! grep -q -- "$flag" fallow-dupes/fallow-analysis-args.sh; then
+              echo "FAIL: $flag not forwarded"
+              exit 1
+            fi
+          done
           echo "PASS"

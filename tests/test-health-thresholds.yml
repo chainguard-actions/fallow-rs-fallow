@@ -1,4 +1,4 @@
-name: Test health with custom complexity thresholds
+name: Test health with custom thresholds, sort, top and threads
 on:
   workflow_dispatch:
 jobs:
@@ -26,33 +26,27 @@ jobs:
           annotations: 'false'
           max-cyclomatic: '2'
           max-cognitive: '2'
-          max-crap: '5.0'
+          max-crap: '30.0'
           sort: cognitive
-          top: '5'
+          top: '3'
           threads: '2'
 
-      - name: Assert issues output is a number
+      - name: Assert health ran with thresholds
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          echo "PASS: issues=$ISSUES"
-
-      - name: Assert results file is valid JSON
-        env:
-          RESULTS: ${{ steps.action.outputs.results }}
-        run: |
-          echo "results: $RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid: $RESULTS"
             exit 1
           fi
-          if ! jq empty "$RESULTS"; then
-            echo "FAIL: results file is not valid JSON"
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected complexFunction to exceed max-cyclomatic/max-cognitive of 2"
             exit 1
           fi
           echo "PASS"
