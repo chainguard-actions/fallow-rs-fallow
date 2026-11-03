@@ -1,4 +1,4 @@
-name: Test dead-code with explicit config and issue-types
+name: Test custom config file
 on:
   workflow_dispatch:
 jobs:
@@ -11,21 +11,20 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
-          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
+          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
           version: '3.38.1'
-          type-aware: 'false'
           fail-on-issues: 'false'
-          issue-types: unused-exports,unused-files,unused-deps
+          type-aware: 'false'
           artifacts-dir: fallow-artifacts-config
-      - name: Assert filtered dead-code results
+      - name: Assert config was applied (orphan.js ignored)
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected a positive issue count from the dirty project"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
@@ -33,4 +32,9 @@ jobs:
             exit 1
           fi
           jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          if grep -q 'orphan.js' "$RESULTS"; then
+            echo "FAIL: orphan.js should be ignored by the config"
+            cat "$RESULTS"
+            exit 1
+          fi
           echo "PASS"

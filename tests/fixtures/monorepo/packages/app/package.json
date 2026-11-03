@@ -1,0 +1,10 @@
+{
+  "name": "@mono/app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "dependencies": {
+    "@mono/lib": "1.0.0"
+  }
+}

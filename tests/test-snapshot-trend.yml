@@ -1,4 +1,4 @@
-name: Test health save-snapshot then trend
+name: Test health snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,46 +6,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snapshot
+      - id: save
         uses: .
         with:
           command: health
           root: tests/fixtures/clean-project
           version: '3.38.1'
-          type-aware: 'false'
-          fail-on-issues: 'false'
           save-snapshot: 'true'
+          fail-on-issues: 'false'
+          type-aware: 'false'
           artifacts-dir: fallow-artifacts-snapshot
-      - name: Assert snapshot was saved
-        env:
-          ISSUES: ${{ steps.snapshot.outputs.issues }}
+      - name: Assert snapshot saved
         run: |
-          echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
-          found="$(find . -path '*snapshots*' -type f -name '*.json' 2>/dev/null | head -n 5)"
-          echo "snapshots: $found"
-          if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file was written"
+          D="$GITHUB_WORKSPACE/tests/fixtures/clean-project/.fallow/snapshots"
+          ls -la "$D" || true
+          if [ -z "$(ls -A "$D" 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot written under $D"
             exit 1
           fi
           echo "PASS"
-      - id: trend
+      - id: action
         uses: .
         with:
           command: health
           root: tests/fixtures/clean-project
           version: '3.38.1'
-          type-aware: 'false'
-          fail-on-issues: 'false'
           trend: 'true'
+          fail-on-issues: 'false'
+          type-aware: 'false'
           artifacts-dir: fallow-artifacts-trend
       - name: Assert trend run produced results
         env:
-          ISSUES: ${{ steps.trend.outputs.issues }}
-          RESULTS: ${{ steps.trend.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"

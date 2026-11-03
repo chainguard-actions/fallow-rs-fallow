@@ -1,4 +1,4 @@
-name: Test dead-code with git-derived changed-workspaces
+name: Test changed-workspaces git-derived scoping
 on:
   workflow_dispatch:
 jobs:
@@ -8,15 +8,21 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      - name: Touch a file in the app workspace
+        run: |
+          f="tests/fixtures/monorepo/packages/app/src/index.js"
+          chmod u+w "$f" || true
+          echo "// touched by test" >> "$f"
+          git status --short || true
       - id: action
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.38.1'
-          type-aware: 'false'
-          fail-on-issues: 'false'
           changed-workspaces: HEAD
+          fail-on-issues: 'false'
+          type-aware: 'false'
           artifacts-dir: fallow-artifacts-changed-workspaces
       - name: Assert changed-workspaces run produced results
         env:

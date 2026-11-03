@@ -1,4 +1,4 @@
-name: Test security command with security-gate new
+name: Test security command with security-gate
 on:
   workflow_dispatch:
 jobs:
@@ -14,24 +14,24 @@ jobs:
           command: security
           root: tests/fixtures/clean-project
           version: '3.38.1'
-          type-aware: 'false'
-          fail-on-issues: 'false'
           changed-since: HEAD
           security-gate: new
+          fail-on-issues: 'false'
+          type-aware: 'false'
           artifacts-dir: fallow-artifacts-security
-      - name: Assert security ran with gate
+      - name: Assert security gate applied
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
         run: |
           echo "issues: $ISSUES"
           echo "gate: $GATE"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected no security candidates in clean fixture"
             exit 1
           fi
           if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new' or empty, got '$GATE'"
+            echo "FAIL: expected gate 'new'"
             exit 1
           fi
           echo "PASS"

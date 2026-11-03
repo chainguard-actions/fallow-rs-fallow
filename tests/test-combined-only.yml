@@ -9,11 +9,11 @@ jobs:
       - id: action
         uses: .
         with:
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
-          type-aware: 'false'
-          fail-on-issues: 'false'
           only: dead-code,health
+          fail-on-issues: 'false'
+          type-aware: 'false'
           artifacts-dir: fallow-artifacts-only
       - name: Assert combined run produced results
         env:
@@ -22,8 +22,8 @@ jobs:
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected dead-code issues in combined run"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then

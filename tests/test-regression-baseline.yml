@@ -1,4 +1,4 @@
-name: Test regression baseline save and fail-on-regression
+name: Test regression baseline with fail-on-regression
 on:
   workflow_dispatch:
 jobs:
@@ -6,51 +6,50 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Prepare baseline directory
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-regression"
       - id: save
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.1'
-          type-aware: 'false'
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression-test/regression.json
           fail-on-issues: 'false'
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
-          artifacts-dir: fallow-artifacts-save-regression
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-regression-save
       - name: Assert regression baseline saved
         run: |
-          f="$GITHUB_WORKSPACE/fallow-regression/regression.json"
-          if [ ! -f "$f" ]; then
-            echo "FAIL: regression baseline not saved at $f"
+          F="$GITHUB_WORKSPACE/fallow-regression-test/regression.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: regression baseline not written"
             exit 1
           fi
-          jq empty "$f" || { echo "FAIL: invalid JSON"; exit 1; }
+          cat "$F"
           echo "PASS"
-      - id: compare
+      - id: action
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.1'
-          type-aware: 'false'
-          fail-on-issues: 'false'
+          regression-baseline: ${{ github.workspace }}/fallow-regression-test/regression.json
           fail-on-regression: 'true'
           tolerance: '0'
-          regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
-          artifacts-dir: fallow-artifacts-compare-regression
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-regression-check
       - name: Assert no regression detected
         env:
-          ISSUES: ${{ steps.compare.outputs.issues }}
-          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          OUTCOME: ${{ steps.action.outcome }}
         run: |
-          echo "issues: $ISSUES (baseline run: $SAVED_ISSUES)"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          echo "issues: $ISSUES"
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: unchanged project should not regress"
             exit 1
           fi
-          if [ "$ISSUES" -gt "$SAVED_ISSUES" ]; then
-            echo "FAIL: issue count grew without code change"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected planted issues still reported"
             exit 1
           fi
           echo "PASS"

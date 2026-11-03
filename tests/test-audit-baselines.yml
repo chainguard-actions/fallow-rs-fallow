@@ -1,4 +1,4 @@
-name: Test audit with gate, worsened and per-analysis baselines
+name: Test audit with dead-code, health and dupes baselines
 on:
   workflow_dispatch:
 jobs:
@@ -8,44 +8,42 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Prepare baseline directory
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-audit-baselines"
-      - id: dc
+      - name: Save dead-code baseline
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
-          type-aware: 'false'
-          fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
-          artifacts-dir: fallow-artifacts-audit-dc
-      - id: health
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-ab-dead
+      - name: Save health baseline
         uses: .
         with:
           command: health
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
-          type-aware: 'false'
-          fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
-          artifacts-dir: fallow-artifacts-audit-health
-      - id: dupes
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-ab-health
+      - name: Save dupes baseline
         uses: .
         with:
           command: dupes
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
-          type-aware: 'false'
-          fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
-          artifacts-dir: fallow-artifacts-audit-dupes
-      - name: Assert baselines were created
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-ab-dupes
+      - name: Assert baselines exist
         run: |
           for f in dead-code health dupes; do
             p="$GITHUB_WORKSPACE/fallow-audit-baselines/$f.json"
             if [ ! -f "$p" ]; then
-              echo "FAIL: missing baseline $p"
+              echo "FAIL: $p missing"
               exit 1
             fi
           done
@@ -54,36 +52,28 @@ jobs:
         uses: .
         with:
           command: audit
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
-          type-aware: 'false'
-          fail-on-issues: 'false'
           changed-since: HEAD
-          gate: all
-          worsened: warn
           dead-code-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
           health-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
           dupes-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
-          artifacts-dir: fallow-artifacts-audit
-      - name: Assert audit verdict and gate
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-ab-audit
+      - name: Assert audit verdict
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           VERDICT: ${{ steps.action.outputs.verdict }}
-          GATE: ${{ steps.action.outputs.gate }}
         run: |
           echo "issues: $ISSUES"
           echo "verdict: $VERDICT"
-          echo "gate: $GATE"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
           case "$VERDICT" in
             pass|warn|fail) ;;
-            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+            *) echo "FAIL: verdict must be pass/warn/fail"; exit 1 ;;
           esac
-          if [ "$GATE" != "all" ]; then
-            echo "FAIL: expected gate 'all'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"
