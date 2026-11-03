@@ -1,4 +1,4 @@
-name: Test health score gates (min-score / min-severity)
+name: Test dead-code with config, issue-types and threads
 on:
   workflow_dispatch:
 jobs:
@@ -9,30 +9,23 @@ jobs:
       - id: action
         uses: .
         with:
-          command: health
+          command: dead-code
           root: tests/fixtures/sample-project
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
+          issue-types: unused-files
+          threads: '2'
           version: '3.36.0'
           fail-on-issues: 'false'
-          min-score: '0'
-          min-severity: critical
-          artifacts-dir: fallow-artifacts-health-min-score
-      - name: Assert gates passed on a tiny project
+          artifacts-dir: fallow-artifacts-config
+      - name: Assert unused file reported
         env:
-          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
-          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          echo "gates-failed: $GATES_FAILED"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: min-score 0 should never fail"
-            exit 1
-          fi
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one unused-files issue"
             exit 1
           fi
           case "$RESULTS" in
@@ -44,4 +37,9 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
+          if ! grep -q "orphan" "$FILE"; then
+            echo "FAIL: expected orphan.ts in unused files"
+            cat "$FILE"
+            exit 1
+          fi
           echo "PASS"

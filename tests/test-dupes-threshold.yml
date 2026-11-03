@@ -1,0 +1,35 @@
+name: Test dupes with threshold and size limits
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          threshold: '100'
+          min-tokens: '10'
+          min-lines: '2'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-dupes-threshold
+      - name: Assert threshold gate did not fail
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "gates-failed: $GATES_FAILED"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          if echo "$GATES_FAILED" | grep -q "duplication-threshold"; then
+            echo "FAIL: 100% threshold should never fail"
+            exit 1
+          fi
+          echo "PASS"

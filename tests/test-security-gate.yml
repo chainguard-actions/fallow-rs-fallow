@@ -14,11 +14,11 @@ jobs:
           command: security
           root: tests/fixtures/sample-project
           version: '3.36.0'
-          fail-on-issues: 'false'
-          changed-since: HEAD
           security-gate: new
+          changed-since: HEAD
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-security
-      - name: Assert security run completed
+      - name: Assert security run produced a count
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
@@ -26,11 +26,11 @@ jobs:
           echo "issues: $ISSUES"
           echo "gate: $GATE"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new'"
+            echo "FAIL: unexpected gate '$GATE'"
             exit 1
           fi
           echo "PASS"

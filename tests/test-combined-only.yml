@@ -1,4 +1,4 @@
-name: Test combined run restricted with only
+name: Test combined run with only selector
 on:
   workflow_dispatch:
 jobs:
@@ -11,8 +11,8 @@ jobs:
         with:
           root: tests/fixtures/sample-project
           version: '3.36.0'
-          fail-on-issues: 'false'
           only: dead-code,health
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-only
       - name: Assert combined results produced
         env:
@@ -22,7 +22,7 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           case "$RESULTS" in

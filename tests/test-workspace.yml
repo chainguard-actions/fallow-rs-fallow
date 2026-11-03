@@ -1,4 +1,4 @@
-name: Test dead-code scoped to a workspace
+name: Test workspace scoping in a monorepo
 on:
   workflow_dispatch:
 jobs:
@@ -12,10 +12,10 @@ jobs:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.36.0'
+          workspace: web
           fail-on-issues: 'false'
-          workspace: pkg-a
           artifacts-dir: fallow-artifacts-workspace
-      - name: Assert workspace-scoped results
+      - name: Assert results scoped to web workspace
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -23,7 +23,7 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           case "$RESULTS" in
@@ -35,8 +35,9 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
-          if grep -q "pkg-b/src" "$FILE"; then
-            echo "FAIL: pkg-b findings leaked into pkg-a scoped output"
+          if grep -q "packages/api" "$FILE"; then
+            echo "FAIL: api workspace findings leaked into web-scoped output"
+            cat "$FILE"
             exit 1
           fi
           echo "PASS"

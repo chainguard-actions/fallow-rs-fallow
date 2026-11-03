@@ -1,4 +1,4 @@
-name: Test dead-code save-baseline then baseline
+name: Test baseline save and load
 on:
   workflow_dispatch:
 jobs:
@@ -6,6 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline directory
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
       - id: save
         uses: .
         with:
@@ -13,16 +15,19 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-baseline.json
+          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          save-regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
           artifacts-dir: fallow-artifacts-baseline-save
-      - name: Assert baseline saved
+      - name: Assert baselines saved
         run: |
-          if [ ! -s "$GITHUB_WORKSPACE/fallow-baseline.json" ]; then
-            echo "FAIL: baseline file not saved"
-            exit 1
-          fi
-          jq empty "$GITHUB_WORKSPACE/fallow-baseline.json" || { echo "FAIL: baseline not JSON"; exit 1; }
-          cat "$GITHUB_WORKSPACE/fallow-baseline.json"
+          ls -la "$GITHUB_WORKSPACE/fallow-baselines"
+          for f in dead-code.json regression.json; do
+            if [ ! -s "$GITHUB_WORKSPACE/fallow-baselines/$f" ]; then
+              echo "FAIL: $f not written"
+              exit 1
+            fi
+            jq empty "$GITHUB_WORKSPACE/fallow-baselines/$f" || { echo "FAIL: $f invalid JSON"; exit 1; }
+          done
           echo "PASS"
       - id: load
         uses: .
@@ -31,17 +36,25 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'true'
-          baseline: ${{ github.workspace }}/fallow-baseline.json
+          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
+          fail-on-regression: 'true'
           artifacts-dir: fallow-artifacts-baseline-load
-      - name: Assert baselined findings suppressed
+      - name: Assert baseline suppresses known issues
         env:
-          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
           ISSUES: ${{ steps.load.outputs.issues }}
+          BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
+          GATES_FAILED: ${{ steps.load.outputs.gates-failed }}
         run: |
-          echo "issues before baseline: $SAVED_ISSUES"
-          echo "issues with baseline: $ISSUES"
+          echo "issues: $ISSUES"
+          echo "baseline-path: $BASELINE_PATH"
+          echo "gates-failed: $GATES_FAILED"
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 issues once baselined"
+            echo "FAIL: expected 0 issues after baseline"
+            exit 1
+          fi
+          if echo "$GATES_FAILED" | grep -q "regression"; then
+            echo "FAIL: regression gate failed unexpectedly"
             exit 1
           fi
           echo "PASS"

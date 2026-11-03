@@ -1,4 +1,4 @@
-name: Test health with complexity thresholds
+name: Test health thresholds with coverage
 on:
   workflow_dispatch:
 jobs:
@@ -12,22 +12,27 @@ jobs:
           command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
-          fail-on-issues: 'false'
-          max-cyclomatic: '5'
-          max-cognitive: '5'
-          max-crap: '10'
-          sort: cognitive
+          max-cyclomatic: '20'
+          max-cognitive: '15'
+          max-crap: '30'
           top: '5'
+          sort: cognitive
+          min-severity: critical
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /build
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-health-thresholds
-      - name: Assert health results produced
+      - name: Assert health ran and severity gate did not fail
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          echo "gates-failed: $GATES_FAILED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           case "$RESULTS" in
@@ -39,4 +44,8 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
+          if echo "$GATES_FAILED" | grep -q "health-min-severity"; then
+            echo "FAIL: min-severity gate failed on trivial project"
+            exit 1
+          fi
           echo "PASS"

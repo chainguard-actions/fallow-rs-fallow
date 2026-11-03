@@ -1,4 +1,4 @@
-name: Test health hotspots with git history window
+name: Test health hotspots with since and min-commits
 on:
   workflow_dispatch:
 jobs:
@@ -14,12 +14,12 @@ jobs:
           command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
-          fail-on-issues: 'false'
           hotspots: 'true'
           since: 1y
           min-commits: '1'
-          artifacts-dir: fallow-artifacts-health-hotspots
-      - name: Assert health results produced
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-hotspots
+      - name: Assert hotspot run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -27,7 +27,7 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           case "$RESULTS" in

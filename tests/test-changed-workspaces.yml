@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-workspaces
+name: Test changed-workspaces scoping in a monorepo
 on:
   workflow_dispatch:
 jobs:
@@ -8,16 +8,22 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      - name: Modify a file in the web workspace
+        run: |
+          F="$GITHUB_WORKSPACE/tests/fixtures/monorepo/packages/web/src/greet.ts"
+          chmod u+w "$F" || true
+          printf '\n// touched by test\n' >> "$F"
+          git -C "$GITHUB_WORKSPACE" status --short || true
       - id: action
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.36.0'
-          fail-on-issues: 'false'
           changed-workspaces: HEAD
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-changed-workspaces
-      - name: Assert scoped run produced results
+      - name: Assert changed-workspaces run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -25,7 +31,7 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           case "$RESULTS" in
@@ -37,4 +43,8 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
+          if grep -q "packages/api" "$FILE"; then
+            echo "FAIL: unchanged api workspace appeared in output"
+            exit 1
+          fi
           echo "PASS"
