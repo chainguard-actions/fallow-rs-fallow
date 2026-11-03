@@ -1,6 +1,8 @@
 {
-  "name": "fallow-monorepo",
+  "name": "fallow-mono-root",
   "version": "1.0.0",
   "private": true,
-  "workspaces": ["packages/*"]
+  "workspaces": [
+    "packages/*"
+  ]
 }
