@@ -1,4 +1,4 @@
-name: Test workspace scoping in a monorepo
+name: Test dead-code scoped to a single workspace package
 on:
   workflow_dispatch:
 jobs:
@@ -10,58 +10,53 @@ jobs:
       - name: Create monorepo fixture
         run: |
           set -e
-          rm -rf fallow-mono
-          mkdir -p fallow-mono/packages/pkg-a fallow-mono/packages/pkg-b
-          cd fallow-mono
-          cat > package.json <<'EOF'
-          {"name":"mono","version":"1.0.0","private":true,"workspaces":["packages/*"]}
+          D=fx-workspace
+          rm -rf "$D"
+          mkdir -p "$D/packages/pkg-a/src" "$D/packages/pkg-b/src"
+          cat > "$D/package.json" <<'EOF'
+          {"name":"fx-workspace","version":"1.0.0","private":true,"workspaces":["packages/*"]}
           EOF
-          cat > packages/pkg-a/package.json <<'EOF'
-          {"name":"pkg-a","version":"1.0.0","main":"index.js"}
+          for p in pkg-a pkg-b; do
+            cat > "$D/packages/$p/package.json" <<EOF
+          {"name":"$p","version":"1.0.0","type":"module","main":"src/index.js"}
           EOF
-          cat > packages/pkg-a/index.js <<'EOF'
-          import { helper } from './helper.js';
-          export const a = helper();
+            cat > "$D/packages/$p/src/index.js" <<'EOF'
+          import { used } from './util.js';
+          console.log(used(1));
           EOF
-          cat > packages/pkg-a/helper.js <<'EOF'
-          export function helper() { return 'a'; }
-          export function unusedHelper() { return 'x'; }
+            cat > "$D/packages/$p/src/util.js" <<'EOF'
+          export function used(n) { return n + 1; }
+          export function unusedHelper() { return 42; }
           EOF
-          cat > packages/pkg-b/package.json <<'EOF'
-          {"name":"pkg-b","version":"1.0.0","main":"index.js"}
-          EOF
-          cat > packages/pkg-b/index.js <<'EOF'
-          export const b = 'b';
-          EOF
-          cat > packages/pkg-b/orphan.js <<'EOF'
-          export const orphan = 1;
-          EOF
+          done
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: fallow-mono
+          root: fx-workspace
           workspace: pkg-a
+          artifacts-dir: fx-workspace-artifacts
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert outputs
+      - name: Assert workspace-scoped outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected integer issues, got '$ISSUES'"
+            echo "FAIL: expected non-negative integer, got '$ISSUES'"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          [ -f "$RESULTS" ] && jq empty "$RESULTS" || { echo "FAIL: invalid results file"; exit 1; }
+          grep -q -- "--workspace pkg-a" fx-workspace-artifacts/fallow-analysis-args.sh || { echo "FAIL: --workspace not forwarded"; exit 1; }
+          if jq -e '.. | objects | select(has("path")) | .path | strings | select(test("packages/pkg-b/src/util"))' "$RESULTS" > /dev/null 2>&1; then
+            echo "FAIL: findings reference pkg-b despite workspace: pkg-a"
             exit 1
           fi
           echo "PASS"

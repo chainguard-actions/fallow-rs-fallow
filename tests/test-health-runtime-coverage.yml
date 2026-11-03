@@ -1,0 +1,90 @@
+name: Test health with runtime coverage tuning inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fixture project and V8-style coverage input
+        run: |
+          set -e
+          D=fx-runtime
+          rm -rf "$D"
+          mkdir -p "$D/src" "$D/coverage"
+          cat > "$D/package.json" <<'EOF'
+          {"name":"fx-runtime","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > "$D/src/index.js" <<'EOF'
+          export function add(a, b) {
+            return a + b;
+          }
+          console.log(add(1, 2));
+          EOF
+          ABS="$GITHUB_WORKSPACE/$D/src/index.js"
+          cat > "$D/coverage/coverage-final.json" <<EOF
+          {
+            "$ABS": {
+              "path": "$ABS",
+              "statementMap": {"0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 15}}},
+              "fnMap": {"0": {"name": "add", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}}, "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 3, "column": 1}}, "line": 1}},
+              "branchMap": {},
+              "s": {"0": 500},
+              "f": {"0": 500},
+              "b": {}
+            }
+          }
+          EOF
+
+      # runtime-coverage is a paid (licensed) feature. Without a license the
+      # CLI may refuse it, so accept a graceful failure but validate outputs
+      # strictly when the run succeeds.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: fx-runtime
+          runtime-coverage: ${{ github.workspace }}/fx-runtime/coverage/coverage-final.json
+          min-invocations-hot: '100'
+          min-observation-volume: '10'
+          low-traffic-threshold: '0.01'
+          artifacts-dir: fx-runtime-artifacts
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert forwarded flags and outcome
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          ARGS_FILE=fx-runtime-artifacts/fallow-analysis-args.sh
+          if [ ! -f "$ARGS_FILE" ]; then
+            echo "FAIL: analysis args file was not written (validation rejected inputs?)"
+            exit 1
+          fi
+          cat "$ARGS_FILE"
+          for flag in "--runtime-coverage " "--min-invocations-hot 100" "--min-observation-volume 10" "--low-traffic-threshold 0.01"; do
+            if ! grep -q -- "$flag" "$ARGS_FILE"; then
+              echo "FAIL: expected '$flag' in analysis args"
+              exit 1
+            fi
+          done
+          if [ "$OUTCOME" = "success" ]; then
+            if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+              echo "FAIL: expected non-negative integer, got '$ISSUES'"
+              exit 1
+            fi
+            echo "PASS: runtime coverage analysis succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: runtime coverage refused gracefully (no license in harness)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

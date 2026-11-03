@@ -1,0 +1,122 @@
+name: Test audit with gate all and per-analysis baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Create fixture project
+        run: |
+          set -e
+          D=fx-audit
+          rm -rf "$D"
+          mkdir -p "$D/src"
+          cat > "$D/package.json" <<'EOF'
+          {"name":"fx-audit","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > "$D/src/index.js" <<'EOF'
+          import { used } from './util.js';
+          console.log(used(3));
+          EOF
+          cat > "$D/src/util.js" <<'EOF'
+          export function used(n) { return n + 1; }
+          export function unusedHelper() { return 42; }
+          EOF
+
+      - id: save-dead-code
+        uses: .
+        with:
+          command: dead-code
+          root: fx-audit
+          save-baseline: ${{ github.workspace }}/fx-audit-data/dead-code.json
+          artifacts-dir: fx-audit-artifacts-dc
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - id: save-health
+        uses: .
+        with:
+          command: health
+          root: fx-audit
+          save-baseline: ${{ github.workspace }}/fx-audit-data/health.json
+          artifacts-dir: fx-audit-artifacts-health
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - id: save-dupes
+        uses: .
+        with:
+          command: dupes
+          root: fx-audit
+          save-baseline: ${{ github.workspace }}/fx-audit-data/dupes.json
+          artifacts-dir: fx-audit-artifacts-dupes
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert baselines saved
+        run: |
+          for f in dead-code health dupes; do
+            P="$GITHUB_WORKSPACE/fx-audit-data/$f.json"
+            if [ ! -f "$P" ]; then
+              echo "FAIL: $P not saved"
+              exit 1
+            fi
+          done
+          echo "PASS"
+
+      - id: action
+        uses: .
+        with:
+          command: audit
+          root: fx-audit
+          changed-since: HEAD
+          gate: all
+          dead-code-baseline: ${{ github.workspace }}/fx-audit-data/dead-code.json
+          health-baseline: ${{ github.workspace }}/fx-audit-data/health.json
+          dupes-baseline: ${{ github.workspace }}/fx-audit-data/dupes.json
+          artifacts-dir: fx-audit-artifacts
+          fail-on-issues: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert audit outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: expected non-negative integer, got '$ISSUES'"
+            exit 1
+          fi
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+          esac
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all', got '$GATE'"
+            exit 1
+          fi
+          ARGS_FILE=fx-audit-artifacts/fallow-analysis-args.sh
+          cat "$ARGS_FILE"
+          for flag in "--gate all" "--dead-code-baseline" "--health-baseline" "--dupes-baseline"; do
+            grep -q -- "$flag" "$ARGS_FILE" || { echo "FAIL: '$flag' not forwarded"; exit 1; }
+          done
+          echo "PASS"

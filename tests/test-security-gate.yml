@@ -1,0 +1,55 @@
+name: Test security command with security-gate new
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Create fixture project
+        run: |
+          set -e
+          D=fx-security
+          rm -rf "$D"
+          mkdir -p "$D/src"
+          cat > "$D/package.json" <<'EOF'
+          {"name":"fx-security","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > "$D/src/index.js" <<'EOF'
+          export function add(a, b) { return a + b; }
+          console.log(add(1, 2));
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          command: security
+          root: fx-security
+          changed-since: HEAD
+          security-gate: new
+          artifacts-dir: fx-security-artifacts
+          fail-on-issues: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert security outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "gate: $GATE"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: expected non-negative integer, got '$ISSUES'"
+            exit 1
+          fi
+          if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
+            echo "FAIL: expected gate 'new', got '$GATE'"
+            exit 1
+          fi
+          grep -q -- "--gate new" fx-security-artifacts/fallow-analysis-args.sh || { echo "FAIL: --gate new not forwarded"; exit 1; }
+          echo "PASS"
