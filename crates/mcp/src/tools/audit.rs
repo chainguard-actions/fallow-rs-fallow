@@ -1,0 +1,1171 @@
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+use crate::params::AuditParams;
+
+use fallow_api::{
+    AnalysisOptions, AuditGate, AuditOptions, AuditWorsened, CoverageInputs, ProgrammaticError,
+    run_audit as run_audit_api, serialize_audit_programmatic_json,
+};
+use rmcp::ErrorData as McpError;
+use rmcp::model::{CallToolResult, ContentBlock};
+
+use super::{
+    VALID_AUDIT_GATES, VALID_AUDIT_WORSENED,
+    api_runtime::{
+        EnvScope, call_cancellation, non_empty_path, non_empty_string,
+        resolve_typed_coverage_inputs, run_api_blocking, shared_analysis_options, shared_params,
+        typed_tool_result, typed_type_aware, workspace_patterns_from_param,
+    },
+    fallback_policy::{baseline_requested, filled, grouped_requested, type_aware_requested},
+    push_global, push_remote_extends, push_scope, push_str_flag, run_tool, validation_error_body,
+};
+
+/// Run the `audit` tool through the typed API when parameters map cleanly to
+/// the programmatic contract, falling back to the CLI for CLI-only surfaces.
+/// The baseline keys of the `audit` config section and config-sourced
+/// type-aware analysis are CLI-only too; see
+/// [`super::api_runtime::typed_error_needs_cli`].
+pub async fn run_audit(binary: &str, params: AuditParams) -> Result<CallToolResult, McpError> {
+    if !requires_cli_fallback(&params) {
+        let cancellation = call_cancellation();
+        let options = match audit_options_from_params(&params, Some(Arc::clone(&cancellation))) {
+            Ok(options) => options,
+            Err(msg) => return Ok(CallToolResult::error(vec![ContentBlock::text(msg)])),
+        };
+        let result = run_api_blocking("audit", cancellation, move || {
+            audit_typed_value(options, None)
+        })
+        .await?;
+        if let Some(result) = typed_tool_result(result) {
+            return Ok(result);
+        }
+    }
+
+    match build_audit_args(&params) {
+        Ok(args) => run_tool(binary, "audit", &args).await,
+        Err(msg) => Ok(CallToolResult::error(vec![ContentBlock::text(msg)])),
+    }
+}
+
+/// The typed route's blocking body: resolve the coverage inputs with the CLI's
+/// precedence (#2368), run the audit, and serialize it. `env` supplies the
+/// environment coverage layer, with `None` reading the process environment as
+/// [`run_audit`] does. Production and the precedence tests both call this, so
+/// the tests hold the shipping code rather than a parallel copy of it.
+fn audit_typed_value(
+    options: AuditOptions,
+    env: Option<CoverageInputs>,
+) -> Result<serde_json::Value, ProgrammaticError> {
+    let options = with_resolved_coverage(options, env)?;
+    run_audit_api(&options).and_then(serialize_audit_programmatic_json)
+}
+
+/// [`audit_typed_value`] reached the way [`run_audit`] reaches it: through the
+/// CLI-fallback decision and the same parameter mapping, without the async
+/// rmcp shell.
+#[cfg(test)]
+fn run_audit_api_value(params: &AuditParams) -> Result<Option<serde_json::Value>, String> {
+    run_audit_api_value_with_env(params, None)
+}
+
+/// [`run_audit_api_value`] with the environment coverage layer injected, so
+/// the precedence can be exercised without mutating the process environment.
+#[cfg(test)]
+fn run_audit_api_value_with_env(
+    params: &AuditParams,
+    env: Option<CoverageInputs>,
+) -> Result<Option<serde_json::Value>, String> {
+    if requires_cli_fallback(params) {
+        return Ok(None);
+    }
+    let options = audit_options_from_params(params, None)?;
+    super::api_runtime::typed_api_value(audit_typed_value(options, env))
+}
+
+/// Fill the typed route's coverage inputs from the explicit parameters, the
+/// environment, and the project config with the CLI's precedence (#2368).
+fn with_resolved_coverage(
+    mut options: AuditOptions,
+    env: Option<CoverageInputs>,
+) -> Result<AuditOptions, ProgrammaticError> {
+    let explicit = CoverageInputs {
+        coverage: options.coverage.take(),
+        coverage_root: options.coverage_root.take(),
+    };
+    let resolved =
+        resolve_typed_coverage_inputs(&options.analysis, explicit, env, "audit.coverageRoot")?;
+    options.coverage = resolved.coverage;
+    options.coverage_root = resolved.coverage_root;
+    Ok(options)
+}
+
+/// Build CLI arguments for the `audit` tool.
+pub fn build_audit_args(params: &AuditParams) -> Result<Vec<String>, String> {
+    if let Some(ref gate) = params.gate
+        && !VALID_AUDIT_GATES.contains(&gate.as_str())
+    {
+        return Err(validation_error_body(format!(
+            "Invalid gate '{gate}'. Valid values: new-only, all"
+        )));
+    }
+    if let Some(ref worsened) = params.worsened
+        && !VALID_AUDIT_WORSENED.contains(&worsened.as_str())
+    {
+        return Err(validation_error_body(format!(
+            "Invalid worsened '{worsened}'. Valid values: warn, error, off"
+        )));
+    }
+    validate_audit_selection(params)?;
+
+    let mut args = vec![
+        "audit".to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+        "--quiet".to_string(),
+        "--explain".to_string(),
+    ];
+
+    push_global(
+        &mut args,
+        params.root.as_deref(),
+        params.config.as_deref(),
+        params.no_cache,
+        params.threads,
+    );
+    push_remote_extends(&mut args, params.allow_remote_extends);
+    super::push_type_aware(
+        &mut args,
+        params.type_aware,
+        params.type_aware_projects.as_deref(),
+        params.type_aware_require,
+    );
+    push_str_flag(&mut args, "--base", params.base.as_deref());
+    push_scope(&mut args, params.production, params.workspace.as_deref());
+    push_audit_production_flags(&mut args, params);
+    push_selection(&mut args, "--only", params.only.as_deref());
+    push_selection(&mut args, "--skip", params.skip.as_deref());
+    if params.css == Some(false) {
+        args.push("--no-css".to_string());
+    }
+    if params.css_deep == Some(true) {
+        args.push("--css-deep".to_string());
+    } else if params.css_deep == Some(false) {
+        args.push("--no-css-deep".to_string());
+    }
+    push_str_flag(&mut args, "--group-by", params.group_by.as_deref());
+    push_str_flag(&mut args, "--gate", params.gate.as_deref());
+    push_str_flag(&mut args, "--worsened", params.worsened.as_deref());
+    push_audit_baseline_flags(&mut args, params);
+    if params.explain_skipped == Some(true) {
+        args.push("--explain-skipped".to_string());
+    }
+    push_audit_coverage_flags(&mut args, params);
+
+    Ok(args)
+}
+
+/// Push the per-analysis production-mode flags for the `audit` tool.
+fn push_audit_production_flags(args: &mut Vec<String>, params: &AuditParams) {
+    if params.production_dead_code == Some(true) {
+        args.push("--production-dead-code".to_string());
+    }
+    if params.production_health == Some(true) {
+        args.push("--production-health".to_string());
+    }
+    if params.production_dupes == Some(true) {
+        args.push("--production-dupes".to_string());
+    }
+}
+
+/// Push the per-sub-analysis baseline flags for the `audit` tool.
+fn push_audit_baseline_flags(args: &mut Vec<String>, params: &AuditParams) {
+    push_str_flag(
+        args,
+        "--dead-code-baseline",
+        params.dead_code_baseline.as_deref(),
+    );
+    push_str_flag(args, "--health-baseline", params.health_baseline.as_deref());
+    push_str_flag(
+        args,
+        "--baseline-mode",
+        params.health_baseline_mode.map(|mode| mode.as_cli()),
+    );
+    push_str_flag(args, "--dupes-baseline", params.dupes_baseline.as_deref());
+}
+
+/// Push the coverage, entry-export, and runtime-coverage flags for `audit`.
+fn push_audit_coverage_flags(args: &mut Vec<String>, params: &AuditParams) {
+    if let Some(max_crap) = params.max_crap {
+        args.extend(["--max-crap".to_string(), format!("{max_crap}")]);
+    }
+    push_str_flag(args, "--coverage", params.coverage.as_deref());
+    push_str_flag(args, "--coverage-root", params.coverage_root.as_deref());
+    if params.include_entry_exports == Some(true) {
+        args.push("--include-entry-exports".to_string());
+    }
+    if params.show_cascade == Some(true) {
+        args.push("--show-cascade".to_string());
+    }
+    push_str_flag(
+        args,
+        "--runtime-coverage",
+        params.runtime_coverage.as_deref(),
+    );
+    if let Some(min_invocations_hot) = params.min_invocations_hot {
+        args.extend([
+            "--min-invocations-hot".to_string(),
+            format!("{min_invocations_hot}"),
+        ]);
+    }
+}
+
+/// The values of `only` and `skip`, as bare `fallow --only` takes them.
+const AUDIT_SELECTION_VALUES: [&str; 5] = ["dead-code", "check", "architecture", "dupes", "health"];
+
+/// Reject a selection the CLI would reject, with the MCP parameter names.
+fn validate_audit_selection(params: &AuditParams) -> Result<(), String> {
+    let only = params.only.as_deref().unwrap_or_default();
+    let skip = params.skip.as_deref().unwrap_or_default();
+    if !only.is_empty() && !skip.is_empty() {
+        return Err(validation_error_body(
+            "only and skip are mutually exclusive. Remove one of the two parameters.",
+        ));
+    }
+    if let Some(value) = only
+        .iter()
+        .chain(skip)
+        .find(|value| !AUDIT_SELECTION_VALUES.contains(&value.as_str()))
+    {
+        return Err(validation_error_body(format!(
+            "Invalid sub-analysis '{value}'. Valid values: dead-code, architecture, dupes, health"
+        )));
+    }
+    let left_out = |names: &[&str]| {
+        if only.is_empty() {
+            skip.iter().any(|value| names.contains(&value.as_str()))
+        } else {
+            !only.iter().any(|value| names.contains(&value.as_str()))
+        }
+    };
+    for (names, param, baseline) in [
+        (
+            &["dead-code", "check", "architecture"][..],
+            "dead_code_baseline",
+            params.dead_code_baseline.as_deref(),
+        ),
+        (
+            &["health"][..],
+            "health_baseline",
+            params.health_baseline.as_deref(),
+        ),
+        (
+            &["dupes"][..],
+            "dupes_baseline",
+            params.dupes_baseline.as_deref(),
+        ),
+    ] {
+        // `skip: ["architecture"]` keeps the dead-code pass, so only the
+        // dead-code names count on the skip side.
+        let names = if only.is_empty() {
+            &names[..names.len().min(2)]
+        } else {
+            names
+        };
+        if filled(baseline) && left_out(names) {
+            return Err(validation_error_body(format!(
+                "{param} has no effect: only or skip leaves that sub-analysis out. Remove one of the parameters."
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Push `--only` or `--skip` with a comma-separated value list.
+fn push_selection(args: &mut Vec<String>, flag: &str, values: Option<&[String]>) {
+    if let Some(values) = values.filter(|values| !values.is_empty()) {
+        args.extend([flag.to_string(), values.join(",")]);
+    }
+}
+
+/// An invalid `gate` or `worsened` also takes the CLI, so the CLI reports the
+/// error. A
+/// sub-analysis selection takes the CLI too, so `only` and `skip` keep the
+/// exact bare `fallow` semantics, including `architecture`.
+fn requires_cli_fallback(params: &AuditParams) -> bool {
+    let gate = params.gate.as_deref().unwrap_or("new-only");
+    !VALID_AUDIT_GATES.contains(&gate)
+        || params
+            .worsened
+            .as_deref()
+            .is_some_and(|worsened| !VALID_AUDIT_WORSENED.contains(&worsened))
+        || params
+            .only
+            .as_ref()
+            .is_some_and(|values| !values.is_empty())
+        || params
+            .skip
+            .as_ref()
+            .is_some_and(|values| !values.is_empty())
+        || type_aware_requested(
+            params.type_aware,
+            params.type_aware_projects.as_deref(),
+            params.type_aware_require.as_ref(),
+        )
+        || baseline_requested(params.dead_code_baseline.as_deref(), None)
+        || baseline_requested(params.health_baseline.as_deref(), None)
+        || baseline_requested(params.dupes_baseline.as_deref(), None)
+        || grouped_requested(params.group_by.as_deref())
+        || params.explain_skipped == Some(true)
+        || filled(params.runtime_coverage.as_deref())
+}
+
+/// Build the typed audit options. A stop through `cancellation` is safe for
+/// the base-ref worktree: `TemporaryBaseWorktree` is not registered with Git
+/// during the run and removes its directory on drop, also when the run
+/// returns early with the cancellation error.
+fn audit_options_from_params(
+    params: &AuditParams,
+    cancellation: Option<Arc<AtomicBool>>,
+) -> Result<AuditOptions, String> {
+    let gate = audit_gate_from_param(params.gate.as_deref())?;
+    let worsened = audit_worsened_from_param(params.worsened.as_deref())?;
+    Ok(AuditOptions {
+        analysis: AnalysisOptions {
+            production: params.production.unwrap_or(false),
+            production_override: params.production,
+            workspace: workspace_patterns_from_param(params.workspace.as_deref()),
+            explain: true,
+            type_aware: typed_type_aware(params.type_aware),
+            // The base ref of this tool, not a narrowing request: the
+            // runtime reads it from `changed_since`, so it stays there.
+            ..shared_analysis_options(shared_params!(params), EnvScope::HardRef, cancellation)
+        },
+        base: non_empty_string(params.base.as_deref()),
+        production: params.production.unwrap_or(false),
+        production_dead_code: params.production_dead_code,
+        production_health: params.production_health,
+        production_dupes: params.production_dupes,
+        // The typed route runs only without `only` and `skip`, so the config
+        // decides the selection.
+        dead_code: None,
+        health: None,
+        duplication: None,
+        css: params.css,
+        css_deep: params.css_deep,
+        gate,
+        worsened,
+        max_crap: params.max_crap,
+        coverage: non_empty_path(params.coverage.as_deref()),
+        coverage_root: non_empty_path(params.coverage_root.as_deref()),
+        include_entry_exports: params.include_entry_exports.unwrap_or(false),
+        show_cascade: params.show_cascade.unwrap_or(false),
+        runtime_coverage: non_empty_path(params.runtime_coverage.as_deref()),
+        min_invocations_hot: params.min_invocations_hot.unwrap_or(100),
+    })
+}
+
+/// An absent `gate` stays `None`, so the typed route defers to `audit.gate`
+/// in config, as `fallow audit` without `--gate` does.
+fn audit_gate_from_param(value: Option<&str>) -> Result<Option<AuditGate>, String> {
+    value
+        .map(|gate| match gate {
+            "new-only" => Ok(AuditGate::NewOnly),
+            "all" => Ok(AuditGate::All),
+            other => Err(validation_error_body(format!(
+                "Invalid gate '{other}'. Valid values: new-only, all"
+            ))),
+        })
+        .transpose()
+}
+
+/// An absent `worsened` stays `None`, so the typed route defers to
+/// `audit.worsened` in config, as `fallow audit` without `--worsened` does.
+fn audit_worsened_from_param(value: Option<&str>) -> Result<Option<AuditWorsened>, String> {
+    value
+        .map(|worsened| match worsened {
+            "warn" => Ok(AuditWorsened::Warn),
+            "error" => Ok(AuditWorsened::Error),
+            "off" => Ok(AuditWorsened::Off),
+            other => Err(validation_error_body(format!(
+                "Invalid worsened '{other}'. Valid values: warn, error, off"
+            ))),
+        })
+        .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use rmcp::model::ContentBlock;
+
+    use super::super::base_root_fixture::{git, git_capture};
+    use super::super::coverage_fixture::{COVERAGE_ROOT, CoverageFixture, branchy_finding};
+    use super::*;
+
+    /// #2699: called without a `base` on a repository that has remote-tracking
+    /// refs, the typed route must auto-detect the base and return a verdict.
+    /// It used to fail before analysis because the auto-detected ref reached
+    /// the diff with the line ending git printed.
+    #[test]
+    fn typed_route_auto_detects_the_base_without_a_base_parameter() {
+        let fixture = CoverageFixture::new(false);
+        let root = std::path::PathBuf::from(fixture.root_string());
+        let first_commit = git_capture(&root, &["rev-parse", "HEAD~1"]);
+        git_capture(
+            &root,
+            &["update-ref", "refs/remotes/origin/main", &first_commit],
+        );
+        git_capture(
+            &root,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
+
+        let value = run_audit_api_value(&AuditParams {
+            root: Some(fixture.root_string()),
+            gate: Some("all".to_string()),
+            no_cache: Some(true),
+            ..AuditParams::default()
+        })
+        .expect("typed route result")
+        .expect("typed route");
+
+        assert_eq!(value["base_ref"], first_commit, "{value}");
+        assert_eq!(
+            value["base_description"], "merge-base with origin/main",
+            "{value}"
+        );
+        assert!(value["verdict"].is_string(), "{value}");
+    }
+
+    /// #2699: a `root` pointing at a package added on the branch has no
+    /// counterpart in the base commit. The typed route must audit it and
+    /// attribute everything under it as introduced, as `fallow audit` does on
+    /// the same repository and root, instead of refusing the call over a root
+    /// the caller spelled correctly.
+    #[test]
+    fn typed_route_audits_a_root_added_on_the_branch() {
+        let project = super::super::base_root_fixture::new_package_repo();
+        let root = project
+            .path()
+            .join(super::super::base_root_fixture::NEW_PACKAGE);
+
+        let value = run_audit_api_value(&AuditParams {
+            root: Some(root.display().to_string()),
+            no_cache: Some(true),
+            ..AuditParams::default()
+        })
+        .expect("typed route result")
+        .expect("typed route");
+
+        assert_eq!(value["kind"], "audit", "{value}");
+        assert_eq!(value["attribution"]["gate"], "new-only", "{value}");
+        assert_eq!(value["attribution"]["dead_code_introduced"], 1, "{value}");
+        assert_eq!(value["dead_code"]["unused_files"][0]["introduced"], true);
+        assert_eq!(value["verdict"], "fail", "{value}");
+    }
+
+    #[test]
+    fn default_audit_uses_programmatic_api_route_and_defers_the_gate() {
+        let params = AuditParams::default();
+        assert!(!requires_cli_fallback(&params));
+        let options = audit_options_from_params(&params, None).expect("audit options");
+        assert_eq!(options.gate, None);
+    }
+
+    /// #2368: the typed route honors `health.coverage` / `health.coverageRoot`
+    /// exactly like the CLI fallback, so config-only coverage yields the same
+    /// verdict and attribution as the explicit parameters. The config path is
+    /// passed explicitly and the coverage path is project-relative, which the
+    /// MCP process (whose cwd is not the project) must resolve against `root`.
+    #[test]
+    fn typed_route_config_only_coverage_matches_explicit_parameters() {
+        let fixture = CoverageFixture::new(true);
+        let config = fixture.write_health_config(&CoverageFixture::config_health_section());
+        let params = || AuditParams {
+            root: Some(fixture.root_string()),
+            config: Some(config.display().to_string()),
+            base: Some("HEAD~1".to_string()),
+            max_crap: Some(10.0),
+            no_cache: Some(true),
+            ..AuditParams::default()
+        };
+
+        let from_config = run_audit_api_value_with_env(&params(), Some(CoverageInputs::default()))
+            .expect("config-only typed route result")
+            .expect("typed route");
+        assert_eq!(from_config["verdict"], "pass", "{from_config}");
+
+        let explicit = run_audit_api_value_with_env(
+            &AuditParams {
+                coverage: Some(fixture.coverage_path().display().to_string()),
+                coverage_root: Some(COVERAGE_ROOT.to_string()),
+                ..params()
+            },
+            Some(CoverageInputs::default()),
+        )
+        .expect("explicit typed route result")
+        .expect("typed route");
+        assert_eq!(explicit["verdict"], "pass", "{explicit}");
+        assert_eq!(
+            from_config["complexity"]["findings"],
+            explicit["complexity"]["findings"]
+        );
+        assert_eq!(from_config["attribution"], explicit["attribution"]);
+    }
+
+    /// #2368: a discovered `.fallowrc.json` feeds the typed route too, and the
+    /// finding it produces is scored from the map (`coverage_source` istanbul)
+    /// rather than the reachability estimate.
+    #[test]
+    fn typed_route_discovered_config_coverage_reports_istanbul_source() {
+        let fixture = CoverageFixture::new(false);
+        fixture.write_health_config(&CoverageFixture::config_health_section());
+
+        let json =
+            run_audit_api_value_with_env(&gated_params(&fixture), Some(CoverageInputs::default()))
+                .expect("typed route result")
+                .expect("typed route");
+
+        assert_eq!(json["verdict"], "fail", "{json}");
+        let branchy =
+            branchy_finding(&json["complexity"]["findings"]).expect("branchy above max_crap");
+        assert_eq!(branchy["coverage_source"], "istanbul", "{branchy}");
+    }
+
+    /// #2368 precedence: the `coverage` parameter beats `FALLOW_COVERAGE`,
+    /// which beats `health.coverage`, and each input resolves independently
+    /// (an env map pairs with the config root, an env root with the config
+    /// map). The losing layer points at a map recorded for a different file
+    /// or under the wrong prefix, so only the winning layer lets `branchy`
+    /// score below `max_crap`.
+    #[test]
+    fn typed_route_parameter_beats_env_beats_config_coverage() {
+        let fixture = CoverageFixture::new(true);
+        fixture.write_stale_coverage("artifacts/stale.json");
+        let verdict = |params: &AuditParams, env: CoverageInputs| {
+            let json = run_audit_api_value_with_env(params, Some(env))
+                .expect("typed route result")
+                .expect("typed route");
+            json["verdict"].as_str().map(str::to_string)
+        };
+
+        fixture.write_health_config(
+            r#"{"coverage":"artifacts/stale.json","coverageRoot":"/ci/workspace"}"#,
+        );
+        assert_eq!(
+            verdict(&gated_params(&fixture), CoverageInputs::default()).as_deref(),
+            Some("fail"),
+            "a stale config map falls back to the estimate"
+        );
+        let env_map = CoverageInputs {
+            coverage: Some(fixture.coverage_path()),
+            coverage_root: None,
+        };
+        assert_eq!(
+            verdict(&gated_params(&fixture), env_map).as_deref(),
+            Some("pass"),
+            "FALLOW_COVERAGE beats health.coverage while health.coverageRoot still applies"
+        );
+        let stale_env = CoverageInputs {
+            coverage: Some(fixture.path("artifacts/stale.json")),
+            coverage_root: Some(std::path::PathBuf::from(COVERAGE_ROOT)),
+        };
+        assert_eq!(
+            verdict(&gated_params(&fixture), stale_env.clone()).as_deref(),
+            Some("fail"),
+            "a stale env map falls back to the estimate"
+        );
+        let with_parameter = AuditParams {
+            coverage: Some(fixture.coverage_path().display().to_string()),
+            ..gated_params(&fixture)
+        };
+        assert_eq!(
+            verdict(&with_parameter, stale_env).as_deref(),
+            Some("pass"),
+            "the coverage parameter beats FALLOW_COVERAGE while FALLOW_COVERAGE_ROOT still applies"
+        );
+
+        fixture.write_health_config(
+            r#"{"coverage":"artifacts/coverage-final.json","coverageRoot":"/wrong/root"}"#,
+        );
+        assert_eq!(
+            verdict(&gated_params(&fixture), CoverageInputs::default()).as_deref(),
+            Some("fail"),
+            "a wrong config root strips nothing and matches nothing"
+        );
+        let env_root = CoverageInputs {
+            coverage: None,
+            coverage_root: Some(std::path::PathBuf::from(COVERAGE_ROOT)),
+        };
+        assert_eq!(
+            verdict(&gated_params(&fixture), env_root).as_deref(),
+            Some("pass"),
+            "FALLOW_COVERAGE_ROOT beats health.coverageRoot while health.coverage still applies"
+        );
+    }
+
+    /// #2368: a configured map that does not exist is the structured
+    /// `FALLOW_INVALID_COVERAGE_PATH` error, checked under `root` rather than
+    /// under the MCP server's working directory.
+    #[test]
+    fn typed_route_missing_config_coverage_is_structured_error() {
+        let fixture = CoverageFixture::new(true);
+        fixture.write_health_config(r#"{"coverage":"artifacts/missing.json"}"#);
+
+        let error = typed_route_error(&gated_params(&fixture));
+        assert_eq!(error["code"], "FALLOW_INVALID_COVERAGE_PATH", "{error}");
+        assert_eq!(error["exit_code"], 2, "{error}");
+        let message = error["message"].as_str().expect("message");
+        assert!(
+            message.contains("missing.json") && message.contains(&fixture.root_string()),
+            "the message names the path under root: {message}"
+        );
+    }
+
+    /// #2368: a relative `health.coverageRoot` is the structured
+    /// `FALLOW_INVALID_COVERAGE_ROOT` error whose context names the config
+    /// key that supplied it.
+    #[test]
+    fn typed_route_relative_config_coverage_root_is_structured_error() {
+        let fixture = CoverageFixture::new(true);
+        fixture.write_health_config(r#"{"coverageRoot":"src"}"#);
+
+        let error = typed_route_error(&gated_params(&fixture));
+        assert_eq!(error["code"], "FALLOW_INVALID_COVERAGE_ROOT", "{error}");
+        assert_eq!(error["context"], "health.coverageRoot", "{error}");
+        assert_eq!(error["exit_code"], 2, "{error}");
+        let message = error["message"].as_str().expect("message");
+        assert!(
+            message.contains("--coverage-root expects an absolute path")
+                && message.contains("got 'src'"),
+            "{message}"
+        );
+    }
+
+    /// The `all` gate lets a CRAP score from estimated coverage fail the run,
+    /// which `new-only` does not do.
+    fn gated_params(fixture: &CoverageFixture) -> AuditParams {
+        AuditParams {
+            root: Some(fixture.root_string()),
+            base: Some("HEAD~1".to_string()),
+            gate: Some("all".to_string()),
+            max_crap: Some(10.0),
+            no_cache: Some(true),
+            ..AuditParams::default()
+        }
+    }
+
+    fn typed_route_error(params: &AuditParams) -> serde_json::Value {
+        let body = run_audit_api_value_with_env(params, Some(CoverageInputs::default()))
+            .expect_err("the typed route rejects the inputs");
+        serde_json::from_str(&body).expect("structured error body")
+    }
+
+    #[test]
+    fn gate_all_audit_uses_programmatic_api_route() {
+        let params = AuditParams {
+            gate: Some("all".to_string()),
+            ..AuditParams::default()
+        };
+        assert!(!requires_cli_fallback(&params));
+        let options = audit_options_from_params(&params, None).expect("audit options");
+        assert_eq!(options.gate, Some(AuditGate::All));
+        assert!(options.analysis.explain);
+    }
+
+    #[test]
+    fn cli_only_audit_surfaces_keep_fallback() {
+        let baseline = AuditParams {
+            gate: Some("all".to_string()),
+            dead_code_baseline: Some("baseline.json".to_string()),
+            ..AuditParams::default()
+        };
+        let grouped = AuditParams {
+            gate: Some("all".to_string()),
+            group_by: Some("owner".to_string()),
+            ..AuditParams::default()
+        };
+        let runtime = AuditParams {
+            gate: Some("all".to_string()),
+            runtime_coverage: Some("coverage".to_string()),
+            ..AuditParams::default()
+        };
+
+        let explain_skipped = AuditParams {
+            gate: Some("all".to_string()),
+            explain_skipped: Some(true),
+            ..AuditParams::default()
+        };
+        let invalid_gate = AuditParams {
+            gate: Some("sometimes".to_string()),
+            ..AuditParams::default()
+        };
+
+        assert!(requires_cli_fallback(&baseline));
+        assert!(requires_cli_fallback(&grouped));
+        assert!(requires_cli_fallback(&runtime));
+        assert!(requires_cli_fallback(&explain_skipped));
+        assert!(requires_cli_fallback(&invalid_gate));
+    }
+
+    #[test]
+    fn audit_args_forward_health_baseline_mode() {
+        let params = AuditParams {
+            health_baseline: Some("health.json".to_string()),
+            health_baseline_mode: Some(crate::params::BaselineModeParam::Identity),
+            ..AuditParams::default()
+        };
+        let args = build_audit_args(&params).expect("args");
+        assert!(args.contains(&"--health-baseline".to_string()));
+        assert!(args.contains(&"--baseline-mode".to_string()));
+        assert!(args.contains(&"identity".to_string()));
+
+        let omitted = build_audit_args(&AuditParams::default()).expect("args");
+        assert!(!omitted.contains(&"--baseline-mode".to_string()));
+    }
+
+    #[tokio::test]
+    async fn run_audit_gate_all_api_path_returns_json_without_cli_binary() {
+        let project = audit_fixture();
+
+        let result = run_audit(
+            "unused-binary-on-api-path",
+            AuditParams {
+                root: Some(project.path().display().to_string()),
+                base: Some("HEAD".to_string()),
+                gate: Some("all".to_string()),
+                no_cache: Some(true),
+                ..AuditParams::default()
+            },
+        )
+        .await
+        .expect("api result");
+
+        assert_eq!(result.is_error, Some(false));
+        let text = match &result.content[0] {
+            ContentBlock::Text(text) => &text.text,
+            _ => panic!("expected text content"),
+        };
+        let json: serde_json::Value = serde_json::from_str(text).expect("json");
+        assert_eq!(json["kind"], "audit");
+        assert_eq!(json["command"], "audit");
+        assert!(json["dead_code"].is_object());
+    }
+
+    #[tokio::test]
+    async fn run_audit_default_new_only_api_path_marks_introduced_without_cli_binary() {
+        let project = audit_fixture();
+
+        let result = run_audit(
+            "unused-binary-on-api-path",
+            AuditParams {
+                root: Some(project.path().display().to_string()),
+                base: Some("HEAD".to_string()),
+                no_cache: Some(true),
+                ..AuditParams::default()
+            },
+        )
+        .await
+        .expect("api result");
+
+        assert_eq!(result.is_error, Some(false));
+        let text = match &result.content[0] {
+            ContentBlock::Text(text) => &text.text,
+            _ => panic!("expected text content"),
+        };
+        let json: serde_json::Value = serde_json::from_str(text).expect("json");
+        assert_eq!(json["kind"], "audit");
+        assert_eq!(json["attribution"]["gate"], "new-only");
+        assert_eq!(json["attribution"]["dead_code_introduced"], 1);
+        assert_eq!(json["dead_code"]["unused_files"][0]["introduced"], true);
+    }
+
+    #[test]
+    fn audit_api_value_preserves_styling_gate_parity() {
+        let project = audit_styling_fixture();
+        std::fs::write(
+            project.path().join("src/styles.css"),
+            "#app .legacy .title { color: red; }\n.plain { color: blue; }\n",
+        )
+        .expect("write inherited-only change");
+
+        let all = run_audit_api_value(&AuditParams {
+            root: Some(project.path().display().to_string()),
+            base: Some("HEAD".to_string()),
+            gate: Some("all".to_string()),
+            no_cache: Some(true),
+            ..AuditParams::default()
+        })
+        .expect("all-gate MCP API value")
+        .expect("typed API path");
+        assert_eq!(all["verdict"], "fail");
+
+        let new_only = run_audit_api_value(&AuditParams {
+            root: Some(project.path().display().to_string()),
+            base: Some("HEAD".to_string()),
+            no_cache: Some(true),
+            ..AuditParams::default()
+        })
+        .expect("new-only MCP API value")
+        .expect("typed API path");
+        assert_eq!(new_only["verdict"], "pass");
+        assert_eq!(new_only["attribution"]["styling_introduced"], 0);
+        assert_eq!(new_only["attribution"]["styling_inherited"], 1);
+        assert_eq!(new_only["attribution"]["duplication_demoted"], 0);
+        assert_eq!(
+            new_only["complexity"]["styling_findings"][0]["introduced"],
+            false
+        );
+
+        std::fs::write(
+            project.path().join("src/styles.css"),
+            "#app .legacy .title { color: red; }\n.plain { color: blue; }\n#app .introduced .title { color: green; }\n",
+        )
+        .expect("write introduced styling change");
+        let introduced = run_audit_api_value(&AuditParams {
+            root: Some(project.path().display().to_string()),
+            base: Some("HEAD".to_string()),
+            no_cache: Some(true),
+            ..AuditParams::default()
+        })
+        .expect("introduced MCP API value")
+        .expect("typed API path");
+        assert_eq!(introduced["verdict"], "fail");
+        assert_eq!(introduced["attribution"]["styling_introduced"], 1);
+        assert_eq!(introduced["attribution"]["styling_inherited"], 1);
+        assert!(
+            introduced["complexity"]["styling_findings"]
+                .as_array()
+                .expect("styling findings")
+                .iter()
+                .any(|finding| finding["line"] == 3 && finding["introduced"] == true)
+        );
+    }
+
+    /// Without a `gate` parameter the typed route reads `audit.gate` from
+    /// the config, as `fallow audit` without `--gate` does.
+    #[test]
+    fn audit_api_value_reads_the_config_gate() {
+        let project = audit_styling_fixture();
+        std::fs::write(
+            project.path().join(".fallowrc.json"),
+            r#"{"rules":{"css-selector-complexity":"error"},"audit":{"gate":"all"}}"#,
+        )
+        .expect("write config gate");
+        std::fs::write(
+            project.path().join("src/styles.css"),
+            "#app .legacy .title { color: red; }\n.plain { color: blue; }\n",
+        )
+        .expect("write inherited-only change");
+        let params = AuditParams {
+            root: Some(project.path().display().to_string()),
+            base: Some("HEAD".to_string()),
+            no_cache: Some(true),
+            ..AuditParams::default()
+        };
+
+        let value = run_audit_api_value(&params)
+            .expect("config-gate MCP API value")
+            .expect("typed API path");
+        assert_eq!(value["attribution"]["gate"], "all", "{value}");
+        assert_eq!(value["verdict"], "fail", "{value}");
+
+        let overridden = run_audit_api_value(&AuditParams {
+            gate: Some("new-only".to_string()),
+            ..params
+        })
+        .expect("new-only MCP API value")
+        .expect("typed API path");
+        assert_eq!(overridden["attribution"]["gate"], "new-only");
+        assert_eq!(overridden["verdict"], "pass", "{overridden}");
+    }
+
+    /// The typed route cannot apply a baseline from the `audit` config
+    /// section, so the tool runs the CLI, which can. The binary here does not
+    /// exist, so the CLI spawn error proves that the fallback ran.
+    #[tokio::test]
+    async fn config_baseline_falls_back_to_the_cli() {
+        let project = audit_fixture();
+        std::fs::write(
+            project.path().join(".fallowrc.json"),
+            r#"{"audit":{"healthBaseline":"health-baseline.json"}}"#,
+        )
+        .expect("write config baseline");
+        let params = AuditParams {
+            root: Some(project.path().display().to_string()),
+            base: Some("HEAD".to_string()),
+            no_cache: Some(true),
+            ..AuditParams::default()
+        };
+        assert!(!requires_cli_fallback(&params));
+        assert_eq!(run_audit_api_value(&params), Ok(None));
+
+        let err = run_audit("missing-fallow-binary-for-fallback", params)
+            .await
+            .expect_err("the CLI fallback cannot start");
+        assert!(
+            err.message
+                .contains("Failed to execute fallow binary 'missing-fallow-binary-for-fallback'"),
+            "{err:?}"
+        );
+    }
+
+    /// Only the config-baseline code takes the CLI: another typed error, such
+    /// as an unknown base ref, stays a structured error of the typed route.
+    /// The binary does not exist, so a fallback would fail to start instead.
+    #[tokio::test]
+    async fn other_typed_errors_do_not_fall_back_to_the_cli() {
+        let project = audit_fixture();
+        let result = run_audit(
+            "missing-fallow-binary-for-fallback",
+            AuditParams {
+                root: Some(project.path().display().to_string()),
+                base: Some("no-such-ref-for-audit".to_string()),
+                no_cache: Some(true),
+                ..AuditParams::default()
+            },
+        )
+        .await
+        .expect("a typed error result, not a CLI start failure");
+        assert_eq!(result.is_error, Some(true));
+        let text = match &result.content[0] {
+            ContentBlock::Text(text) => &text.text,
+            _ => panic!("expected text content"),
+        };
+        assert!(text.contains("FALLOW_CHANGED_FILES_FAILED"), "{text}");
+    }
+
+    fn audit_fixture() -> tempfile::TempDir {
+        let project = tempfile::tempdir().expect("project");
+        std::fs::create_dir_all(project.path().join("src")).expect("create src");
+        std::fs::write(
+            project.path().join("package.json"),
+            r#"{"name":"audit-api","type":"module","main":"src/index.ts"}"#,
+        )
+        .expect("write package");
+        std::fs::write(
+            project.path().join("src/index.ts"),
+            "console.log('entry');\n",
+        )
+        .expect("write entry");
+        git(project.path(), &["init"]);
+        git(project.path(), &["add", "."]);
+        git(
+            project.path(),
+            &[
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "initial",
+            ],
+        );
+        std::fs::write(
+            project.path().join("src/feature.ts"),
+            "export const unused = 1;\n",
+        )
+        .expect("write changed source");
+        project
+    }
+
+    /// A function with `branches` early returns and `padding` plain lines.
+    fn hotspot_source(branches: usize, padding: usize) -> String {
+        use std::fmt::Write as _;
+        let mut source =
+            String::from("export function work(x: number): number {\n  let total = 0;\n");
+        for line in 0..padding {
+            let _ = writeln!(source, "  total += {line};");
+        }
+        for branch in 0..branches {
+            let _ = writeln!(source, "  if (x === {branch}) return {branch} + total;");
+        }
+        source.push_str("  return -1;\n}\nconsole.log(work(1));\n");
+        source
+    }
+
+    #[test]
+    fn audit_api_value_applies_the_worsened_param() {
+        let project = tempfile::tempdir().expect("project");
+        std::fs::create_dir_all(project.path().join("src")).expect("create src");
+        std::fs::write(
+            project.path().join("package.json"),
+            r#"{"name":"audit-mcp-worsened","type":"module","main":"src/index.ts"}"#,
+        )
+        .expect("write package");
+        std::fs::write(
+            project.path().join(".fallowrc.json"),
+            r#"{"health":{"maxCyclomatic":15,"maxCognitive":15,"maxCrap":999999999,"maxUnitSize":999999}}"#,
+        )
+        .expect("write config");
+        std::fs::write(project.path().join("src/index.ts"), hotspot_source(20, 2))
+            .expect("write base");
+        git(project.path(), &["init"]);
+        git(project.path(), &["add", "."]);
+        git(
+            project.path(),
+            &[
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "initial",
+            ],
+        );
+        // Only the line count grows, so the finding is worsened, not introduced.
+        std::fs::write(project.path().join("src/index.ts"), hotspot_source(20, 40))
+            .expect("write grown function");
+        let params = |worsened: Option<&str>| AuditParams {
+            root: Some(project.path().display().to_string()),
+            base: Some("HEAD".to_string()),
+            worsened: worsened.map(str::to_string),
+            no_cache: Some(true),
+            css: Some(false),
+            ..AuditParams::default()
+        };
+
+        let default = run_audit_api_value(&params(None))
+            .expect("default MCP API value")
+            .expect("typed API path");
+        assert_eq!(default["verdict"], "warn", "{default:#}");
+        assert_eq!(default["attribution"]["worsened"], "warn");
+        assert_eq!(default["attribution"]["complexity_worsened"], 1);
+
+        let error = run_audit_api_value(&params(Some("error")))
+            .expect("error MCP API value")
+            .expect("typed API path");
+        assert_eq!(error["verdict"], "fail", "{error:#}");
+        assert_eq!(error["attribution"]["worsened"], "error");
+    }
+
+    fn audit_styling_fixture() -> tempfile::TempDir {
+        let project = tempfile::tempdir().expect("project");
+        std::fs::create_dir_all(project.path().join("src")).expect("create src");
+        std::fs::write(
+            project.path().join("package.json"),
+            r#"{"name":"audit-mcp-styling","type":"module","main":"src/index.ts"}"#,
+        )
+        .expect("write package");
+        std::fs::write(
+            project.path().join(".fallowrc.json"),
+            r#"{"rules":{"css-selector-complexity":"error"}}"#,
+        )
+        .expect("write config");
+        std::fs::write(
+            project.path().join("src/index.ts"),
+            "console.log('entry');\n",
+        )
+        .expect("write entry");
+        std::fs::write(
+            project.path().join("src/styles.css"),
+            "#app .legacy .title { color: red; }\n",
+        )
+        .expect("write inherited styling");
+        git(project.path(), &["init"]);
+        git(project.path(), &["add", "."]);
+        git(
+            project.path(),
+            &[
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "initial",
+            ],
+        );
+        project
+    }
+
+    /// `typeAware.enabled` and `audit.typeAware` in config make `fallow
+    /// audit` type-aware. The typed route cannot run that, so the tool runs
+    /// the CLI. `audit.typeAware: false` keeps the audit on the typed route.
+    #[tokio::test]
+    async fn config_type_aware_falls_back_to_the_cli() {
+        use super::super::api_runtime::{
+            MISSING_FALLBACK_BINARY, assert_cli_fallback_ran, write_type_aware_config,
+        };
+        for config in [
+            r#"{"typeAware":{"enabled":true}}"#,
+            r#"{"audit":{"typeAware":true}}"#,
+        ] {
+            let project = audit_fixture();
+            write_type_aware_config(project.path(), config);
+            let params = AuditParams {
+                root: Some(project.path().display().to_string()),
+                base: Some("HEAD".to_string()),
+                no_cache: Some(true),
+                ..AuditParams::default()
+            };
+            assert!(!requires_cli_fallback(&params));
+            assert_eq!(run_audit_api_value(&params), Ok(None), "{config}");
+            assert_cli_fallback_ran(run_audit(MISSING_FALLBACK_BINARY, params).await);
+        }
+
+        // `type_aware: false` keeps the audit syntactic on both routes.
+        let project = audit_fixture();
+        write_type_aware_config(project.path(), r#"{"audit":{"typeAware":true}}"#);
+        let off = || AuditParams {
+            root: Some(project.path().display().to_string()),
+            base: Some("HEAD".to_string()),
+            no_cache: Some(true),
+            type_aware: Some(false),
+            ..AuditParams::default()
+        };
+        assert!(
+            run_audit_api_value(&off()).expect("typed audit").is_some(),
+            "`type_aware: false` stays on the typed route"
+        );
+        let args = build_audit_args(&off()).expect("audit args");
+        assert!(args.contains(&"--no-type-aware".to_string()), "{args:?}");
+
+        let project = audit_fixture();
+        write_type_aware_config(
+            project.path(),
+            r#"{"typeAware":{"enabled":true},"audit":{"typeAware":false}}"#,
+        );
+        let value = run_audit_api_value(&AuditParams {
+            root: Some(project.path().display().to_string()),
+            base: Some("HEAD".to_string()),
+            no_cache: Some(true),
+            ..AuditParams::default()
+        })
+        .expect("typed audit")
+        .expect("a syntactic audit stays on the typed route");
+        assert!(value["verdict"].is_string(), "{value}");
+    }
+}
+
+#[cfg(test)]
+mod route_parity_tests {
+    use super::*;
+
+    /// Both routes of `audit` express the same shared settings.
+    #[test]
+    fn typed_and_cli_routes_agree_on_shared_settings() {
+        super::super::route_parity::assert_routes_agree(
+            "audit",
+            &serde_json::json!({}),
+            |params: AuditParams| build_audit_args(&params).expect("argv"),
+            |params: AuditParams| {
+                audit_options_from_params(&params, None)
+                    .expect("options")
+                    .analysis
+            },
+        );
+    }
+}

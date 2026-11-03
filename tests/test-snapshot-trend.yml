@@ -1,0 +1,52 @@
+name: Test save-snapshot then trend comparison
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: snap
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.39.0'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+          save-snapshot: 'true'
+      - name: Assert snapshot saved
+        run: |
+          find tests/fixtures/clean-project/.fallow -maxdepth 3 2>/dev/null || true
+          if [ -z "$(find tests/fixtures/clean-project/.fallow/snapshots -type f 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot written under .fallow/snapshots"
+            exit 1
+          fi
+          echo "PASS: snapshot saved"
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.39.0'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+          trend: 'true'
+      - name: Assert trend run completed
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          echo "PASS"

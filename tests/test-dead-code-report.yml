@@ -1,0 +1,46 @@
+name: Test dead-code report without failing
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dead-code-project
+          version: '3.39.0'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Assert issues detected and results file written
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          SARIF: ${{ steps.action.outputs.sarif }}
+          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          echo "sarif: $SARIF"
+          echo "changed-files-unavailable: $UNAVAILABLE"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one issue (unused exports / unused file)"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if ! grep -qE 'unusedHelper|UNUSED_CONSTANT|orphan' "$RESULTS"; then
+            echo "FAIL: results file does not mention the expected dead code"
+            head -c 4000 "$RESULTS"
+            exit 1
+          fi
+          echo "PASS"
