@@ -1,4 +1,4 @@
-name: Test combined run scoped to a workspace with skipped analyses
+name: Test workspace scoping
 on:
   workflow_dispatch:
 jobs:
@@ -9,30 +9,31 @@ jobs:
       - id: action
         uses: .
         with:
+          command: dead-code
           root: tests/fixtures/monorepo
+          workspace: app-a
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          workspace: pkg-a
-          skip: dupes,health
-      - name: Assert scoped results produced
+      - name: Assert output scoped to app-a
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          [ -f "$RESULTS" ] && cat "$RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if ! grep -q "orphan-alpha" "$RESULTS"; then
+            echo "FAIL: expected app-a orphan in results"
             exit 1
           fi
-          if grep -q "pkg-b/src" "$RESULTS"; then
-            echo "FAIL: findings from pkg-b leaked into pkg-a scoped output"
+          if grep -q "orphan-bravo" "$RESULTS"; then
+            echo "FAIL: app-b findings should be scoped out"
             exit 1
           fi
           echo "PASS"

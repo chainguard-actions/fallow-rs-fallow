@@ -1,4 +1,4 @@
-name: Test health hotspots with since and min-commits
+name: Test custom config file
 on:
   workflow_dispatch:
 jobs:
@@ -6,33 +6,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
       - id: action
         uses: .
         with:
-          command: health
-          root: tests/fixtures/dirty-project
+          command: dead-code
+          root: tests/fixtures/config-project
+          config: ${{ github.workspace }}/tests/fixtures/config-project/custom-fallow.json
           version: '3.38.0'
+          fail-on-issues: 'true'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          hotspots: 'true'
-          since: '10y'
-          min-commits: '1'
-      - name: Assert hotspot results produced
+      - name: Assert config ignore pattern applied
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          [ -f "$RESULTS" ] && cat "$RESULTS"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues with orphan ignored via config"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if grep -q "orphan.ts" "$RESULTS"; then
+            echo "FAIL: orphan.ts should be ignored by the custom config"
             exit 1
           fi
           echo "PASS"

@@ -1,0 +1,51 @@
+name: Test Istanbul coverage input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create Istanbul coverage file
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/cov"
+          cat > "$GITHUB_WORKSPACE/cov/coverage-final.json" <<'EOF'
+          {
+            "/ci/build/src/helper.ts": {
+              "path": "/ci/build/src/helper.ts",
+              "statementMap": {"0": {"start": {"line": 1, "column": 0}, "end": {"line": 1, "column": 10}}},
+              "fnMap": {},
+              "branchMap": {},
+              "s": {"0": 1},
+              "f": {},
+              "b": {}
+            }
+          }
+          EOF
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          coverage: ${{ github.workspace }}/cov/coverage-final.json
+          coverage-root: /ci/build
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          format: json
+      - name: Assert health ran with coverage
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          echo "PASS"

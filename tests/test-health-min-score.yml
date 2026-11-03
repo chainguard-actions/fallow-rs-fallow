@@ -1,4 +1,4 @@
-name: Test custom config with issue-types filter
+name: Test health min-score gate
 on:
   workflow_dispatch:
 jobs:
@@ -9,27 +9,26 @@ jobs:
       - id: action
         uses: .
         with:
-          command: dead-code
+          command: health
           root: tests/fixtures/dirty-project
-          config: ${{ github.workspace }}/tests/fixtures/configs/.fallowrc.json
-          issue-types: unused-files
           version: '3.38.0'
+          min-score: '0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-      - name: Assert orphan file ignored by config
+      - name: Assert score computed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 unused-files issues (orphan.ts ignored by config)"
+          if ! grep -qi "score" "$RESULTS"; then
+            echo "FAIL: expected a health score in results"
             cat "$RESULTS"
             exit 1
           fi

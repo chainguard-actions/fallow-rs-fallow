@@ -1,4 +1,4 @@
-name: Test audit with gate, worsened and only
+name: Test audit gate
 on:
   workflow_dispatch:
 jobs:
@@ -8,19 +8,36 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      - id: save-dead-code
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          save-baseline: ${{ github.workspace }}/audit-dc-baseline.json
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          format: json
+      - name: Assert dead-code baseline written
+        run: |
+          if [ ! -f "$GITHUB_WORKSPACE/audit-dc-baseline.json" ]; then
+            echo "FAIL: dead-code baseline not written"
+            exit 1
+          fi
+          echo "PASS"
       - id: action
         uses: .
         with:
           command: audit
           root: tests/fixtures/dirty-project
           version: '3.38.0'
+          changed-since: HEAD
+          gate: new-only
+          worsened: warn
+          dead-code-baseline: ${{ github.workspace }}/audit-dc-baseline.json
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          changed-since: HEAD
-          gate: all
-          worsened: warn
-          only: dead-code,health
       - name: Assert audit verdict and gate
         env:
           VERDICT: ${{ steps.action.outputs.verdict }}
@@ -34,8 +51,8 @@ jobs:
             pass|warn|fail) ;;
             *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
           esac
-          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
-            echo "FAIL: expected gate 'all'"
+          if [ "$GATE" != "new-only" ]; then
+            echo "FAIL: expected gate 'new-only'"
             exit 1
           fi
           echo "PASS"
