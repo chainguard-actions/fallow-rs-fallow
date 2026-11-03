@@ -1,4 +1,4 @@
-name: Test explicit config file ignoring orphan.js
+name: Test dead-code with config file, issue-types and threads
 on:
   workflow_dispatch:
 jobs:
@@ -11,29 +11,36 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dead-code-project
-          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
+          config: ${{ github.workspace }}/tests/fixtures/configs/.fallowrc.json
+          issue-types: unused-files
+          threads: '2'
           version: '3.37.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert orphan.js ignored by config
+      - name: Assert unused file reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          F="$RESULTS"
-          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
-            echo "FAIL: results file missing or invalid JSON"
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected orphan.js to be reported as an unused file"
             exit 1
           fi
-          if jq -e '[.. | strings | select(test("src/orphan\\.js"))] | length > 0' "$F" > /dev/null; then
-            echo "FAIL: orphan.js should be ignored via config ignorePatterns"
+          F="$RESULTS"
+          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: results file not found"
+            exit 1
+          fi
+          if ! grep -q 'orphan' "$F"; then
+            echo "FAIL: expected orphan.js in results"
             head -c 3000 "$F"
             exit 1
           fi

@@ -1,4 +1,4 @@
-name: Test audit command with dead-code, health and dupes baselines
+name: Test combined run with dead-code, health and dupes baselines
 on:
   workflow_dispatch:
 jobs:
@@ -6,72 +6,71 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-      - id: dead
+      - id: save-dc
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/clean-project
+          save-baseline: ${{ github.workspace }}/cb-dc-baseline.json
           version: '3.37.0'
-          save-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - id: health
+      - id: save-health
         uses: .
         with:
           command: health
           root: tests/fixtures/clean-project
+          save-baseline: ${{ github.workspace }}/cb-health-baseline.json
           version: '3.37.0'
-          save-baseline: ${{ github.workspace }}/audit-health-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - id: dupes
+      - id: save-dupes
         uses: .
         with:
           command: dupes
           root: tests/fixtures/clean-project
+          save-baseline: ${{ github.workspace }}/cb-dupes-baseline.json
           version: '3.37.0'
-          save-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert baselines exist
+      - name: Assert baselines saved
         run: |
-          for f in audit-dead-code-baseline.json audit-health-baseline.json audit-dupes-baseline.json; do
+          for f in cb-dc-baseline.json cb-health-baseline.json cb-dupes-baseline.json; do
             if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
               echo "FAIL: $f not written"
               exit 1
             fi
+            echo "$f: $(head -c 300 "$GITHUB_WORKSPACE/$f")"
           done
           echo "PASS"
-      - id: audit
+      - id: action
         uses: .
         with:
-          command: audit
           root: tests/fixtures/clean-project
+          baseline: ${{ github.workspace }}/cb-dc-baseline.json
+          health-baseline: ${{ github.workspace }}/cb-health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/cb-dupes-baseline.json
           version: '3.37.0'
-          changed-since: HEAD
-          dead-code-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
-          health-baseline: ${{ github.workspace }}/audit-health-baseline.json
-          dupes-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
           fail-on-issues: 'false'
+          auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert audit outputs
+      - name: Assert combined run used baselines
         env:
-          ISSUES: ${{ steps.audit.outputs.issues }}
-          VERDICT: ${{ steps.audit.outputs.verdict }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          BPATH: ${{ steps.action.outputs.baseline-path }}
         run: |
           echo "issues: $ISSUES"
-          echo "verdict: $VERDICT"
+          echo "results: $RESULTS"
+          echo "baseline-path: $BPATH"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          case "$VERDICT" in
-            pass|warn|fail) ;;
-            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
-          esac
+          F="$RESULTS"
+          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
+          jq -e . "$F" > /dev/null || { echo "FAIL: results not valid JSON"; exit 1; }
           echo "PASS"

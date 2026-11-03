@@ -1,4 +1,4 @@
-name: Test health command with hotspots, since and min-commits
+name: Test health hotspots with since and min-commits
 on:
   workflow_dispatch:
 jobs:
@@ -13,14 +13,14 @@ jobs:
         with:
           command: health
           root: tests/fixtures/clean-project
-          version: '3.37.0'
           hotspots: 'true'
           since: 1y
           min-commits: '1'
+          version: '3.37.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert health output
+      - name: Assert hotspot run
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -33,8 +33,5 @@ jobs:
           fi
           F="$RESULTS"
           [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
-            echo "FAIL: results file missing or invalid JSON"
-            exit 1
-          fi
+          jq -e . "$F" > /dev/null || { echo "FAIL: results not valid JSON"; exit 1; }
           echo "PASS"
