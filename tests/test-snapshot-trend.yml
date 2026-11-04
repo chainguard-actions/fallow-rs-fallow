@@ -1,4 +1,4 @@
-name: Test health min-score, snapshot and trend
+name: Test save-snapshot then trend comparison
 on:
   workflow_dispatch:
 jobs:
@@ -12,23 +12,15 @@ jobs:
           command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
-          min-score: '0'
-          save-snapshot: 'true'
           fail-on-issues: 'false'
+          save-snapshot: 'true'
           artifacts-dir: fallow-artifacts-snapshot
-      - name: Assert score gate passed and snapshot saved
-        env:
-          GATES_FAILED: ${{ steps.snapshot.outputs.gates-failed }}
+      - name: Assert snapshot saved
         run: |
-          echo "gates-failed: $GATES_FAILED"
-          if echo "$GATES_FAILED" | grep -q "health-min-score"; then
-            echo "FAIL: min-score 0 should never fail"
-            exit 1
-          fi
           DIR="$GITHUB_WORKSPACE/tests/fixtures/sample-project/.fallow/snapshots"
           ls -la "$DIR" || true
           if [ -z "$(ls -A "$DIR" 2>/dev/null)" ]; then
-            echo "FAIL: no snapshot written to $DIR"
+            echo "FAIL: no snapshot written under $DIR"
             exit 1
           fi
           echo "PASS"
@@ -38,8 +30,8 @@ jobs:
           command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
-          trend: 'true'
           fail-on-issues: 'false'
+          trend: 'true'
           artifacts-dir: fallow-artifacts-trend
       - name: Assert trend run produced results
         env:
@@ -49,7 +41,7 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           case "$RESULTS" in

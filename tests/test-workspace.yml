@@ -12,10 +12,10 @@ jobs:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.36.0'
-          workspace: web
           fail-on-issues: 'false'
+          workspace: app-a
           artifacts-dir: fallow-artifacts-workspace
-      - name: Assert results scoped to web workspace
+      - name: Assert output scoped to app-a
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -23,7 +23,7 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           case "$RESULTS" in
@@ -35,8 +35,8 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
-          if grep -q "packages/api" "$FILE"; then
-            echo "FAIL: api workspace findings leaked into web-scoped output"
+          if grep -q "unusedB" "$FILE"; then
+            echo "FAIL: app-b findings leaked into app-a scoped output"
             cat "$FILE"
             exit 1
           fi
