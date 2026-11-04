@@ -1,0 +1,46 @@
+name: Test health severity and score gates pass on simple code
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: severity
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          min-severity: critical
+      - id: score
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          min-score: '0'
+      - name: Assert both gates passed
+        env:
+          SEV_ISSUES: ${{ steps.severity.outputs.issues }}
+          SCORE_ISSUES: ${{ steps.score.outputs.issues }}
+          SCORE_RESULTS: ${{ steps.score.outputs.results }}
+        run: |
+          echo "severity issues: $SEV_ISSUES"
+          echo "score issues: $SCORE_ISSUES"
+          for v in "$SEV_ISSUES" "$SCORE_ISSUES"; do
+            if ! [[ "$v" =~ ^[0-9]+$ ]]; then
+              echo "FAIL: issues output '$v' is not a number"
+              exit 1
+            fi
+          done
+          if [ -z "$SCORE_RESULTS" ] || ! jq empty "$SCORE_RESULTS"; then
+            echo "FAIL: score results missing or invalid JSON"
+            exit 1
+          fi
+          echo "PASS"

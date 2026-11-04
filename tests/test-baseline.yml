@@ -1,0 +1,49 @@
+name: Test save-baseline then compare against baseline
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+      - name: Assert baseline saved
+        run: |
+          f="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
+          if [ ! -s "$f" ]; then
+            echo "FAIL: baseline file not written"
+            exit 1
+          fi
+          jq empty "$f" || { echo "FAIL: baseline not valid JSON"; exit 1; }
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'true'
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+      - name: Assert baselined issues suppressed
+        env:
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
+        run: |
+          echo "saved run issues: $SAVED_ISSUES"
+          echo "compare run issues: $ISSUES"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues when comparing against own baseline"
+            exit 1
+          fi
+          echo "PASS"

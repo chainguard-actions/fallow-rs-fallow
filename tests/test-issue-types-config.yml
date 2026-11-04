@@ -1,4 +1,4 @@
-name: Test custom config file
+name: Test dead-code with issue-types filter and explicit config
 on:
   workflow_dispatch:
 jobs:
@@ -10,26 +10,26 @@ jobs:
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/config-project
-          config: ${{ github.workspace }}/tests/fixtures/config-project/custom-fallow.json
+          root: tests/fixtures/dirty-project
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
           version: '3.38.0'
-          fail-on-issues: 'true'
           type-aware: 'false'
           format: json
-      - name: Assert config ignore pattern applied
+          fail-on-issues: 'false'
+          issue-types: unused-files
+      - name: Assert unused file reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          [ -f "$RESULTS" ] && cat "$RESULTS"
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 issues with orphan ignored via config"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one unused-files issue"
             exit 1
           fi
-          if grep -q "orphan.ts" "$RESULTS"; then
-            echo "FAIL: orphan.ts should be ignored by the custom config"
+          if ! grep -q orphan "$RESULTS"; then
+            echo "FAIL: orphan.ts not reported"
+            cat "$RESULTS"
             exit 1
           fi
           echo "PASS"

@@ -1,5 +1,5 @@
 {
-  "name": "fallow-config-fixture",
+  "name": "@fixture/lib",
   "version": "1.0.0",
   "private": true,
   "main": "src/index.ts"

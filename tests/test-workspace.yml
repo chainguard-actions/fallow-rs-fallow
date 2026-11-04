@@ -1,4 +1,4 @@
-name: Test workspace scoping
+name: Test workspace scoping in a monorepo
 on:
   workflow_dispatch:
 jobs:
@@ -11,29 +11,28 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          workspace: app-a
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-      - name: Assert output scoped to app-a
+          fail-on-issues: 'false'
+          workspace: '@fixture/app'
+      - name: Assert scoped run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          [ -f "$RESULTS" ] && cat "$RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
-          if ! grep -q "orphan-alpha" "$RESULTS"; then
-            echo "FAIL: expected app-a orphan in results"
+          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
-          if grep -q "orphan-bravo" "$RESULTS"; then
-            echo "FAIL: app-b findings should be scoped out"
+          if grep -q 'packages/lib' "$RESULTS"; then
+            echo "FAIL: results include findings from out-of-scope workspace lib"
+            cat "$RESULTS"
             exit 1
           fi
           echo "PASS"

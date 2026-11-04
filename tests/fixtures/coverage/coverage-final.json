@@ -1,0 +1,14 @@
+{
+  "/build/src/index.ts": {
+    "path": "/build/src/index.ts",
+    "statementMap": {
+      "0": { "start": { "line": 1, "column": 0 }, "end": { "line": 1, "column": 39 } },
+      "1": { "start": { "line": 3, "column": 0 }, "end": { "line": 3, "column": 28 } }
+    },
+    "fnMap": {},
+    "branchMap": {},
+    "s": { "0": 1, "1": 1 },
+    "f": {},
+    "b": {}
+  }
+}
