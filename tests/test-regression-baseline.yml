@@ -1,4 +1,4 @@
-name: Test save-regression-baseline then fail-on-regression
+name: Test regression baseline save and compare
 on:
   workflow_dispatch:
 jobs:
@@ -6,6 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline directory
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-regression"
       - id: save
         uses: .
         with:
@@ -13,19 +15,18 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
-          artifacts-dir: fallow-artifacts-regression-save
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
+          artifacts-dir: fallow-artifacts-save-regression
       - name: Assert regression baseline saved
         run: |
-          FILE="$GITHUB_WORKSPACE/fallow-regression-baseline.json"
-          if [ ! -s "$FILE" ]; then
+          F="$GITHUB_WORKSPACE/fallow-regression/regression.json"
+          if [ ! -s "$F" ]; then
             echo "FAIL: regression baseline not written"
             exit 1
           fi
-          jq empty "$FILE" || { echo "FAIL: not valid JSON"; exit 1; }
-          cat "$FILE"
+          jq empty "$F" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"
-      - id: check
+      - id: compare
         uses: .
         with:
           command: dead-code
@@ -34,19 +35,19 @@ jobs:
           fail-on-issues: 'false'
           fail-on-regression: 'true'
           tolerance: '0'
-          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
-          artifacts-dir: fallow-artifacts-regression-check
-      - name: Assert no regression and results produced
+          regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
+          artifacts-dir: fallow-artifacts-compare-regression
+      - name: Assert no regression and same issue count
         env:
-          ISSUES: ${{ steps.check.outputs.issues }}
-          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
+          BEFORE: ${{ steps.save.outputs.issues }}
+          AFTER: ${{ steps.compare.outputs.issues }}
         run: |
-          echo "issues: $ISSUES (saved run: $SAVED_ISSUES)"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+          echo "before: $BEFORE after: $AFTER"
+          if ! [[ "$AFTER" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ "$ISSUES" != "$SAVED_ISSUES" ]; then
+          if [ "$BEFORE" != "$AFTER" ]; then
             echo "FAIL: issue count changed between identical runs"
             exit 1
           fi

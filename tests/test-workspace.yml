@@ -1,4 +1,4 @@
-name: Test workspace scoping in a monorepo
+name: Test scoping dead-code to a single workspace
 on:
   workflow_dispatch:
 jobs:
@@ -13,9 +13,9 @@ jobs:
           root: tests/fixtures/monorepo
           version: '3.36.0'
           fail-on-issues: 'false'
-          workspace: app-a
+          workspace: web
           artifacts-dir: fallow-artifacts-workspace
-      - name: Assert output scoped to app-a
+      - name: Assert workspace-scoped results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -35,9 +35,8 @@ jobs:
             exit 1
           fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
-          if grep -q "unusedB" "$FILE"; then
-            echo "FAIL: app-b findings leaked into app-a scoped output"
-            cat "$FILE"
+          if grep -q "packages/admin" "$FILE"; then
+            echo "FAIL: admin workspace findings leaked into web-scoped results"
             exit 1
           fi
           echo "PASS"

@@ -6,21 +6,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snapshot
+      - id: save
         uses: .
         with:
           command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
+          score: 'true'
           save-snapshot: 'true'
           artifacts-dir: fallow-artifacts-snapshot
       - name: Assert snapshot saved
         run: |
-          DIR="$GITHUB_WORKSPACE/tests/fixtures/sample-project/.fallow/snapshots"
-          ls -la "$DIR" || true
-          if [ -z "$(ls -A "$DIR" 2>/dev/null)" ]; then
-            echo "FAIL: no snapshot written under $DIR"
+          ls -laR tests/fixtures/sample-project/.fallow || true
+          if ! find tests/fixtures/sample-project/.fallow -path '*snapshots*' -type f | grep -q .; then
+            echo "FAIL: no snapshot file written under .fallow/snapshots"
             exit 1
           fi
           echo "PASS"
@@ -31,6 +31,7 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
+          score: 'true'
           trend: 'true'
           artifacts-dir: fallow-artifacts-trend
       - name: Assert trend run produced results

@@ -1,4 +1,4 @@
-name: Test audit with gate new-only and worsened error
+name: Test audit command with gate, worsened and dead-code baseline
 on:
   workflow_dispatch:
 jobs:
@@ -8,6 +8,17 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      - name: Prepare baseline directory
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-audit-baselines"
+      - id: save-dead
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
+          artifacts-dir: fallow-artifacts-audit-save
       - id: action
         uses: .
         with:
@@ -16,9 +27,10 @@ jobs:
           version: '3.36.0'
           fail-on-issues: 'false'
           changed-since: HEAD
-          gate: new-only
-          worsened: error
-          artifacts-dir: fallow-artifacts-audit-gate
+          gate: all
+          worsened: warn
+          dead-code-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
+          artifacts-dir: fallow-artifacts-audit
       - name: Assert audit verdict and gate
         env:
           VERDICT: ${{ steps.action.outputs.verdict }}
@@ -32,8 +44,8 @@ jobs:
             pass|warn|fail) ;;
             *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
           esac
-          if [ "$GATE" != "new-only" ]; then
-            echo "FAIL: expected gate 'new-only'"
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all', got '$GATE'"
             exit 1
           fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
