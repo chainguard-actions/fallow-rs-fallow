@@ -1,1 +1,11 @@
-{}
+{
+  "/ci/project/src/math.ts": {
+    "path": "/ci/project/src/math.ts",
+    "statementMap": {},
+    "fnMap": {},
+    "branchMap": {},
+    "s": {},
+    "f": {},
+    "b": {}
+  }
+}
