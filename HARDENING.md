@@ -10,24 +10,24 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.35.0** was hardened automatically. 1 finding(s) were identified and resolved across 2 iteration(s).
+Action **fallow-rs--fallow/v3.35.0** was hardened automatically. 1 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Rule (a): eight composite steps put a GitHub Actions expression straight into the run: shell string, in the form `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`. The affected steps are 'Install fallow' (install.sh), 'Fallow branded token' (broker-token.sh), 'Run analysis' (analyze.sh), 'Check Code Scanning availability' (check-code-scanning.sh), 'Post PR comment' (comment.sh), 'Emit inline annotations' (annotate.sh), 'Job summary' (summary.sh) and 'Post review comments' (review.sh). The template value is substituted before the shell parses the line, and it is unquoted. Fix: use the runner env var instead, written as `bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"`. Line numbers are approximate.
+Rule (a): a GitHub Actions expression is placed directly inside run: shell commands. 8 composite steps use `run: bash ${{ github.action_path }}/action/scripts/<script>.sh` (install.sh, broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh, review.sh). The check fails any ${{ }} in a run: script, whatever its context. Fix: use the env var instead, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
-- `action.yml:400`
-- `action.yml:413`
-- `action.yml:527`
-- `action.yml:540`
-- `action.yml:587`
-- `action.yml:609`
-- `action.yml:635`
-- `action.yml:667`
+- `action.yml:414`
+- `action.yml:427`
+- `action.yml:541`
+- `action.yml:554`
+- `action.yml:601`
+- `action.yml:623`
+- `action.yml:649`
+- `action.yml:682`
 
 ## Iteration Notes
 
@@ -37,13 +37,5 @@ Locations:
 
 **Notes:**
 
-In action.yml, eight composite steps had `bash ${{ github.action_path }}/action/scripts/<x>.sh` in their run: line. These are install, broker-token, analyze, check-code-scanning, comment, annotate, summary and review. Each now reads `bash "$GITHUB_ACTION_PATH/action/scripts/<x>.sh"`. All of these steps use shell: bash, so the quoted variable syntax is correct. ACTION_JQ_DIR still uses github.action_path, but only inside env: blocks, which is safe. No other files were changed.
-
-### Iteration 2
-
-**Fixes applied:** invalid-yaml
-
-**Notes:**
-
-In action.yml, the 'Emit inline annotations' and 'Job summary' steps each had a 'run:' line that was over-indented and had the next step's '- name:' joined onto it. Both caused 'mapping values are not allowed' errors. I put each 'run:' back at the step's own indentation and moved 'Job summary' and 'Post review comments' onto their own lines. The script commands are unchanged.
+Replaced `run: bash ${{ github.action_path }}/action/scripts/<script>.sh` with `run: bash "$GITHUB_ACTION_PATH"/action/scripts/<script>.sh` in all 8 composite steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review). All steps are shell: bash, so the env var syntax is correct. The env: values such as ACTION_JQ_DIR still use github.action_path, which is allowed because they are not inside run: scripts.
 

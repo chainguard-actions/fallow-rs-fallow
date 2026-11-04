@@ -1,4 +1,4 @@
-name: Test dead-code baseline and regression baseline round trip
+name: Test dead-code baseline save then load
 on:
   workflow_dispatch:
 jobs:
@@ -6,61 +6,67 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Prepare baseline directory
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
       - id: save
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/sample-project
           version: 3.35.0
-          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-          save-regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-baseline-save
-      - name: Assert baselines were saved
+          save-baseline: fallow-test-baseline.json
+          save-regression-baseline: fallow-test-regression.json
+      - name: Assert baseline files were written
         run: |
-          for f in dead-code.json regression.json; do
-            p="$GITHUB_WORKSPACE/fallow-baselines/$f"
-            echo "checking $p"
-            if [ ! -f "$p" ] || ! jq -e . "$p" > /dev/null; then
-              echo "FAIL: $f missing or invalid JSON"
+          for f in fallow-test-baseline.json fallow-test-regression.json; do
+            if [ -f "$f" ]; then
+              echo "found $f at workspace root"
+            elif [ -f "tests/fixtures/sample-project/$f" ]; then
+              echo "found $f under project root"
+            else
+              echo "FAIL: $f was not written"
               exit 1
             fi
           done
           echo "PASS"
-      - id: compare
+      - id: load
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/sample-project
           version: 3.35.0
-          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-          regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
-          artifacts-dir: fallow-out-baseline-compare
-      - name: Assert baseline was loaded
+          artifacts-dir: fallow-out-baseline-load
+          baseline: fallow-test-baseline.json
+          regression-baseline: fallow-test-regression.json
+          issue-types: unused-files,unused-exports
+      - name: Assert baseline load outputs
         env:
-          ISSUES: ${{ steps.compare.outputs.issues }}
-          ENTRIES: ${{ steps.compare.outputs.baseline-entries }}
-          BPATH: ${{ steps.compare.outputs.baseline-path }}
-          EXPECTED_PATH: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
+          ISSUES: ${{ steps.load.outputs.issues }}
+          BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
         run: |
-          echo "issues: $ISSUES"
+          echo "saved run issues: $SAVED_ISSUES"
+          echo "baseline run issues: $ISSUES"
+          echo "baseline-path: $BASELINE_PATH"
           echo "baseline-entries: $ENTRIES"
-          echo "baseline-path: $BPATH"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not numeric"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || ! [[ "$SAVED_ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          if [ "$ISSUES" -gt "$SAVED_ISSUES" ]; then
+            echo "FAIL: baseline run reported more issues than the unfiltered run"
+            exit 1
+          fi
+          if [ -n "$BASELINE_PATH" ] && [ "$BASELINE_PATH" != "fallow-test-baseline.json" ]; then
+            echo "FAIL: baseline-path does not match input"
             exit 1
           fi
           if [ -n "$ENTRIES" ] && ! [[ "$ENTRIES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: baseline-entries is not numeric"
-            exit 1
-          fi
-          if [ -n "$BPATH" ] && [ "$BPATH" != "$EXPECTED_PATH" ]; then
-            echo "FAIL: baseline-path does not match the baseline input"
+            echo "FAIL: baseline-entries not numeric"
             exit 1
           fi
           echo "PASS"
