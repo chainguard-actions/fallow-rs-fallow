@@ -1,4 +1,4 @@
-name: Test dupes with token/line/threshold/top options
+name: Test dupes with min-tokens, min-lines, threshold and top
 on:
   workflow_dispatch:
 jobs:
@@ -21,26 +21,33 @@ jobs:
           command: dupes
           root: tests/fixtures/simple-js
           format: json
+          min-tokens: '30'
+          min-lines: '3'
+          threshold: '100'
+          top: '5'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
-          min-tokens: '20'
-          min-lines: '2'
-          threshold: '100'
-          top: '5'
 
-      - name: Assert results
+      - name: Assert issues output is a number
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "clone groups: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert results file is valid JSON
+        env:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues not numeric: '$ISSUES'"
+          echo "results path: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
-            exit 1
-          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"
