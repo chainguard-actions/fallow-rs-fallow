@@ -1,0 +1,103 @@
+name: Test invalid input combinations are rejected
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - id: bad-gate
+        uses: .
+        continue-on-error: true
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: audit
+          root: tests/fixtures/simple-js
+          format: json
+          auto-changed-since: 'false'
+          annotations: 'false'
+          gate: sideways
+
+      - id: bad-security-gate
+        uses: .
+        continue-on-error: true
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: security
+          root: tests/fixtures/simple-js
+          format: json
+          auto-changed-since: 'false'
+          annotations: 'false'
+          security-gate: bogus
+
+      - id: min-score-wrong-command
+        uses: .
+        continue-on-error: true
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          auto-changed-since: 'false'
+          annotations: 'false'
+          min-score: '50'
+
+      - id: min-severity-wrong-command
+        uses: .
+        continue-on-error: true
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: dupes
+          root: tests/fixtures/simple-js
+          format: json
+          auto-changed-since: 'false'
+          annotations: 'false'
+          min-severity: high
+
+      - id: bad-low-traffic
+        uses: .
+        continue-on-error: true
+        env:
+          FALLOW_SKIP_BINARY_VERIFY: '1'
+        with:
+          command: health
+          root: tests/fixtures/simple-js
+          format: json
+          auto-changed-since: 'false'
+          annotations: 'false'
+          runtime-coverage: ./coverage
+          min-invocations-hot: '100'
+          min-observation-volume: '10'
+          low-traffic-threshold: not-a-number
+
+      - name: Assert every invalid configuration failed
+        env:
+          O_GATE: ${{ steps.bad-gate.outcome }}
+          O_SEC: ${{ steps.bad-security-gate.outcome }}
+          O_SCORE: ${{ steps.min-score-wrong-command.outcome }}
+          O_SEV: ${{ steps.min-severity-wrong-command.outcome }}
+          O_LT: ${{ steps.bad-low-traffic.outcome }}
+        run: |
+          rc=0
+          for pair in "gate:$O_GATE" "security-gate:$O_SEC" "min-score:$O_SCORE" \
+                      "min-severity:$O_SEV" "low-traffic-threshold:$O_LT"; do
+            name="${pair%%:*}"; outcome="${pair#*:}"
+            echo "$name -> $outcome"
+            if [ "$outcome" != "failure" ]; then
+              echo "FAIL: invalid $name configuration was not rejected"
+              rc=1
+            fi
+          done
+          [ "$rc" -eq 0 ] && echo "PASS"
+          exit $rc

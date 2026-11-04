@@ -25,20 +25,21 @@ jobs:
           auto-changed-since: 'false'
           annotations: 'false'
           coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /ci-build
+          coverage-root: /ci/build
+          max-crap: '30'
 
-      - name: Assert health ran with coverage
+      - name: Assert coverage run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+            echo "FAIL: issues not numeric: '$ISSUES'"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid: $RESULTS"
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"
