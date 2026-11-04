@@ -12,11 +12,11 @@ jobs:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.37.0'
-          workspace: web
+          workspace: pkg-a
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert output
+      - name: Assert scoped run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -33,8 +33,8 @@ jobs:
             echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
-          if grep -q 'packages/admin' "$F"; then
-            echo "FAIL: admin workspace should be out of scope"
+          if grep -q 'pkg-b/src' "$F"; then
+            echo "FAIL: pkg-b findings leaked into pkg-a scoped output"
             exit 1
           fi
           echo "PASS"

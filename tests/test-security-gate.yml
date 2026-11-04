@@ -1,4 +1,4 @@
-name: Test security command with security-gate
+name: Test security command with new-candidate gate
 on:
   workflow_dispatch:
 jobs:
@@ -19,19 +19,25 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert security output
+      - name: Assert security gate ran clean
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
           echo "gate: $GATE"
+          echo "gates-failed: $GATES_FAILED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
           if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
             echo "FAIL: expected gate 'new'"
+            exit 1
+          fi
+          if echo "$GATES_FAILED" | grep -qw 'security'; then
+            echo "FAIL: security gate failed on clean project"
             exit 1
           fi
           echo "PASS"

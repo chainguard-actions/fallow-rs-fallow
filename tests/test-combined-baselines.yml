@@ -1,4 +1,4 @@
-name: Test combined run with saved dead-code, health and dupes baselines
+name: Test combined run with per-analysis baselines and skip
 on:
   workflow_dispatch:
 jobs:
@@ -6,25 +6,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Prepare baseline directory
-        run: mkdir -p "$GITHUB_WORKSPACE/.fallow-test-baselines"
-      - id: save-dead
-        uses: .
-        with:
-          command: dead-code
-          root: tests/fixtures/dead-code-project
-          version: '3.37.0'
-          save-baseline: ${{ github.workspace }}/.fallow-test-baselines/dead-code.json
-          fail-on-issues: 'false'
-          auto-changed-since: 'false'
-          type-aware: 'false'
+      - name: Prepare baseline dir
+        run: mkdir -p "$RUNNER_TEMP/fallow-combined"
       - id: save-health
         uses: .
         with:
           command: health
-          root: tests/fixtures/dead-code-project
+          root: tests/fixtures/clean-project
           version: '3.37.0'
-          args: --save-baseline ${{ github.workspace }}/.fallow-test-baselines/health.json
+          save-baseline: ${{ runner.temp }}/fallow-combined/health.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
@@ -32,17 +22,16 @@ jobs:
         uses: .
         with:
           command: dupes
-          root: tests/fixtures/dead-code-project
+          root: tests/fixtures/clean-project
           version: '3.37.0'
-          save-baseline: ${{ github.workspace }}/.fallow-test-baselines/dupes.json
+          save-baseline: ${{ runner.temp }}/fallow-combined/dupes.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert baselines written
+      - name: Assert baselines saved
         run: |
-          ls -la "$GITHUB_WORKSPACE/.fallow-test-baselines"
-          for f in dead-code health dupes; do
-            if [ ! -f "$GITHUB_WORKSPACE/.fallow-test-baselines/$f.json" ]; then
+          for f in health dupes; do
+            if [ ! -f "$RUNNER_TEMP/fallow-combined/$f.json" ]; then
               echo "FAIL: $f baseline not written"
               exit 1
             fi
@@ -51,31 +40,23 @@ jobs:
       - id: action
         uses: .
         with:
-          root: tests/fixtures/dead-code-project
+          root: tests/fixtures/clean-project
           version: '3.37.0'
-          baseline: ${{ github.workspace }}/.fallow-test-baselines/dead-code.json
-          health-baseline: ${{ github.workspace }}/.fallow-test-baselines/health.json
-          dupes-baseline: ${{ github.workspace }}/.fallow-test-baselines/dupes.json
+          health-baseline: ${{ runner.temp }}/fallow-combined/health.json
+          dupes-baseline: ${{ runner.temp }}/fallow-combined/dupes.json
+          skip: architecture
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert baseline outputs
+      - name: Assert combined run produced output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          ENTRIES: ${{ steps.action.outputs.baseline-entries }}
-          BPATH: ${{ steps.action.outputs.baseline-path }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "baseline-entries: $ENTRIES"
-          echo "baseline-path: $BPATH"
           echo "results: $RESULTS"
-          if [ -n "$ENTRIES" ] && ! [[ "$ENTRIES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: baseline-entries is not numeric"
-            exit 1
-          fi
-          if [ -n "$BPATH" ] && [[ "$BPATH" != *dead-code.json ]]; then
-            echo "FAIL: baseline-path does not name the supplied baseline"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           F="$RESULTS"

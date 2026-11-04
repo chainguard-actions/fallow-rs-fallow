@@ -1,4 +1,4 @@
-name: Test dupes with min-tokens/min-lines/threshold
+name: Test dupes with token/line minimums and threshold
 on:
   workflow_dispatch:
 jobs:
@@ -12,20 +12,26 @@ jobs:
           command: dupes
           root: tests/fixtures/clean-project
           version: '3.37.0'
-          min-tokens: '20'
-          min-lines: '2'
-          threshold: '100'
+          min-tokens: '30'
+          min-lines: '3'
+          threshold: '50'
           top: '5'
-          fail-on-issues: 'false'
+          fail-on-issues: 'true'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert dupes output
+      - name: Assert no duplication and threshold gate not failed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
+          echo "gates-failed: $GATES_FAILED"
           if [ "$ISSUES" != "0" ]; then
             echo "FAIL: expected 0 clone groups"
+            exit 1
+          fi
+          if echo "$GATES_FAILED" | grep -q 'duplication-threshold'; then
+            echo "FAIL: duplication-threshold gate failed"
             exit 1
           fi
           echo "PASS"
