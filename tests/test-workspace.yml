@@ -12,9 +12,9 @@ jobs:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.38.1'
-          workspace: '@mono/app'
-          fail-on-issues: 'false'
           type-aware: 'false'
+          workspace: '@fixture/app'
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-workspace
       - name: Assert workspace-scoped run produced results
         env:

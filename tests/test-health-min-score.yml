@@ -1,4 +1,4 @@
-name: Test health min-score gate passes
+name: Test health command with min-score gate
 on:
   workflow_dispatch:
 jobs:
@@ -12,10 +12,10 @@ jobs:
           command: health
           root: tests/fixtures/clean-project
           version: '3.38.1'
-          min-score: '0'
           type-aware: 'false'
+          min-score: '0'
           artifacts-dir: fallow-artifacts-min-score
-      - name: Assert health score computed
+      - name: Assert min-score 0 passes and a score was computed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -32,7 +32,7 @@ jobs:
           fi
           jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           if ! grep -qi 'score' "$RESULTS"; then
-            echo "FAIL: expected a health score in results"
+            echo "FAIL: results do not contain a health score"
             cat "$RESULTS"
             exit 1
           fi

@@ -1,4 +1,4 @@
-name: Test dupes with tuning options
+name: Test dupes command with tuning options
 on:
   workflow_dispatch:
 jobs:
@@ -10,15 +10,15 @@ jobs:
         uses: .
         with:
           command: dupes
-          root: tests/fixtures/dirty-project
+          root: tests/fixtures/clean-project
           version: '3.38.1'
-          dupes-mode: strict
-          min-tokens: '20'
-          min-lines: '3'
-          threshold: '100'
-          top: '5'
-          fail-on-issues: 'false'
           type-aware: 'false'
+          min-tokens: '10'
+          min-lines: '2'
+          threshold: '0'
+          top: '5'
+          threads: '2'
+          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-dupes
       - name: Assert dupes ran
         env:

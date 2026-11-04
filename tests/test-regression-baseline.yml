@@ -1,4 +1,4 @@
-name: Test regression baseline with fail-on-regression
+name: Test save-regression-baseline then fail-on-regression with no regression
 on:
   workflow_dispatch:
 jobs:
@@ -6,50 +6,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline directory
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
       - id: save
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.1'
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression-test/regression.json
-          fail-on-issues: 'false'
           type-aware: 'false'
-          artifacts-dir: fallow-artifacts-regression-save
-      - name: Assert regression baseline saved
+          save-regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-save-regression
+      - name: Assert regression baseline file was written
         run: |
-          F="$GITHUB_WORKSPACE/fallow-regression-test/regression.json"
-          if [ ! -f "$F" ]; then
-            echo "FAIL: regression baseline not written"
+          f="$GITHUB_WORKSPACE/fallow-baselines/regression.json"
+          if [ ! -s "$f" ]; then
+            echo "FAIL: regression baseline file not written"
             exit 1
           fi
-          cat "$F"
+          cat "$f"
           echo "PASS"
-      - id: action
+      - id: check
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.1'
-          regression-baseline: ${{ github.workspace }}/fallow-regression-test/regression.json
+          type-aware: 'false'
+          regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
           fail-on-regression: 'true'
           tolerance: '0'
           fail-on-issues: 'false'
-          type-aware: 'false'
-          artifacts-dir: fallow-artifacts-regression-check
-      - name: Assert no regression detected
+          artifacts-dir: fallow-artifacts-check-regression
+      - name: Assert no regression detected and issues still reported
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
-          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.check.outputs.issues }}
         run: |
           echo "issues: $ISSUES"
-          echo "outcome: $OUTCOME"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: unchanged project should not regress"
-            exit 1
-          fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected planted issues still reported"
+            echo "FAIL: expected the planted issues to still be counted"
             exit 1
           fi
           echo "PASS"

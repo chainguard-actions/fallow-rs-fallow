@@ -1,3 +1,3 @@
-import { greet } from '@mono/lib';
-
-console.log(greet('world'));
+export function app() {
+  return 'app';
+}

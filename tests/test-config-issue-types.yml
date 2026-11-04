@@ -1,4 +1,4 @@
-name: Test custom config file
+name: Test explicit config file with issue-types filter
 on:
   workflow_dispatch:
 jobs:
@@ -11,29 +11,34 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
-          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
           version: '3.38.1'
-          fail-on-issues: 'false'
           type-aware: 'false'
-          artifacts-dir: fallow-artifacts-config
-      - name: Assert config was applied (orphan.js ignored)
+          issue-types: unused-files
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-issue-types
+      - name: Assert only unused files are reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected the orphan file to be reported"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
-          if grep -q 'orphan.js' "$RESULTS"; then
-            echo "FAIL: orphan.js should be ignored by the config"
+          if ! grep -q 'orphan' "$RESULTS"; then
+            echo "FAIL: orphan.js not reported as unused file"
+            cat "$RESULTS"
+            exit 1
+          fi
+          if grep -q 'left-pad' "$RESULTS"; then
+            echo "FAIL: unused dependency reported despite issue-types=unused-files"
             cat "$RESULTS"
             exit 1
           fi

@@ -1,10 +1,7 @@
 {
-  "name": "@mono/app",
+  "name": "@fixture/app",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "src/index.js",
-  "dependencies": {
-    "@mono/lib": "1.0.0"
-  }
+  "main": "src/index.js"
 }

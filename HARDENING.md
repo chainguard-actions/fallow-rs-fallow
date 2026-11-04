@@ -16,11 +16,18 @@ Action **fallow-rs--fallow/v3.38.1** was hardened automatically. 1 finding(s) we
 
 ### script-injection (severity: high)
 
-Sub-rule (a), direct expression interpolation: eight composite steps in action.yml put a GitHub Actions expression straight into the run: shell command, as `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`. The steps are: Install fallow (install.sh), Fallow branded token (broker-token.sh), Run analysis (analyze.sh), Check Code Scanning availability (check-code-scanning.sh), Post PR comment (comment.sh), Emit inline annotations (annotate.sh), Job summary (summary.sh) and Post review comments (review.sh). Fix: use the shell variable for the path, as `bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"`, so YAML template substitution never builds the command.
+Rule (a) violated: GitHub Actions expressions are put straight into run: shell commands in 8 composite steps. Each one runs `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`, where <script> is install, broker-token, analyze, check-code-scanning, comment, annotate, summary or review. The expression is filled in by template substitution before the shell parses the line. Fix: pass the path as an env var, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
-- `action.yml`
+- `action.yml:417`
+- `action.yml:430`
+- `action.yml:545`
+- `action.yml:558`
+- `action.yml:605`
+- `action.yml:627`
+- `action.yml:653`
+- `action.yml:686`
 
 ## Iteration Notes
 
@@ -30,13 +37,13 @@ Locations:
 
 **Notes:**
 
-Replaced `bash ${{ github.action_path }}/action/scripts/<script>.sh` with `bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"` in all 8 composite steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review). All steps use shell: bash. The ACTION_JQ_DIR env values still use the expression, which is fine because they sit in env:, not run:.
+Fixed the script-injection finding. In action.yml, all 8 composite steps used to run `bash ${{ github.action_path }}/action/scripts/<script>.sh`. They now run `bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"`, quoted, for install, broker-token, analyze, check-code-scanning, comment, annotate, summary and review. All steps use shell: bash, so the bash variable syntax is correct. The ACTION_JQ_DIR values that use github.action_path are in env: blocks, which the shell never parses, so I left them alone. Nothing was run to test the change.
 
 ### Iteration 2
 
-**Fixes applied:** invalid-yaml
+**Fixes applied:** invalid-yaml, script-injection
 
 **Notes:**
 
-I fixed the invalid YAML in action.yml. In three places, a step's `run:` line was indented 10 spaces instead of 6, and the next step's `- name:` was stuck on the end of the same line. The affected steps were `check-code-scanning.sh` (joined to Upload SARIF), `comment.sh` (joined to Emit inline annotations) and `summary.sh` (joined to Post review comments). I moved each `run:` back to the normal step indent and put the next step on its own line. The commands themselves are unchanged. A regex check shows 11 steps at the expected indent and all 9 `run:` keys at the 6-space step level. I didn't run a YAML parser, so the next analysis pass will be the first real check that the file loads.
+invalid-yaml: an earlier iteration had merged three step boundaries into their run: lines (for example `run:run: bash "...analyze.sh"  - name: Check Code Scanning availability` and `run: bash ${run: bash "...check-code-scanning.sh": Upload SARIF`, and the same for comment.sh -> Emit inline annotations). I put back `run: bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"` for analyze, check-code-scanning and comment, and restored the `- name:` lines for Check Code Scanning availability, Upload SARIF and Emit inline annotations. script-injection: the Job summary step now runs `bash "$GITHUB_ACTION_PATH/action/scripts/summary.sh"` instead of the inline ${{ github.action_path }}. Two edits (comment.sh and summary.sh) reported success but the file had not changed when I read it back, so I applied them again and checked by search: no corruption is left and no ${{ }} remains in any run: line. I did not run a YAML parser or the tests.
 

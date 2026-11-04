@@ -12,13 +12,13 @@ jobs:
           command: health
           root: tests/fixtures/clean-project
           version: '3.38.1'
+          type-aware: 'false'
           coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /build
+          coverage-root: /ci/project
           max-crap: '30'
           fail-on-issues: 'false'
-          type-aware: 'false'
           artifacts-dir: fallow-artifacts-coverage
-      - name: Assert health with coverage ran
+      - name: Assert health with coverage produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
