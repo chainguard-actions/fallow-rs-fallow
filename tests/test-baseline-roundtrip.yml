@@ -1,0 +1,63 @@
+name: Test save-baseline then compare against baseline
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline directory
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code-baseline.json
+          artifacts-dir: fallow-artifacts-save-baseline
+      - name: Assert baseline was saved
+        run: |
+          F="$GITHUB_WORKSPACE/fallow-baselines/dead-code-baseline.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: baseline file not written"
+            find "$GITHUB_WORKSPACE" -name 'dead-code-baseline.json' 2>/dev/null
+            exit 1
+          fi
+          jq empty "$F" || { echo "FAIL: baseline is not valid JSON"; exit 1; }
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'true'
+          baseline: ${{ github.workspace }}/fallow-baselines/dead-code-baseline.json
+          artifacts-dir: fallow-artifacts-compare-baseline
+      - name: Assert baseline suppressed known issues
+        env:
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          BPATH: ${{ steps.compare.outputs.baseline-path }}
+          STALE: ${{ steps.compare.outputs.baseline-stale-entries }}
+          EXPECTED_PATH: ${{ github.workspace }}/fallow-baselines/dead-code-baseline.json
+        run: |
+          echo "issues: $ISSUES"
+          echo "baseline-path: $BPATH"
+          echo "baseline-stale-entries: $STALE"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues against freshly saved baseline"
+            exit 1
+          fi
+          if [ -n "$BPATH" ] && [ "$BPATH" != "$EXPECTED_PATH" ]; then
+            echo "FAIL: baseline-path does not match input"
+            exit 1
+          fi
+          if [ -n "$STALE" ] && [ "$STALE" != "0" ]; then
+            echo "FAIL: expected no stale entries"
+            exit 1
+          fi
+          echo "PASS"

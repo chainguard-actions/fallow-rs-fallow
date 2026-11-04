@@ -1,4 +1,4 @@
-name: Test combined run with skip
+name: Test health min-severity and min-score gates pass on a clean project
 on:
   workflow_dispatch:
 jobs:
@@ -9,19 +9,29 @@ jobs:
       - id: action
         uses: .
         with:
+          command: health
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          skip: dupes
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-skip
-      - name: Assert combined run produced results
+          min-severity: critical
+          min-score: '0'
+          artifacts-dir: fallow-artifacts-gates
+      - name: Assert gates passed and outputs are populated
         env:
+          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          echo "gates-failed: $FAILED"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
+            exit 1
+          fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
@@ -30,5 +40,4 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

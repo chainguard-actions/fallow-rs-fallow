@@ -1,0 +1,64 @@
+name: Test combined run with skip, save-snapshot and trend
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare snapshot directory
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-snapshots"
+      - id: snapshot
+        uses: .
+        with:
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          skip: dupes
+          score: 'true'
+          save-snapshot: ${{ github.workspace }}/fallow-snapshots/snapshot.json
+          artifacts-dir: fallow-artifacts-snapshot
+      - name: Assert first combined run produced results
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
+          RESULTS: ${{ steps.snapshot.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          echo "PASS"
+      - id: trend
+        uses: .
+        with:
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          skip: dupes
+          score: 'true'
+          trend: 'true'
+          artifacts-dir: fallow-artifacts-trend
+      - name: Assert trend run succeeded
+        env:
+          OUTCOME: ${{ steps.trend.outcome }}
+          ISSUES: ${{ steps.trend.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: trend run failed"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          echo "PASS"

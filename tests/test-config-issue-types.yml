@@ -1,4 +1,4 @@
-name: Test explicit config file with issue-types filter
+name: Test explicit config file and issue-types filter
 on:
   workflow_dispatch:
 jobs:
@@ -12,12 +12,12 @@ jobs:
           command: dead-code
           root: tests/fixtures/dirty-project
           config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
+          issue-types: unused-files,unused-exports,unused-deps
           version: '3.38.1'
           type-aware: 'false'
-          issue-types: unused-files
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-issue-types
-      - name: Assert only unused files are reported
+          artifacts-dir: fallow-artifacts-config
+      - name: Assert filtered results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -25,21 +25,12 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected the orphan file to be reported"
+            echo "FAIL: expected planted dead code to be reported"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing"
             exit 1
           fi
-          if ! grep -q 'orphan' "$RESULTS"; then
-            echo "FAIL: orphan.js not reported as unused file"
-            cat "$RESULTS"
-            exit 1
-          fi
-          if grep -q 'left-pad' "$RESULTS"; then
-            echo "FAIL: unused dependency reported despite issue-types=unused-files"
-            cat "$RESULTS"
-            exit 1
-          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

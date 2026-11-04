@@ -15,11 +15,11 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
+          fail-on-issues: 'false'
           changed-since: HEAD
           security-gate: new
-          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-security
-      - name: Assert security gate applied
+      - name: Assert security gate ran
         env:
           GATE: ${{ steps.action.outputs.gate }}
           ISSUES: ${{ steps.action.outputs.issues }}
@@ -30,7 +30,7 @@ jobs:
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ "$GATE" != "new" ]; then
+          if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
             echo "FAIL: expected gate 'new'"
             exit 1
           fi

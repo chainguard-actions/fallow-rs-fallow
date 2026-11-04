@@ -15,10 +15,10 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
+          fail-on-issues: 'false'
           hotspots: 'true'
           since: 1y
           min-commits: '1'
-          fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-hotspots
       - name: Assert hotspot analysis produced results
         env:

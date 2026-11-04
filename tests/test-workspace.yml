@@ -11,12 +11,12 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
+          workspace: pkg-a
           version: '3.38.1'
           type-aware: 'false'
-          workspace: '@fixture/app'
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-workspace
-      - name: Assert workspace-scoped run produced results
+      - name: Assert workspace-scoped results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -32,4 +32,8 @@ jobs:
             exit 1
           fi
           jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          if grep -q 'pkg-b/src' "$RESULTS"; then
+            echo "FAIL: results contain findings from pkg-b outside the scoped workspace"
+            exit 1
+          fi
           echo "PASS"

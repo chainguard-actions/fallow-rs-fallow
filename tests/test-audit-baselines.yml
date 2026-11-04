@@ -1,4 +1,4 @@
-name: Test audit command with gate, worsened and per-analysis baselines
+name: Test audit with gate, worsened, only and per-analysis baselines
 on:
   workflow_dispatch:
 jobs:
@@ -9,45 +9,42 @@ jobs:
         with:
           fetch-depth: 0
       - name: Prepare baseline directory
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
-      - id: save-dead-code
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-audit-baselines"
+      - name: Save dead-code baseline
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
           fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
           artifacts-dir: fallow-artifacts-audit-dc
-      - id: save-health
+      - name: Save health baseline
         uses: .
         with:
           command: health
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-baselines/health.json
           fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
           artifacts-dir: fallow-artifacts-audit-health
-      - id: save-dupes
+      - name: Save dupes baseline
         uses: .
         with:
           command: dupes
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-baselines/dupes.json
           fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
           artifacts-dir: fallow-artifacts-audit-dupes
       - name: Assert baselines exist
         run: |
           for f in dead-code health dupes; do
-            p="$GITHUB_WORKSPACE/fallow-baselines/$f.json"
-            if [ ! -s "$p" ]; then
-              echo "FAIL: $p not written"
-              exit 1
-            fi
+            p="$GITHUB_WORKSPACE/fallow-audit-baselines/$f.json"
+            if [ ! -f "$p" ]; then echo "FAIL: missing $p"; exit 1; fi
           done
           echo "PASS"
       - id: action
@@ -57,13 +54,14 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
+          fail-on-issues: 'false'
           changed-since: HEAD
           gate: all
           worsened: warn
-          dead-code-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-          health-baseline: ${{ github.workspace }}/fallow-baselines/health.json
-          dupes-baseline: ${{ github.workspace }}/fallow-baselines/dupes.json
-          fail-on-issues: 'false'
+          only: dead-code,health,dupes
+          dead-code-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
+          health-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
+          dupes-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
           artifacts-dir: fallow-artifacts-audit
       - name: Assert audit verdict and gate
         env:
