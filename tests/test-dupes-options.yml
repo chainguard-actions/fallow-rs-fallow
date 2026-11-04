@@ -7,59 +7,66 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project with duplicated code
+      - name: Create fixture project with duplicated code
         run: |
-          mkdir -p fallow-sample/src
-          echo '{"name":"fallow-sample","version":"1.0.0","private":true,"main":"src/index.js"}' > fallow-sample/package.json
-          for f in a b; do
-            cat > "fallow-sample/src/format-$f.js" <<'EOF'
-          export function format(items) {
-            const out = [];
-            for (const item of items) {
-              if (item === null || item === undefined) {
-                continue;
-              }
-              const label = String(item).trim().toUpperCase();
-              out.push(label + ':' + label.length);
-            }
-            out.sort();
-            return out.join(', ');
-          }
+          set -e
+          D="$GITHUB_WORKSPACE/fx-dupes"
+          rm -rf "$D"
+          mkdir -p "$D/src"
+          cat > "$D/package.json" <<'EOF'
+          {"name":"fx-dupes","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
           EOF
+          cat > "$D/src/index.js" <<'EOF'
+          import { computeA } from './dup-a.js';
+          import { computeB } from './dup-b.js';
+          console.log(computeA(4), computeB(5));
+          EOF
+          for name in A B; do
+            lower=$(echo "$name" | tr 'A-Z' 'a-z')
+            {
+              echo "export function compute${name}(input) {"
+              echo "  let total = 0;"
+              for i in $(seq 1 30); do
+                echo "  total += input * ${i} + Math.floor(input / ${i}) - (${i} % 3);"
+              done
+              echo "  return total;"
+              echo "}"
+            } > "$D/src/dup-${lower}.js"
           done
-          cat > fallow-sample/src/index.js <<'EOF'
-          import { format as fa } from './format-a.js';
-          import { format as fb } from './format-b.js';
-          console.log(fa(['x']), fb(['y']));
-          EOF
 
       - id: action
         uses: .
         with:
           command: dupes
-          root: fallow-sample
-          min-tokens: '10'
+          root: fx-dupes
+          min-tokens: '20'
           min-lines: '3'
           threshold: '100'
-          top: '3'
+          top: '5'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert issues numeric and results valid
+      - name: Assert clone groups detected
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES gates-failed: '$FAILED'"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results missing or invalid"
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one clone group"
+            jq . "$RESULTS" | head -80
+            exit 1
+          fi
+          if echo "$FAILED" | grep -q 'duplication-threshold'; then
+            echo "FAIL: threshold 100 should never fail"
             exit 1
           fi
           echo "PASS"

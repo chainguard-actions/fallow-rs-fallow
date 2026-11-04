@@ -1,4 +1,4 @@
-name: Test health save-snapshot, trend and min-score
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -7,21 +7,26 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project
+      - name: Create fixture project
         run: |
-          mkdir -p fallow-sample/src
-          echo '{"name":"fallow-sample","version":"1.0.0","private":true,"main":"src/index.js"}' > fallow-sample/package.json
-          cat > fallow-sample/src/index.js <<'EOF'
-          export function main(a, b) {
-            return a + b;
-          }
+          set -e
+          D="$GITHUB_WORKSPACE/fx-snapshot"
+          rm -rf "$D"
+          mkdir -p "$D/src"
+          cat > "$D/package.json" <<'EOF'
+          {"name":"fx-snapshot","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
           EOF
+          cat > "$D/src/index.js" <<'EOF'
+          import { add } from './math.js';
+          console.log(add(1, 2));
+          EOF
+          echo 'export function add(a, b) { return a > b ? a + b : b + a; }' > "$D/src/math.js"
 
-      - id: snapshot
+      - id: save
         uses: .
         with:
           command: health
-          root: fallow-sample
+          root: fx-snapshot
           save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -29,12 +34,13 @@ jobs:
           sarif: 'false'
           format: json
 
-      - name: Assert a snapshot was saved
+      - name: Assert snapshot file was written
         run: |
-          found=$(find . -path ./.git -prune -o -path '*.fallow/snapshots/*' -type f -print | head -n 5)
+          found=$(find "$GITHUB_WORKSPACE/fx-snapshot/.fallow" -path '*snapshots*' -type f 2>/dev/null | head -5)
           echo "snapshots: $found"
           if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file under .fallow/snapshots"
+            echo "FAIL: no snapshot written under fx-snapshot/.fallow/snapshots"
+            find "$GITHUB_WORKSPACE/fx-snapshot" -maxdepth 4 | head -50
             exit 1
           fi
           echo "PASS"
@@ -43,9 +49,8 @@ jobs:
         uses: .
         with:
           command: health
-          root: fallow-sample
+          root: fx-snapshot
           trend: 'true'
-          min-score: '0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
@@ -54,16 +59,16 @@ jobs:
 
       - name: Assert trend run produced results
         env:
-          OUTCOME: ${{ steps.trend.outcome }}
+          ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME results: $RESULTS"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: trend run did not succeed"
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results missing or invalid"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"

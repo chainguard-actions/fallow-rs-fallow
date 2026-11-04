@@ -7,29 +7,30 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project
+      - name: Create fixture project
         run: |
-          mkdir -p fallow-sample/src
-          echo '{"name":"fallow-sample","version":"1.0.0","private":true,"main":"src/index.js"}' > fallow-sample/package.json
-          cat > fallow-sample/src/index.js <<'EOF'
-          import { add } from './util.js';
-          console.log(add(1, 2));
+          set -e
+          D="$GITHUB_WORKSPACE/fx-baseline"
+          rm -rf "$D"
+          mkdir -p "$D/src"
+          cat > "$D/package.json" <<'EOF'
+          {"name":"fx-baseline","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
           EOF
-          cat > fallow-sample/src/util.js <<'EOF'
-          export function add(a, b) {
-            return a + b;
-          }
-          export function unusedHelper(x) {
-            return x * 2;
-          }
+          cat > "$D/src/index.js" <<'EOF'
+          import { used } from './util.js';
+          console.log(used(2));
+          EOF
+          cat > "$D/src/util.js" <<'EOF'
+          export function used(n) { return n * 2; }
+          export function unusedHelper(n) { return n + 1; }
           EOF
 
       - id: save
         uses: .
         with:
           command: dead-code
-          root: fallow-sample
-          save-baseline: ${{ github.workspace }}/fallow-baseline.json
+          root: fx-baseline
+          save-baseline: fx-baseline/dead-code-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
@@ -38,34 +39,43 @@ jobs:
 
       - name: Assert baseline file was saved
         run: |
-          f="$GITHUB_WORKSPACE/fallow-baseline.json"
-          if [ ! -f "$f" ]; then
-            echo "FAIL: baseline not saved at $f"
+          F="$GITHUB_WORKSPACE/fx-baseline/dead-code-baseline.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: baseline not saved at $F"
             exit 1
           fi
-          jq empty "$f" || { echo "FAIL: baseline is not valid JSON"; exit 1; }
+          if ! jq empty "$F"; then
+            echo "FAIL: baseline is not valid JSON"
+            exit 1
+          fi
+          cat "$F"
           echo "PASS"
 
       - id: compare
         uses: .
         with:
           command: dead-code
-          root: fallow-sample
-          baseline: ${{ github.workspace }}/fallow-baseline.json
+          root: fx-baseline
+          baseline: fx-baseline/dead-code-baseline.json
           fail-on-issues: 'true'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert baseline suppresses existing issues
+      - name: Assert baseline suppressed known issues
         env:
           ISSUES: ${{ steps.compare.outputs.issues }}
-          PATH_OUT: ${{ steps.compare.outputs.baseline-path }}
+          BASELINE_PATH: ${{ steps.compare.outputs.baseline-path }}
+          ENTRIES: ${{ steps.compare.outputs.baseline-entries }}
         run: |
-          echo "issues: $ISSUES baseline-path: $PATH_OUT"
+          echo "issues: $ISSUES baseline-path: '$BASELINE_PATH' entries: '$ENTRIES'"
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 new issues against baseline"
+            echo "FAIL: expected 0 new issues when comparing against a fresh baseline"
+            exit 1
+          fi
+          if [ -n "$BASELINE_PATH" ] && [ "$BASELINE_PATH" != "fx-baseline/dead-code-baseline.json" ]; then
+            echo "FAIL: unexpected baseline-path"
             exit 1
           fi
           echo "PASS"

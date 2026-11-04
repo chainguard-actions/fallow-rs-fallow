@@ -1,0 +1,67 @@
+name: Test security command with security-gate new
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fixture project with git history
+        run: |
+          set -e
+          git config --global --add safe.directory '*'
+          D="$GITHUB_WORKSPACE/fx-security"
+          rm -rf "$D"
+          mkdir -p "$D/src"
+          cd "$D"
+          cat > package.json <<'EOF'
+          {"name":"fx-security","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > src/index.js <<'EOF'
+          import { greet } from './greet.js';
+          console.log(greet('world'));
+          EOF
+          echo 'export function greet(n) { return "hello " + n; }' > src/greet.js
+          git init -q
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          git add -A
+          git commit -qm "base"
+          git tag fx-security-base
+          echo 'export function greetLoud(n) { return greet(n).toUpperCase(); }' >> src/greet.js
+          git commit -qam "change"
+
+      - id: action
+        uses: .
+        with:
+          command: security
+          root: fx-security
+          security-gate: new
+          changed-since: fx-security-base
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert security outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          GATE: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "issues: '$ISSUES' gate: '$GATE'"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not an integer"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
+            echo "FAIL: expected gate 'new', got '$GATE'"
+            exit 1
+          fi
+          echo "PASS"

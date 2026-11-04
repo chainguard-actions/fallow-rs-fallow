@@ -7,20 +7,44 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project and coverage data
+      - name: Create fixture project and coverage data
         run: |
-          mkdir -p fallow-sample/src fallow-sample/coverage
-          echo '{"name":"fallow-sample","version":"1.0.0","private":true,"main":"src/index.js"}' > fallow-sample/package.json
-          echo 'export function add(a, b) { return a + b; }' > fallow-sample/src/index.js
-          cat > fallow-sample/coverage/coverage-final.json <<'EOF'
+          set -e
+          D="$GITHUB_WORKSPACE/fx-coverage"
+          rm -rf "$D"
+          mkdir -p "$D/src" "$D/coverage"
+          cat > "$D/package.json" <<'EOF'
+          {"name":"fx-coverage","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          EOF
+          cat > "$D/src/index.js" <<'EOF'
+          import { add } from './math.js';
+          console.log(add(1, 2));
+          EOF
+          cat > "$D/src/math.js" <<'EOF'
+          export function add(a, b) {
+            if (a > b) { return a + b; }
+            return b + a;
+          }
+          EOF
+          cat > "$D/coverage/coverage-final.json" <<'EOF'
           {
-            "/ci/build/src/index.js": {
-              "path": "/ci/build/src/index.js",
-              "statementMap": {"0": {"start": {"line": 1, "column": 28}, "end": {"line": 1, "column": 41}}},
-              "fnMap": {"0": {"name": "add", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}}, "loc": {"start": {"line": 1, "column": 0}, "end": {"line": 1, "column": 44}}, "line": 1}},
+            "/ci/build/src/math.js": {
+              "path": "/ci/build/src/math.js",
+              "statementMap": {
+                "0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 40}},
+                "1": {"start": {"line": 3, "column": 2}, "end": {"line": 3, "column": 15}}
+              },
+              "fnMap": {
+                "0": {
+                  "name": "add",
+                  "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}},
+                  "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 4, "column": 1}},
+                  "line": 1
+                }
+              },
               "branchMap": {},
-              "s": {"0": 3},
-              "f": {"0": 3},
+              "s": {"0": 1, "1": 1},
+              "f": {"0": 1},
               "b": {}
             }
           }
@@ -30,27 +54,28 @@ jobs:
         uses: .
         with:
           command: health
-          root: fallow-sample
-          coverage: ${{ github.workspace }}/fallow-sample/coverage/coverage-final.json
+          root: fx-coverage
+          coverage: fx-coverage/coverage/coverage-final.json
           coverage-root: /ci/build
+          max-crap: '30'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert results valid and issues numeric
+      - name: Assert results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results missing or invalid"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
           echo "PASS"

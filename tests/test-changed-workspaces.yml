@@ -1,0 +1,75 @@
+name: Test changed-workspaces git-derived scoping
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create monorepo fixture with git history
+        run: |
+          set -e
+          git config --global --add safe.directory '*'
+          D="$GITHUB_WORKSPACE/fx-changed-ws"
+          rm -rf "$D"
+          mkdir -p "$D/packages/a/src" "$D/packages/b/src"
+          cd "$D"
+          cat > package.json <<'EOF'
+          {"name":"fx-changed-ws","version":"1.0.0","private":true,"workspaces":["packages/*"]}
+          EOF
+          for p in a b; do
+            cat > "packages/$p/package.json" <<EOF
+          {"name":"@fxc/$p","version":"1.0.0","type":"module","main":"src/index.js"}
+          EOF
+            cat > "packages/$p/src/index.js" <<EOF
+          import { helper } from './helper.js';
+          console.log(helper(1));
+          EOF
+            cat > "packages/$p/src/helper.js" <<EOF
+          export function helper(n) { return n + 1; }
+          export function unused_$p(n) { return n - 1; }
+          EOF
+          done
+          git init -q
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          git add -A
+          git commit -qm "base"
+          git tag fx-ws-base
+          echo 'export function another_a(n) { return n * 3; }' >> packages/a/src/helper.js
+          git commit -qam "change package a"
+          git log --oneline
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: fx-changed-ws
+          changed-workspaces: fx-ws-base
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert output scoped to changed workspace a
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not an integer"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if grep -q 'unused_b' "$RESULTS"; then
+            echo "FAIL: unchanged workspace b should be out of scope"
+            jq . "$RESULTS" | head -80
+            exit 1
+          fi
+          echo "PASS"

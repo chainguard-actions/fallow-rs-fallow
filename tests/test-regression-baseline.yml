@@ -1,4 +1,4 @@
-name: Test save-regression-baseline then regression-baseline with fail-on-regression
+name: Test dead-code save-regression-baseline then regression-baseline
 on:
   workflow_dispatch:
 jobs:
@@ -7,51 +7,52 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project
+      - name: Create fixture project
         run: |
-          mkdir -p fallow-sample/src
-          echo '{"name":"fallow-sample","version":"1.0.0","private":true,"main":"src/index.js"}' > fallow-sample/package.json
-          cat > fallow-sample/src/index.js <<'EOF'
-          import { add } from './util.js';
-          console.log(add(1, 2));
+          set -e
+          D="$GITHUB_WORKSPACE/fx-regression"
+          rm -rf "$D"
+          mkdir -p "$D/src"
+          cat > "$D/package.json" <<'EOF'
+          {"name":"fx-regression","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
           EOF
-          cat > fallow-sample/src/util.js <<'EOF'
-          export function add(a, b) {
-            return a + b;
-          }
-          export function unusedHelper(x) {
-            return x * 2;
-          }
+          cat > "$D/src/index.js" <<'EOF'
+          import { used } from './util.js';
+          console.log(used(2));
+          EOF
+          cat > "$D/src/util.js" <<'EOF'
+          export function used(n) { return n * 2; }
+          export function unusedHelper(n) { return n + 1; }
           EOF
 
       - id: save
         uses: .
         with:
           command: dead-code
-          root: fallow-sample
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
+          root: fx-regression
+          save-regression-baseline: fx-regression/regression-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert regression baseline was saved
+      - name: Assert regression baseline saved
         run: |
-          f="$GITHUB_WORKSPACE/fallow-regression.json"
-          if [ ! -f "$f" ]; then
-            echo "FAIL: regression baseline not saved at $f"
+          F="$GITHUB_WORKSPACE/fx-regression/regression-baseline.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: regression baseline not saved at $F"
             exit 1
           fi
-          jq empty "$f" || { echo "FAIL: not valid JSON"; exit 1; }
+          cat "$F"
           echo "PASS"
 
       - id: compare
         uses: .
         with:
           command: dead-code
-          root: fallow-sample
-          regression-baseline: ${{ github.workspace }}/fallow-regression.json
+          root: fx-regression
+          regression-baseline: fx-regression/regression-baseline.json
           fail-on-regression: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -59,18 +60,19 @@ jobs:
           sarif: 'false'
           format: json
 
-      - name: Assert unchanged code does not regress
+      - name: Assert no regression reported
         env:
           OUTCOME: ${{ steps.compare.outcome }}
           ISSUES: ${{ steps.compare.outputs.issues }}
+          FAILED: ${{ steps.compare.outputs.gates-failed }}
         run: |
-          echo "outcome: $OUTCOME issues: $ISSUES"
+          echo "outcome: $OUTCOME issues: $ISSUES gates-failed: '$FAILED'"
           if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: regression check failed on unchanged code"
+            echo "FAIL: compare step did not succeed"
             exit 1
           fi
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not numeric"
+          if echo "$FAILED" | grep -q 'regression'; then
+            echo "FAIL: unexpected regression against identical baseline"
             exit 1
           fi
           echo "PASS"

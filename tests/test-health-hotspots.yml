@@ -6,24 +6,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
 
-      - name: Create sample project
+      - name: Create fixture project with git history
         run: |
-          mkdir -p fallow-sample/src
-          echo '{"name":"fallow-sample","version":"1.0.0","private":true,"main":"src/index.js"}' > fallow-sample/package.json
-          cat > fallow-sample/src/index.js <<'EOF'
-          export function main(a, b) {
-            return a > b ? a : b;
-          }
+          set -e
+          git config --global --add safe.directory '*'
+          D="$GITHUB_WORKSPACE/fx-hotspots"
+          rm -rf "$D"
+          mkdir -p "$D/src"
+          cd "$D"
+          cat > package.json <<'EOF'
+          {"name":"fx-hotspots","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
           EOF
+          cat > src/index.js <<'EOF'
+          import { step } from './busy.js';
+          console.log(step(1));
+          EOF
+          echo 'export function step(n) { if (n > 0) { return n - 1; } return 0; }' > src/busy.js
+          git init -q
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          git add -A
+          git commit -qm "initial"
+          for i in 1 2 3 4; do
+            echo "export const v$i = $i;" >> src/busy.js
+            git commit -qam "change $i"
+          done
+          git log --oneline
 
       - id: action
         uses: .
         with:
           command: health
-          root: fallow-sample
+          root: fx-hotspots
           hotspots: 'true'
           since: 1y
           min-commits: '1'
@@ -33,18 +48,23 @@ jobs:
           sarif: 'false'
           format: json
 
-      - name: Assert results file is valid JSON and issues numeric
+      - name: Assert results
         env:
-          RESULTS: ${{ steps.action.outputs.results }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "results: $RESULTS issues: $ISSUES"
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues is not an integer"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
             echo "FAIL: results file missing or invalid"
             exit 1
           fi
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not numeric: '$ISSUES'"
+          if ! grep -qi 'hotspot' "$RESULTS"; then
+            echo "FAIL: expected hotspot data in results"
+            jq . "$RESULTS" | head -80
             exit 1
           fi
           echo "PASS"
