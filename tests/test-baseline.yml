@@ -1,4 +1,4 @@
-name: Test save-baseline then compare against baseline
+name: Test save-baseline then baseline
 on:
   workflow_dispatch:
 jobs:
@@ -6,44 +6,51 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
       - id: save
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
       - name: Assert baseline saved
         run: |
-          f="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
-          if [ ! -s "$f" ]; then
+          F="$GITHUB_WORKSPACE/fallow-baselines/dead-code.json"
+          if [ ! -s "$F" ]; then
             echo "FAIL: baseline file not written"
             exit 1
           fi
-          jq empty "$f" || { echo "FAIL: baseline not valid JSON"; exit 1; }
-          echo "PASS"
-      - id: compare
+          cat "$F"
+          jq empty "$F" || { echo "FAIL: baseline is not valid JSON"; exit 1; }
+          echo "PASS: baseline saved"
+      - id: load
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.0'
+          fail-on-issues: 'true'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'true'
-          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
-      - name: Assert baselined issues suppressed
+          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+      - name: Assert baseline suppressed existing issues
         env:
-          ISSUES: ${{ steps.compare.outputs.issues }}
           SAVED_ISSUES: ${{ steps.save.outputs.issues }}
+          ISSUES: ${{ steps.load.outputs.issues }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
+          BPATH: ${{ steps.load.outputs.baseline-path }}
         run: |
-          echo "saved run issues: $SAVED_ISSUES"
-          echo "compare run issues: $ISSUES"
+          echo "issues before baseline: $SAVED_ISSUES"
+          echo "issues with baseline: $ISSUES"
+          echo "baseline-entries: $ENTRIES"
+          echo "baseline-path: $BPATH"
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 new issues when comparing against own baseline"
+            echo "FAIL: expected 0 new issues when comparing against a fresh baseline"
             exit 1
           fi
           echo "PASS"

@@ -1,0 +1,43 @@
+name: Test health score with min-score and min-severity
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.38.0'
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          format: json
+          score: 'true'
+          min-score: '0'
+          min-severity: critical
+      - name: Assert health score passed
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "results: $RESULTS"
+          echo "gates-failed: $GATES_FAILED"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: min-score 0 should never fail"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if ! grep -qi "score" "$RESULTS"; then
+            echo "FAIL: expected a health score in results"
+            cat "$RESULTS"
+            exit 1
+          fi
+          echo "PASS"

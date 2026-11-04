@@ -1,0 +1,48 @@
+name: Test save-snapshot followed by trend
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: snapshot
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          format: json
+          save-snapshot: 'true'
+      - name: Assert snapshot saved
+        run: |
+          FOUND="$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -n 5)"
+          echo "snapshots found:"
+          echo "$FOUND"
+          if [ -z "$FOUND" ]; then
+            echo "FAIL: no snapshot written under a .fallow/snapshots directory"
+            exit 1
+          fi
+          echo "PASS: snapshot saved"
+      - id: trend
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          format: json
+          trend: 'true'
+      - name: Assert trend run produced results
+        env:
+          RESULTS: ${{ steps.trend.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          echo "PASS"

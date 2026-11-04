@@ -1,4 +1,4 @@
-name: Test regression baseline save and compare
+name: Test save-regression-baseline then fail-on-regression
 on:
   workflow_dispatch:
 jobs:
@@ -6,42 +6,53 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-regression"
       - id: save
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
       - name: Assert regression baseline saved
         run: |
-          f="$GITHUB_WORKSPACE/fallow-regression.json"
-          if [ ! -s "$f" ]; then
+          F="$GITHUB_WORKSPACE/fallow-regression/regression.json"
+          if [ ! -s "$F" ]; then
             echo "FAIL: regression baseline not written"
             exit 1
           fi
-          echo "PASS"
+          cat "$F"
+          echo "PASS: regression baseline saved"
       - id: compare
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
+          regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
           fail-on-regression: 'true'
-          regression-baseline: ${{ github.workspace }}/fallow-regression.json
-      - name: Assert no regression
+          tolerance: '0'
+      - name: Assert no regression against identical baseline
         env:
-          ISSUES: ${{ steps.compare.outputs.issues }}
+          OUTCOME: ${{ steps.compare.outcome }}
+          BEFORE: ${{ steps.save.outputs.issues }}
+          AFTER: ${{ steps.compare.outputs.issues }}
         run: |
-          echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          echo "outcome: $OUTCOME"
+          echo "issues before: $BEFORE after: $AFTER"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: unchanged project should not regress"
             exit 1
           fi
-          echo "PASS: no regression against identical baseline"
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "FAIL: issue counts differ between identical runs"
+            exit 1
+          fi
+          echo "PASS"

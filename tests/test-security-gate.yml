@@ -14,19 +14,22 @@ jobs:
           command: security
           root: tests/fixtures/clean-project
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
           changed-since: HEAD
           security-gate: new
-      - name: Assert security ran with gate
+      - name: Assert security gate applied
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES gate: $GATE"
+          echo "issues: $ISSUES"
+          echo "gate: $GATE"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues not numeric"
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then

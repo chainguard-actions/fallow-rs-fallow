@@ -1,0 +1,35 @@
+name: Test explicit config file
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          config: ${{ github.workspace }}/tests/fixtures/config-ignore-orphan/.fallowrc.json
+          version: '3.38.0'
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          format: json
+      - name: Assert config ignorePatterns applied
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if grep -q "orphan.ts" "$RESULTS"; then
+            echo "FAIL: orphan.ts should be ignored by the config's ignorePatterns"
+            cat "$RESULTS"
+            exit 1
+          fi
+          echo "PASS"
