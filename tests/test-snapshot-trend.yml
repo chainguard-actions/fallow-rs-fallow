@@ -1,4 +1,4 @@
-name: Test save-snapshot then trend
+name: Test saving a vital-signs snapshot and comparing trend
 on:
   workflow_dispatch:
 jobs:
@@ -10,19 +10,19 @@ jobs:
         uses: .
         with:
           command: health
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dead-code-project
           version: '3.39.0'
-          save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
+          score: 'true'
+          save-snapshot: 'true'
       - name: Assert snapshot saved
         run: |
-          find . -path '*/.fallow/snapshots/*' -type f 2>/dev/null || true
-          count=$(find . -path '*/.fallow/snapshots/*' -type f 2>/dev/null | wc -l)
-          echo "snapshot files: $count"
-          if [ "$count" -lt 1 ]; then
-            echo "FAIL: no snapshot written"
+          dir="$GITHUB_WORKSPACE/tests/fixtures/dead-code-project/.fallow/snapshots"
+          ls -la "$dir" || true
+          if [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot written under $dir"
             exit 1
           fi
           echo "PASS"
@@ -30,12 +30,13 @@ jobs:
         uses: .
         with:
           command: health
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dead-code-project
           version: '3.39.0'
-          trend: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
+          score: 'true'
+          trend: 'true'
       - name: Assert trend run produced results
         env:
           ISSUES: ${{ steps.trend.outputs.issues }}

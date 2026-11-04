@@ -1,4 +1,4 @@
-name: Test combined run with only selector
+name: Test explicit config file and issue-types filter
 on:
   workflow_dispatch:
 jobs:
@@ -9,13 +9,15 @@ jobs:
       - id: action
         uses: .
         with:
+          command: dead-code
           root: tests/fixtures/dead-code-project
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
           version: '3.39.0'
-          only: dead-code,health
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert combined run produced results
+          issue-types: unused-files
+      - name: Assert only unused files were reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -26,8 +28,13 @@ jobs:
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected orphan.js to be reported as an unused file"
+            exit 1
+          fi
+          if ! grep -q 'orphan' "$RESULTS"; then
+            echo "FAIL: results do not mention orphan.js"
+            head -c 4000 "$RESULTS"
             exit 1
           fi
           echo "PASS"

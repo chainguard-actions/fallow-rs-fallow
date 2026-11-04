@@ -1,7 +1,7 @@
-export function format(name) {
+export function greet(name) {
   return `hello ${name}`;
 }
 
-export function webUnusedExport() {
-  return 'unused in web';
+export function unusedWebHelper() {
+  return 42;
 }

@@ -1,3 +1,3 @@
-import { format } from './util.js';
+import { greet } from './util.js';
 
-console.log(format('web'));
+console.log(greet('web'));

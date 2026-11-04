@@ -1,3 +1,3 @@
-import { label } from './lib.js';
+export const ADMIN_UNUSED = 'admin';
 
-console.log(label());
+console.log('admin');

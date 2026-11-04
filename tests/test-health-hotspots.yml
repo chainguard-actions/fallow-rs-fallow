@@ -1,4 +1,4 @@
-name: Test health with Istanbul coverage and coverage-root
+name: Test health hotspots with git history window
 on:
   workflow_dispatch:
 jobs:
@@ -6,18 +6,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: action
         uses: .
         with:
           command: health
           root: tests/fixtures/dead-code-project
           version: '3.39.0'
-          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /build
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert health ran with coverage data
+          hotspots: 'true'
+          since: '1y'
+          min-commits: '1'
+      - name: Assert hotspot analysis ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

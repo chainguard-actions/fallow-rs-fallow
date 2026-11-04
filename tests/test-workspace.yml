@@ -1,4 +1,4 @@
-name: Test workspace scoping
+name: Test scoping output to a single workspace
 on:
   workflow_dispatch:
 jobs:
@@ -12,11 +12,11 @@ jobs:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.39.0'
-          workspace: web
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert output scoped to the web workspace
+          workspace: web
+      - name: Assert workspace-scoped results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -31,9 +31,8 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
-          if grep -q 'adminUnusedExport' "$RESULTS"; then
-            echo "FAIL: admin workspace findings leaked into web-scoped output"
-            head -c 4000 "$RESULTS"
+          if grep -q 'ADMIN_UNUSED' "$RESULTS"; then
+            echo "FAIL: admin workspace findings leaked into web-scoped results"
             exit 1
           fi
           echo "PASS"

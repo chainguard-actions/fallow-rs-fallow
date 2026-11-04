@@ -1,4 +1,4 @@
-name: Test explicit config file
+name: Test health with Istanbul coverage and coverage-root
 on:
   workflow_dispatch:
 jobs:
@@ -9,15 +9,16 @@ jobs:
       - id: action
         uses: .
         with:
-          command: dead-code
+          command: health
           root: tests/fixtures/dead-code-project
-          config: ${{ github.workspace }}/tests/fixtures/configs/ignore-orphan.json
           version: '3.39.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          threads: '2'
-      - name: Assert config applied (orphan.js ignored)
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /repo
+          max-crap: '30'
+      - name: Assert health ran with coverage
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -30,16 +31,6 @@ jobs:
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing"
-            exit 1
-          fi
-          if grep -q 'orphan.js' "$RESULTS"; then
-            echo "FAIL: orphan.js should be ignored by the config"
-            head -c 4000 "$RESULTS"
-            exit 1
-          fi
-          if ! grep -qE 'unusedHelper|UNUSED_CONSTANT' "$RESULTS"; then
-            echo "FAIL: expected unused exports still reported"
-            head -c 4000 "$RESULTS"
             exit 1
           fi
           echo "PASS"
