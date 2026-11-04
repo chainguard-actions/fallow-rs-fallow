@@ -1,4 +1,4 @@
-name: Test health min-score gate
+name: Test health min-score gate (passing)
 on:
   workflow_dispatch:
 
@@ -15,26 +15,28 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
-          min-score: '0'
           format: json
+          min-score: '0'
+          fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert score computed
+      - name: Assert health ran and min-score 0 did not fail
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
+            echo "FAIL: results file missing: $RESULTS"
             exit 1
           fi
-          echo "PASS: min-score 0 passed"
+          echo "PASS"

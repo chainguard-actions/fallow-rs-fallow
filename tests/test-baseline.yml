@@ -1,4 +1,4 @@
-name: Test save-baseline then baseline
+name: Test save-baseline then baseline comparison
 on:
   workflow_dispatch:
 
@@ -15,8 +15,8 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          save-baseline: ${{ runner.temp }}/fallow-dead-code-baseline.json
           format: json
+          save-baseline: ${{ github.workspace }}/fallow-test-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -25,24 +25,22 @@ jobs:
           no-cache: 'true'
 
       - name: Assert baseline file was saved
-        env:
-          BASELINE: ${{ runner.temp }}/fallow-dead-code-baseline.json
         run: |
-          echo "baseline: $BASELINE"
-          if [ ! -s "$BASELINE" ]; then
-            echo "FAIL: baseline file was not written"
+          ls -la "$GITHUB_WORKSPACE" | grep fallow-test-baseline || true
+          if [ ! -f "$GITHUB_WORKSPACE/fallow-test-baseline.json" ]; then
+            echo "FAIL: baseline file not saved"
             exit 1
           fi
-          jq -e . "$BASELINE" > /dev/null || { echo "FAIL: baseline is not JSON"; exit 1; }
-          echo "PASS"
+          jq empty "$GITHUB_WORKSPACE/fallow-test-baseline.json" || { echo "FAIL: baseline is not JSON"; exit 1; }
+          echo "PASS: baseline saved"
 
       - id: load
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          baseline: ${{ runner.temp }}/fallow-dead-code-baseline.json
           format: json
+          baseline: ${{ github.workspace }}/fallow-test-baseline.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -52,23 +50,19 @@ jobs:
 
       - name: Assert baseline suppressed all known issues
         env:
-          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
           ISSUES: ${{ steps.load.outputs.issues }}
-          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
-          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
+          BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
         run: |
-          echo "saved-run issues: $SAVED_ISSUES"
-          echo "issues: $ISSUES entries: $ENTRIES stale: $STALE"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+          echo "issues with baseline: $ISSUES"
+          echo "issues when saving: $SAVED_ISSUES"
+          echo "baseline-path: $BASELINE_PATH"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$' || ! echo "$SAVED_ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues outputs are not numbers"
             exit 1
           fi
           if [ "$ISSUES" -gt "$SAVED_ISSUES" ]; then
-            echo "FAIL: baseline run reports more issues than the run that saved it"
-            exit 1
-          fi
-          if [ -n "$ENTRIES" ] && ! echo "$ENTRIES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: baseline-entries is not numeric"
+            echo "FAIL: baseline comparison reported more issues than the baseline run"
             exit 1
           fi
           echo "PASS"

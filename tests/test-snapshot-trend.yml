@@ -1,4 +1,4 @@
-name: Test health save-snapshot then trend
+name: Test save-snapshot then trend
 on:
   workflow_dispatch:
 
@@ -10,13 +10,13 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - id: snapshot
+      - id: snap
         uses: .
         with:
           command: health
           root: tests/fixtures/simple-js
-          save-snapshot: 'true'
           format: json
+          save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -24,12 +24,12 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert snapshot was written
+      - name: Assert a snapshot was written
         run: |
-          found=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -1)
-          echo "snapshot: $found"
+          found=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
+          echo "snapshots: $found"
           if [ -z "$found" ]; then
-            echo "FAIL: no snapshot under .fallow/snapshots"
+            echo "FAIL: no snapshot file found under any .fallow/snapshots directory"
             exit 1
           fi
           echo "PASS"
@@ -39,8 +39,8 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
-          trend: 'true'
           format: json
+          trend: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -48,7 +48,7 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert trend run produced results
+      - name: Assert trend run succeeded
         env:
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
@@ -59,7 +59,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at: $RESULTS"
+            echo "FAIL: results file missing"
             exit 1
           fi
           echo "PASS"
