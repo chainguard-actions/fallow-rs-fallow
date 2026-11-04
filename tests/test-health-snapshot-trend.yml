@@ -1,0 +1,69 @@
+name: Test health save-snapshot, trend and min-score
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create sample project
+        run: |
+          mkdir -p fallow-sample/src
+          echo '{"name":"fallow-sample","version":"1.0.0","private":true,"main":"src/index.js"}' > fallow-sample/package.json
+          cat > fallow-sample/src/index.js <<'EOF'
+          export function main(a, b) {
+            return a + b;
+          }
+          EOF
+
+      - id: snapshot
+        uses: .
+        with:
+          command: health
+          root: fallow-sample
+          save-snapshot: 'true'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert a snapshot was saved
+        run: |
+          found=$(find . -path ./.git -prune -o -path '*.fallow/snapshots/*' -type f -print | head -n 5)
+          echo "snapshots: $found"
+          if [ -z "$found" ]; then
+            echo "FAIL: no snapshot file under .fallow/snapshots"
+            exit 1
+          fi
+          echo "PASS"
+
+      - id: trend
+        uses: .
+        with:
+          command: health
+          root: fallow-sample
+          trend: 'true'
+          min-score: '0'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert trend run produced results
+        env:
+          OUTCOME: ${{ steps.trend.outcome }}
+          RESULTS: ${{ steps.trend.outputs.results }}
+        run: |
+          echo "outcome: $OUTCOME results: $RESULTS"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: trend run did not succeed"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
+            exit 1
+          fi
+          echo "PASS"

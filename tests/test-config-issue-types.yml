@@ -1,4 +1,4 @@
-name: Test dead-code with explicit config and issue-types filter
+name: Test dead-code with explicit config file and issue-types filter
 on:
   workflow_dispatch:
 jobs:
@@ -7,72 +7,55 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create fixture project
+      - name: Create sample project and config
         run: |
-          set -e
-          D=fx-config
-          rm -rf "$D"
-          mkdir -p "$D/src" "$D/cfg"
-          cat > "$D/package.json" <<'EOF'
-          {"name":"fx-config","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          mkdir -p fallow-sample/src
+          echo '{"name":"fallow-sample","version":"1.0.0","private":true,"main":"src/index.js"}' > fallow-sample/package.json
+          cat > fallow-sample/src/index.js <<'EOF'
+          import { add } from './util.js';
+          console.log(add(1, 2));
           EOF
-          cat > "$D/src/index.js" <<'EOF'
-          import { used } from './util.js';
-          console.log(used(3));
+          cat > fallow-sample/src/util.js <<'EOF'
+          export function add(a, b) {
+            return a + b;
+          }
+          export function unusedHelper(x) {
+            return x * 2;
+          }
           EOF
-          cat > "$D/src/util.js" <<'EOF'
-          export function used(n) { return n + 1; }
-          export function unusedHelper() { return 42; }
-          EOF
-          cat > "$D/src/orphan.js" <<'EOF'
-          export const orphan = 1;
-          EOF
-          cat > "$D/cfg/.fallowrc.json" <<'EOF'
-          {"ignorePatterns": ["dist/**"]}
-          EOF
+          echo 'export const orphan = 1;' > fallow-sample/src/orphan.js
+          echo '{"ignorePatterns": ["src/orphan.js"]}' > fallow-sample/fallow-test-config.json
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: fx-config
-          config: ${{ github.workspace }}/fx-config/cfg/.fallowrc.json
+          root: fallow-sample
+          config: ${{ github.workspace }}/fallow-sample/fallow-test-config.json
           issue-types: unused-files,unused-exports
-          artifacts-dir: fx-config-artifacts
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert issues output is a number
+      - name: Assert results are valid and the ignored file is not reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-        run: |
-          echo "issues: $ISSUES"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected non-negative integer, got '$ISSUES'"
-            exit 1
-          fi
-          echo "PASS"
-
-      - name: Assert results file is valid JSON and args include filters
-        env:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "results: $RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          echo "issues: $ISSUES results: $RESULTS"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues not numeric"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
-          ARGS_FILE=fx-config-artifacts/fallow-analysis-args.sh
-          cat "$ARGS_FILE"
-          for flag in -- --config --unused-files --unused-exports; do
-            [ "$flag" = "--" ] && continue
-            if ! grep -q -- "$flag" "$ARGS_FILE"; then
-              echo "FAIL: expected $flag in analysis args"
-              exit 1
-            fi
-          done
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
+            exit 1
+          fi
+          if grep -q 'orphan.js' "$RESULTS"; then
+            echo "FAIL: orphan.js is ignored by the config but was reported"
+            cat "$RESULTS"
+            exit 1
+          fi
           echo "PASS"

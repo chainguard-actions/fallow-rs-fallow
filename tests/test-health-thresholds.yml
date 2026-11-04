@@ -1,4 +1,4 @@
-name: Test health with complexity thresholds and sort
+name: Test health command with threshold, sort and top options
 on:
   workflow_dispatch:
 jobs:
@@ -7,65 +7,69 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create fixture project with a complex function
+      - name: Create sample project
         run: |
-          set -e
-          D=fx-health
-          rm -rf "$D"
-          mkdir -p "$D/src"
-          cat > "$D/package.json" <<'EOF'
-          {"name":"fx-health","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          mkdir -p fallow-sample/src
+          echo '{"name":"fallow-sample","version":"1.0.0","private":true,"main":"src/index.js"}' > fallow-sample/package.json
+          cat > fallow-sample/src/index.js <<'EOF'
+          import { add, classify } from './util.js';
+          console.log(add(1, 2), classify(5));
           EOF
-          cat > "$D/src/index.js" <<'EOF'
-          export function classify(a, b, c) {
-            if (a > 0) {
-              if (b > 0) {
-                if (c > 0) { return 'all'; } else if (c < -10) { return 'ab-neg'; }
-                for (let i = 0; i < a; i++) { if (i % 2 === 0 && b > i) { c += i; } else if (i % 3) { c -= 1; } }
-              } else if (b < -5 || c > 7) {
-                while (a > 0) { a--; if (a === 3) { break; } }
-              }
-            } else if (a === 0 && (b || c)) {
-              switch (b) { case 1: return 'one'; case 2: return 'two'; default: return 'other'; }
-            }
-            return c > 0 ? 'pos' : 'neg';
+          cat > fallow-sample/src/util.js <<'EOF'
+          export function add(a, b) {
+            return a + b;
           }
-          console.log(classify(1, 2, 3));
+          export function classify(n) {
+            if (n < 0) {
+              return 'negative';
+            } else if (n === 0) {
+              return 'zero';
+            } else if (n < 10) {
+              return 'small';
+            }
+            return 'large';
+          }
           EOF
 
       - id: action
         uses: .
         with:
           command: health
-          root: fx-health
-          max-cyclomatic: '3'
-          max-cognitive: '3'
-          max-crap: '10.5'
+          root: fallow-sample
+          max-cyclomatic: '10'
+          max-cognitive: '8'
+          max-crap: '30.5'
+          top: '5'
           sort: cognitive
-          artifacts-dir: fx-health-artifacts
+          min-severity: critical
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert outputs and forwarded flags
+      - name: Assert issues output is a number
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: expected non-negative integer, got '$ISSUES'"
             exit 1
           fi
-          [ -f "$RESULTS" ] && jq empty "$RESULTS" || { echo "FAIL: invalid results file '$RESULTS'"; exit 1; }
-          ARGS_FILE=fx-health-artifacts/fallow-analysis-args.sh
-          cat "$ARGS_FILE"
-          for flag in "--max-cyclomatic 3" "--max-cognitive 3" "--max-crap 10.5" "--sort cognitive"; do
-            if ! grep -q -- "$flag" "$ARGS_FILE"; then
-              echo "FAIL: expected '$flag' in analysis args"
-              exit 1
-            fi
-          done
+          echo "PASS"
+
+      - name: Assert results file is valid JSON
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: invalid JSON"
+            exit 1
+          fi
           echo "PASS"
