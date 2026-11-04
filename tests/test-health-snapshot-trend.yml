@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 
@@ -15,8 +15,8 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
-          format: json
           save-snapshot: 'true'
+          format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -24,15 +24,12 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert a snapshot was saved
-        env:
-          ISSUES: ${{ steps.snapshot.outputs.issues }}
+      - name: Assert snapshot was written
         run: |
-          echo "issues: $ISSUES"
-          found=$(find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f 2>/dev/null | head -5)
-          echo "snapshot files: $found"
+          found=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -1)
+          echo "snapshot: $found"
           if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file was written"
+            echo "FAIL: no snapshot under .fallow/snapshots"
             exit 1
           fi
           echo "PASS"
@@ -42,8 +39,8 @@ jobs:
         with:
           command: health
           root: tests/fixtures/simple-js
-          format: json
           trend: 'true'
+          format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -57,13 +54,12 @@ jobs:
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: '$RESULTS'"
+            echo "FAIL: results file missing at: $RESULTS"
             exit 1
           fi
           echo "PASS"
