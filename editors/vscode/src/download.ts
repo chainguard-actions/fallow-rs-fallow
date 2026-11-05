@@ -1,0 +1,1261 @@
+import { execFile } from "node:child_process";
+import { createHash, createPublicKey, verify } from "node:crypto";
+import * as fs from "node:fs";
+import type { IncomingMessage } from "node:http";
+import * as https from "node:https";
+import * as os from "node:os";
+import * as path from "node:path";
+import { promisify } from "node:util";
+// VS Code injects this module into the extension host at runtime.
+// fallow-ignore-next-line unlisted-dependency
+import * as vscode from "vscode";
+import { getExecutableExtension } from "./binary-utils.js";
+import { getAutoDownload } from "./config.js";
+import { hostLinuxLibc, type LinuxLibc } from "./libc.js";
+
+const GITHUB_REPO = "fallow-rs/fallow";
+const LSP_BINARY_NAME = "fallow-lsp";
+const CLI_BINARY_NAME = "fallow";
+const VERSION_FILE = ".fallow-version";
+const SIGNATURE_SUFFIX = ".sig";
+const SHA256_SUFFIX = ".sha256";
+// Records the release target of the installed binary, so a host that needs
+// another target (an Alpine host with a glibc binary from an earlier version)
+// downloads the matching binary instead of reusing one that cannot start.
+const TARGET_SUFFIX = ".target";
+
+// Cross-process install lock. Multiple VS Code windows share one global-storage
+// `bin/` directory, so a simultaneous post-release restore would otherwise have
+// every window download to the same final paths at once. On Windows the loser of
+// that race fails with EPERM/EBUSY/EACCES because the target is already open
+// (issue #1091). The lock serializes installs to a single window; the others
+// wait, then reuse what the winner installed.
+const INSTALL_LOCK_FILE = ".install.lock";
+// Longer than any realistic single-binary download, so a slow-but-live install
+// is never mistaken for a crashed one. The atomic temp+rename keeps even a
+// stolen-lock race from corrupting the binary.
+const STALE_LOCK_MS = 120_000;
+const LOCK_POLL_MS = 200;
+// Hard ceiling on waiting for a sibling before stealing the lock, to guarantee
+// forward progress even if a holder's clock or mtime is pathological.
+const LOCK_MAX_WAIT_MS = 180_000;
+
+// Per-process counter so concurrent temp paths within one process never collide.
+let tempCounter = 0;
+const BINARY_SIGNING_PUBLIC_KEY = Buffer.from([
+  131, 78, 111, 215, 115, 51, 230, 238, 223, 119, 147, 71, 199, 16, 172, 180, 3, 210, 216, 35, 77,
+  85, 159, 94, 215, 200, 126, 85, 42, 222, 11, 209,
+]);
+const ED25519_SPKI_HEADER = Buffer.from([
+  0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+]);
+
+interface GithubRelease {
+  readonly tag_name: string;
+  readonly assets: ReadonlyArray<{
+    readonly digest?: string;
+    readonly name: string;
+    readonly browser_download_url: string;
+  }>;
+}
+
+const REQUEST_HEADERS = { "User-Agent": "fallow-vscode" };
+const EXTENSION_ID = "fallow-rs.fallow-vscode";
+
+// Socket-inactivity guard. A proxy that accepts the TCP connection but never
+// sends bytes fires no 'error' event, which used to park the download (and the
+// LSP startup awaiting it) forever behind the progress notification.
+const REQUEST_TIMEOUT_MS = 30_000;
+// GitHub asset URLs redirect once to the CDN; anything deeper is a
+// misconfigured proxy or a loop, and unbounded recursion here never settles.
+const MAX_REDIRECTS = 5;
+
+/** Outcome of one locked LSP+CLI install attempt. */
+type LspCliInstall =
+  | { kind: "lsp-missing"; tag: string }
+  | {
+      kind: "ready";
+      lspPath: string;
+      lspDownloaded: boolean;
+      cliPath: string | null;
+      cliDownloaded: boolean;
+      cliError: string | null;
+      tag: string;
+    };
+
+/**
+ * Map a platform, CPU architecture, and Linux C library to the release asset
+ * target. `libc` applies only to Linux. A musl host, such as Alpine, needs the
+ * `-musl` binary, because a glibc binary does not start there.
+ */
+export const platformTargetFor = (
+  platform: NodeJS.Platform,
+  arch: string,
+  libc: LinuxLibc = "gnu",
+): string | null => {
+  if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
+  if (platform === "darwin" && arch === "x64") return "darwin-x64";
+  if (platform === "linux" && arch === "x64") return `linux-x64-${libc}`;
+  if (platform === "linux" && arch === "arm64") return `linux-arm64-${libc}`;
+  if (platform === "win32" && arch === "arm64") return "win32-arm64-msvc";
+  if (platform === "win32" && arch === "x64") return "win32-x64-msvc";
+
+  return null;
+};
+
+const getPlatformTarget = (): string | null => {
+  const platform = os.platform();
+  return platformTargetFor(platform, os.arch(), platform === "linux" ? hostLinuxLibc() : "gnu");
+};
+
+const withRedirects = <T>(
+  url: string,
+  handleResponse: (response: IncomingMessage) => Promise<T>,
+  signal?: AbortSignal,
+  redirectDepth = 0,
+): Promise<T> =>
+  new Promise((resolve, reject) => {
+    let activeResponse: IncomingMessage | null = null;
+    const request = https.get(url, { headers: REQUEST_HEADERS, signal }, (response) => {
+      activeResponse = response;
+      if (
+        response.statusCode &&
+        response.statusCode >= 300 &&
+        response.statusCode < 400 &&
+        response.headers.location
+      ) {
+        response.resume();
+        if (redirectDepth >= MAX_REDIRECTS) {
+          reject(new Error(`Too many redirects (limit ${MAX_REDIRECTS})`));
+          return;
+        }
+        withRedirects(response.headers.location, handleResponse, signal, redirectDepth + 1).then(
+          resolve,
+          reject,
+        );
+        return;
+      }
+
+      if (response.statusCode && response.statusCode >= 400) {
+        response.resume();
+        reject(new Error(`HTTP ${response.statusCode}`));
+        return;
+      }
+
+      void handleResponse(response).then(resolve, reject);
+    });
+
+    // Covers both a connection that never yields a response and a stall
+    // mid-body. Destroying the *response* (when one exists) routes the failure
+    // through the response 'error' handlers in httpsGet / httpsDownload so
+    // their cleanup (partial-file unlink) runs; the completed-response guard
+    // keeps a later keep-alive socket timeout from clobbering a finished
+    // download.
+    request.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      const timeoutError = new Error(`Download timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+      if (activeResponse) {
+        if (!activeResponse.complete) {
+          activeResponse.destroy(timeoutError);
+        }
+        return;
+      }
+      request.destroy(timeoutError);
+    });
+    request.on("error", reject);
+  });
+
+const httpsGet = (url: string, signal?: AbortSignal): Promise<string> =>
+  withRedirects(
+    url,
+    async (response) => {
+      const chunks: Buffer[] = [];
+
+      return await new Promise<string>((resolve, reject) => {
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () => resolve(Buffer.concat(chunks).toString()));
+        response.on("error", reject);
+      });
+    },
+    signal,
+  );
+
+export const httpsDownload = (url: string, dest: string, signal?: AbortSignal): Promise<void> =>
+  withRedirects(
+    url,
+    async (response) =>
+      await new Promise<void>((resolve, reject) => {
+        const file = fs.createWriteStream(dest);
+        // Set once the whole body has reached disk, leaving only the descriptor
+        // close outstanding. A socket error after that point describes a
+        // connection this download is already done with.
+        let bodyWritten = false;
+        // Guard the readable (response) stream as well: `pipe()` does not forward
+        // a readable's errors to the writable, so a mid-download socket drop would
+        // emit an unhandled `error` on `response` and crash the whole extension
+        // host. Tear down the write stream, drop the partial file, and reject.
+        response.on("error", (err) => {
+          // A keep-alive socket can fail after the body is complete. Deleting a
+          // finished download there would fail an install that had already
+          // succeeded, so only report an error that truncated the file. The
+          // listener stays attached: an unhandled 'error' would crash the host.
+          if (bodyWritten) {
+            return;
+          }
+          file.destroy();
+          fs.unlink(dest, () => {});
+          reject(err);
+        });
+        response.pipe(file);
+        // 'finish' only means the bytes reached the OS; the descriptor is still
+        // open, and `close()` merely queues fs.close(fd) on the libuv
+        // threadpool. Unix refuses to exec a file that any process holds open
+        // for writing (ETXTBSY), and this very file is chmod'ed, renamed into
+        // place and then spawned by the same extension host. Resolve from the
+        // close callback so the descriptor is gone before the caller runs.
+        file.on("finish", () => {
+          bodyWritten = true;
+          file.close((err) => {
+            // Measured on Node 22: a failed `fs.close` emits 'error' on the
+            // stream first and only then runs this callback, with no error
+            // argument. So a close failure rejects through the 'error' handler
+            // below, which must stay for that reason, and this branch never
+            // fires there. It remains as a guard for a runtime that reports the
+            // failure here instead.
+            if (err) {
+              reject(err);
+              return;
+            }
+            resolve();
+          });
+        });
+        file.on("error", (err) => {
+          fs.unlink(dest, () => {});
+          reject(err);
+        });
+      }),
+    signal,
+  );
+
+// Matches the `.${name}.${pid}.${counter}.tmp` names minted by `uniqueTempPath`
+// and the `.sig` / `.sha256` sidecars staged next to them. This naming is owned
+// solely by the download path, so a match is never a valid installed binary.
+const ORPHAN_TEMP_RE = /^\..+\.(\d+)\.\d+\.tmp(?:\.sig|\.sha256|\.target)?$/;
+
+/**
+ * Remove temp files left behind by a download that died (SIGKILL / crash /
+ * reboot) between writing the temp file and renaming it into place. The
+ * try/catch cleanup in `downloadAsset` only runs when the JS runtime reaches it,
+ * so a hard kill leaks the temp permanently. Skip temps tagged with the current
+ * pid: those may be a live in-flight download in this same process (sweeping
+ * runs outside the install lock), and a running pid is never a crash orphan.
+ */
+export const sweepOrphanTempFiles = (dir: string): void => {
+  const livePid = String(process.pid);
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    // Best-effort: a missing or unreadable dir has nothing to sweep.
+    return;
+  }
+  for (const entry of entries) {
+    const match = ORPHAN_TEMP_RE.exec(entry);
+    if (!match || match[1] === livePid) {
+      continue;
+    }
+    try {
+      fs.unlinkSync(path.join(dir, entry));
+    } catch {
+      // Best-effort: a sibling window may have swept it first, or it is locked.
+    }
+  }
+};
+
+const getInstallDir = (context: vscode.ExtensionContext): string => {
+  const dir = path.join(context.globalStorageUri.fsPath, "bin");
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  // Orphan cleanup is best-effort and its result never affects the returned
+  // dir, so defer the synchronous `readdirSync` off the activation /
+  // binary-resolution path: running it inline blocked the extension-host JS
+  // thread on every `getInstallDir` call (notably slow on network-mounted
+  // global storage). `setImmediate` fire-and-forget keeps the same single
+  // thread but unblocks the caller.
+  setImmediate(() => sweepOrphanTempFiles(dir));
+  return dir;
+};
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getLockPath = (dir: string): string => path.join(dir, INSTALL_LOCK_FILE);
+
+/**
+ * Atomically create the install lock. `wx` opens with O_CREAT|O_EXCL, so exactly
+ * one process across all windows can create the file. Returns false when another
+ * window already holds it (EEXIST); rethrows other errors so the caller can fall
+ * back to a lock-free install.
+ */
+export const tryAcquireInstallLock = (lockPath: string): boolean => {
+  let created = false;
+  try {
+    const fd = fs.openSync(lockPath, "wx");
+    created = true;
+    try {
+      fs.writeSync(fd, `${process.pid}`);
+    } finally {
+      fs.closeSync(fd);
+    }
+    return true;
+  } catch (err) {
+    if (created) {
+      // A failed owner write or close must not leave a fresh orphan lock that
+      // makes later installs wait. Never remove a sibling's existing lock.
+      releaseInstallLock(lockPath);
+    } else if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      return false;
+    }
+    throw err;
+  }
+};
+
+const releaseInstallLock = (lockPath: string): void => {
+  try {
+    fs.unlinkSync(lockPath);
+  } catch {
+    // Best-effort: the lock may already be gone (stolen as stale by a sibling).
+  }
+};
+
+/** A lock whose mtime is older than the stale threshold was left by a crashed window. */
+const isInstallLockStale = (lockPath: string): boolean => {
+  try {
+    return Date.now() - fs.statSync(lockPath).mtimeMs > STALE_LOCK_MS;
+  } catch {
+    // Vanished between checks: not stale, just gone.
+    return false;
+  }
+};
+
+/**
+ * Run `fn` while holding the cross-process install lock. Waits for a live sibling
+ * to finish, steals a stale or long-overdue lock to guarantee progress, and
+ * degrades to a lock-free run if the lock cannot be managed at all (e.g. a
+ * read-only storage dir). Correctness never depends on the lock: callers
+ * double-check the installed binary inside `fn` and publish atomically.
+ */
+export const withInstallLock = async <T>(dir: string, fn: () => Promise<T>): Promise<T> => {
+  const lockPath = getLockPath(dir);
+  const deadline = Date.now() + LOCK_MAX_WAIT_MS;
+
+  for (;;) {
+    let acquired = false;
+    try {
+      acquired = tryAcquireInstallLock(lockPath);
+    } catch {
+      // The lock cannot be created here. The atomic temp+rename install still
+      // prevents corruption, so proceed without serialization.
+      return fn();
+    }
+
+    if (acquired) {
+      try {
+        return await fn();
+      } finally {
+        releaseInstallLock(lockPath);
+      }
+    }
+
+    if (isInstallLockStale(lockPath) || Date.now() >= deadline) {
+      releaseInstallLock(lockPath);
+      continue;
+    }
+
+    await sleep(LOCK_POLL_MS);
+  }
+};
+
+const uniqueTempPath = (dir: string, name: string): string => {
+  tempCounter += 1;
+  return path.join(dir, `.${name}.${process.pid}.${tempCounter}.tmp`);
+};
+
+const fileDigestHex = (filePath: string): string =>
+  createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+
+/** Publish a small sidecar (signature / digest marker) by replacing any prior copy. */
+const publishSidecar = (tempPath: string, finalPath: string): void => {
+  try {
+    if (fs.existsSync(finalPath)) {
+      fs.unlinkSync(finalPath);
+    }
+  } catch {
+    // Best-effort: rename below will surface a real failure.
+  }
+  fs.renameSync(tempPath, finalPath);
+};
+
+/**
+ * Atomically move a verified temp binary onto its final path. If the rename fails
+ * because the target is locked (a sibling window's running LSP on Windows) but the
+ * on-disk binary is already byte-identical to what we just verified, treat it as a
+ * successful install instead of throwing (issue #1091).
+ */
+export const renameIntoPlace = (tempPath: string, finalPath: string): void => {
+  try {
+    fs.renameSync(tempPath, finalPath);
+  } catch (err) {
+    if (fs.existsSync(finalPath) && fileDigestHex(finalPath) === fileDigestHex(tempPath)) {
+      try {
+        fs.unlinkSync(tempPath);
+      } catch {
+        // Best-effort cleanup of the now-redundant temp copy.
+      }
+      return;
+    }
+    throw err;
+  }
+};
+
+const getSignaturePath = (binaryPath: string): string => `${binaryPath}${SIGNATURE_SUFFIX}`;
+
+const getDigestPath = (binaryPath: string): string => `${binaryPath}${SHA256_SUFFIX}`;
+
+const getTargetPath = (binaryPath: string): string => `${binaryPath}${TARGET_SUFFIX}`;
+
+const purgeManagedBinary = (binaryPath: string): void => {
+  for (const candidate of [
+    binaryPath,
+    getSignaturePath(binaryPath),
+    getDigestPath(binaryPath),
+    getTargetPath(binaryPath),
+  ]) {
+    try {
+      if (fs.existsSync(candidate)) {
+        fs.unlinkSync(candidate);
+      }
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+};
+
+export const writeVersionMarker = (dir: string, version: string): void => {
+  try {
+    fs.writeFileSync(path.join(dir, VERSION_FILE), version, "utf-8");
+  } catch {
+    // Best-effort. Next activation falls back to --version.
+  }
+};
+
+export const readVersionMarker = (dir: string): string | null => {
+  try {
+    return fs.readFileSync(path.join(dir, VERSION_FILE), "utf-8").trim() || null;
+  } catch {
+    return null;
+  }
+};
+
+const execFileAsync = promisify(execFile);
+
+/** Query the version of a fallow binary. Returns the version string or null.
+ *  Async (`execFile`, not `execFileSync`) so the up-to-5s `--version` spawn runs
+ *  off the extension-host JS thread; a sync spawn here blocks activation and
+ *  every LSP restart. */
+export const getBinaryVersion = async (binaryPath: string): Promise<string | null> => {
+  try {
+    // execFile is safe because there is no shell and the path is from our own storage dir.
+    const { stdout: output } = await execFileAsync(binaryPath, ["--version"], {
+      timeout: 5000,
+      encoding: "utf-8",
+    });
+    // Anchor to fallow's clap `--version` shape ("fallow 2.88.1",
+    // "fallow-lsp 2.88.1", "fallow-mcp 2.88.1"). Matching a bare semver anywhere
+    // in the output mistook unrelated numbers for the version: a resolved npm
+    // shim that cannot find its platform binary, or a crash, can surface a Node
+    // banner ("Node.js v22.22.1"), and the shim appends a "verified: ..." line;
+    // any of those could win the old loose match and produce a bogus
+    // version-mismatch warning. Require the binary-name prefix, and return null
+    // (treated as "unknown") when no fallow version line is present.
+    const match = output.match(/^fallow(?:-lsp|-mcp)?\s+v?(\d+\.\d+\.\d+)/m);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+};
+
+export const verifyBinarySignature = (binaryPath: string): boolean => {
+  try {
+    const signaturePath = getSignaturePath(binaryPath);
+    const binaryBytes = fs.readFileSync(binaryPath);
+    const signatureBytes = fs.readFileSync(signaturePath);
+
+    const publicKey = createPublicKey({
+      key: Buffer.concat([ED25519_SPKI_HEADER, BINARY_SIGNING_PUBLIC_KEY]),
+      format: "der",
+      type: "spki",
+    });
+
+    return verify(null, binaryBytes, publicKey, signatureBytes);
+  } catch {
+    return false;
+  }
+};
+
+const normalizeSha256Digest = (digest: string | undefined): string | null => {
+  if (!digest) {
+    return null;
+  }
+
+  const lower = digest.trim().toLowerCase();
+  if (!lower.startsWith("sha256:")) {
+    return null;
+  }
+
+  const value = lower.slice("sha256:".length);
+  return /^[0-9a-f]{64}$/.test(value) ? value : null;
+};
+
+const writeDigestMarker = (binaryPath: string, digest: string): void => {
+  try {
+    fs.writeFileSync(getDigestPath(binaryPath), digest, "utf-8");
+  } catch {
+    // Best-effort. A missing digest marker forces a re-download later.
+  }
+};
+
+/**
+ * The release target of an installed binary. A binary without a target marker
+ * comes from a version that downloaded only glibc binaries on Linux.
+ */
+const readInstalledTarget = (binaryPath: string): string | null => {
+  try {
+    const recorded = fs.readFileSync(getTargetPath(binaryPath), "utf-8").trim();
+    if (recorded) {
+      return recorded;
+    }
+  } catch {
+    // No marker: fall back to the target that earlier versions downloaded.
+  }
+  return platformTargetFor(os.platform(), os.arch(), "gnu");
+};
+
+const readDigestMarker = (binaryPath: string): string | null => {
+  try {
+    return normalizeSha256Digest(
+      `sha256:${fs.readFileSync(getDigestPath(binaryPath), "utf-8").trim()}`,
+    );
+  } catch {
+    return null;
+  }
+};
+
+export const verifyBinaryDigest = (binaryPath: string, expectedDigest: string): boolean => {
+  try {
+    const normalized = normalizeSha256Digest(`sha256:${expectedDigest}`);
+    if (!normalized) {
+      return false;
+    }
+
+    const binaryBytes = fs.readFileSync(binaryPath);
+    const actual = createHash("sha256").update(binaryBytes).digest("hex");
+    return actual === normalized;
+  } catch {
+    return false;
+  }
+};
+
+const ensureManagedBinaryTrusted = (
+  binaryPath: string,
+  label: string,
+  outputChannel?: vscode.OutputChannel,
+): boolean => {
+  const signaturePath = getSignaturePath(binaryPath);
+  if (fs.existsSync(signaturePath)) {
+    if (verifyBinarySignature(binaryPath)) {
+      return true;
+    }
+
+    outputChannel?.appendLine(
+      `Fallow: installed ${label} binary failed Ed25519 signature verification. Re-downloading.`,
+    );
+    purgeManagedBinary(binaryPath);
+    return false;
+  }
+
+  const expectedDigest = readDigestMarker(binaryPath);
+  if (expectedDigest && verifyBinaryDigest(binaryPath, expectedDigest)) {
+    outputChannel?.appendLine(
+      `Fallow: installed ${label} binary reused via stored SHA-256 digest verification.`,
+    );
+    return true;
+  }
+
+  outputChannel?.appendLine(
+    `Fallow: installed ${label} binary is neither signature-verified nor digest-verified. Re-downloading.`,
+  );
+  purgeManagedBinary(binaryPath);
+  return false;
+};
+
+export const getExtensionVersion = (): string | null => {
+  const version = vscode.extensions.getExtension(EXTENSION_ID)?.packageJSON?.version as
+    | string
+    | undefined;
+  return version?.trim() || null;
+};
+
+export const releaseApiUrlForVersion = (version: string | null): string =>
+  version
+    ? `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/v${version}`
+    : `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+
+const normalizeReleaseVersion = (release: GithubRelease): string =>
+  release.tag_name.replace(/^v/, "").trim();
+
+const fetchReleaseForExtension = async (signal?: AbortSignal): Promise<GithubRelease> => {
+  const releaseJson = await httpsGet(releaseApiUrlForVersion(getExtensionVersion()), signal);
+  return JSON.parse(releaseJson) as GithubRelease;
+};
+
+export const matchesExtensionVersion = async (
+  dir: string,
+  binaryPath: string,
+  label: string,
+  outputChannel?: vscode.OutputChannel,
+): Promise<boolean> => {
+  const extensionVersion = getExtensionVersion();
+  if (!extensionVersion) {
+    return true;
+  }
+
+  // The `--version` probe is authoritative, NOT the marker: the version marker
+  // is shared across the LSP and CLI binaries (written once per successful
+  // download), so a current marker does not prove THIS binary is current (a
+  // stale leftover CLI can sit beside a freshly-downloaded LSP). The marker is
+  // only a fallback when the binary cannot report its version. The probe is
+  // async so the up-to-5s spawn never blocks the activation/restart thread.
+  const markerVersion = readVersionMarker(dir);
+  const binaryVersion = await getBinaryVersion(binaryPath);
+
+  if (binaryVersion === extensionVersion) {
+    return true;
+  }
+
+  if (!binaryVersion && markerVersion === extensionVersion) {
+    return true;
+  }
+
+  outputChannel?.appendLine(
+    `Fallow: installed ${label} binary is v${binaryVersion ?? markerVersion ?? "unknown"}, extension is v${extensionVersion}. Re-downloading.`,
+  );
+  // The stale binary stays on disk: it is still signature- or digest-verified,
+  // a successful download replaces it and its sidecars atomically, and it is
+  // the fallback while the GitHub Release for this extension version does not
+  // exist yet (the VSIX is published minutes before that release). Purging
+  // here left auto-updated installs with no binary at all in that window.
+  return false;
+};
+
+/** An installed managed binary that passed signature or digest verification, whatever its version. */
+const getTrustedManagedBinaryPath = (
+  context: vscode.ExtensionContext,
+  binaryName: string,
+  label: string,
+  outputChannel?: vscode.OutputChannel,
+): string | null => {
+  const dir = getInstallDir(context);
+  const binaryPath = path.join(dir, `${binaryName}${getExecutableExtension()}`);
+  if (!fs.existsSync(binaryPath)) {
+    return null;
+  }
+
+  const hostTarget = getPlatformTarget();
+  const installedTarget = readInstalledTarget(binaryPath);
+  if (hostTarget && installedTarget !== hostTarget) {
+    // Keep the file: a successful download replaces it atomically.
+    outputChannel?.appendLine(
+      `Fallow: installed ${label} binary is for ${installedTarget ?? "an unknown target"}, this host needs ${hostTarget}. Re-downloading.`,
+    );
+    return null;
+  }
+
+  if (!ensureManagedBinaryTrusted(binaryPath, label, outputChannel)) {
+    return null;
+  }
+
+  return binaryPath;
+};
+
+const getManagedBinaryPath = async (
+  context: vscode.ExtensionContext,
+  binaryName: string,
+  label: string,
+  outputChannel?: vscode.OutputChannel,
+): Promise<string | null> => {
+  const binaryPath = getTrustedManagedBinaryPath(context, binaryName, label, outputChannel);
+  if (!binaryPath) {
+    return null;
+  }
+
+  if (!(await matchesExtensionVersion(getInstallDir(context), binaryPath, label, outputChannel))) {
+    return null;
+  }
+
+  return binaryPath;
+};
+
+/** The release fetch answered HTTP 404: the GitHub Release for this extension version is not published yet. */
+export const isReleaseNotPublished = (err: unknown): boolean =>
+  err instanceof Error && err.message === "HTTP 404";
+
+const RELEASE_RETRY_DELAYS_MS = [5, 15, 30, 60].map((minutes) => minutes * 60 * 1000);
+
+let releaseRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let releaseRetryAttempt = 0;
+let releaseGapAnnounced = false;
+
+/** Stops a pending background retry and forgets the session state; called from `deactivate`. */
+export const cancelReleaseRetry = (): void => {
+  if (releaseRetryTimer) {
+    clearTimeout(releaseRetryTimer);
+    releaseRetryTimer = null;
+  }
+  releaseRetryAttempt = 0;
+  releaseGapAnnounced = false;
+};
+
+/**
+ * Downloads the LSP and CLI for the extension version once the release exists,
+ * without prompts or progress, then offers a restart. Runs at most once at a
+ * time, with a bounded backoff; the next activation retries on its own anyway,
+ * because the version check keeps failing until the new binary is in place.
+ */
+const scheduleReleaseRetry = (
+  context: vscode.ExtensionContext,
+  outputChannel?: vscode.OutputChannel,
+): boolean => {
+  if (releaseRetryTimer || releaseRetryAttempt >= RELEASE_RETRY_DELAYS_MS.length) {
+    return false;
+  }
+  // A one-time "Download" click is not consent to unattended downloads later.
+  if (!getAutoDownload()) {
+    return false;
+  }
+  const target = getPlatformTarget();
+  if (!target) {
+    return false;
+  }
+  const delay = RELEASE_RETRY_DELAYS_MS[releaseRetryAttempt];
+  releaseRetryAttempt += 1;
+  outputChannel?.appendLine(
+    `Fallow: retrying the release download in ${Math.round(delay / 60000)} minutes.`,
+  );
+  releaseRetryTimer = setTimeout(() => {
+    releaseRetryTimer = null;
+    void retryReleaseDownload(context, target, outputChannel);
+  }, delay);
+  return true;
+};
+
+const retryReleaseDownload = async (
+  context: vscode.ExtensionContext,
+  target: string,
+  outputChannel?: vscode.OutputChannel,
+): Promise<void> => {
+  if (!getAutoDownload()) {
+    outputChannel?.appendLine(
+      "Fallow: automatic download is disabled; the release retry stops here.",
+    );
+    return;
+  }
+  const dir = getInstallDir(context);
+  try {
+    const installed = await withInstallLock(dir, async (): Promise<string | null> => {
+      if (await getManagedBinaryPath(context, LSP_BINARY_NAME, "LSP", outputChannel)) {
+        return null;
+      }
+      const release = await fetchReleaseForExtension();
+      const lspPath = await downloadAsset(release, LSP_BINARY_NAME, target, dir);
+      if (!lspPath) {
+        return null;
+      }
+      writeVersionMarker(dir, normalizeReleaseVersion(release));
+      try {
+        await downloadAsset(release, CLI_BINARY_NAME, target, dir);
+      } catch (cliErr) {
+        outputChannel?.appendLine(
+          `Fallow: CLI download after the release retry failed: ${cliErr instanceof Error ? cliErr.message : String(cliErr)}`,
+        );
+      }
+      return release.tag_name;
+    });
+    if (!installed) {
+      return;
+    }
+    releaseRetryAttempt = 0;
+    outputChannel?.appendLine(`Fallow: ${installed} downloaded in the background.`);
+    const choice = await vscode.window.showInformationMessage(
+      `Fallow: ${installed} is now installed. Restart the language server to use it.`,
+      "Restart",
+    );
+    if (choice === "Restart") {
+      await vscode.commands.executeCommand("fallow.restart");
+    }
+  } catch (err) {
+    if (isReleaseNotPublished(err)) {
+      if (!scheduleReleaseRetry(context, outputChannel)) {
+        outputChannel?.appendLine(
+          "Fallow: the release is still not published; the next window reload retries the download.",
+        );
+      }
+      return;
+    }
+    outputChannel?.appendLine(
+      `Fallow: background release download failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+};
+
+/**
+ * While the GitHub Release for this extension version is not published yet,
+ * keep serving the installed, verified binary of the previous version.
+ * Returns its path, or null when there is nothing installed to fall back to.
+ */
+const fallBackToInstalledBinary = (
+  context: vscode.ExtensionContext,
+  binaryName: string,
+  label: string,
+  outputChannel?: vscode.OutputChannel,
+): string | null => {
+  const stalePath = getTrustedManagedBinaryPath(context, binaryName, label, outputChannel);
+  if (!stalePath) {
+    return null;
+  }
+  const extensionVersion = getExtensionVersion() ?? "this version";
+  outputChannel?.appendLine(
+    `Fallow: release v${extensionVersion} is not published yet; using the installed ${label} binary at ${stalePath} until it is.`,
+  );
+  const scheduled = scheduleReleaseRetry(context, outputChannel);
+  // Commands resolve the CLI on every invocation; the toast is shown once per
+  // session, the output channel keeps the per-call record.
+  if (!releaseGapAnnounced) {
+    releaseGapAnnounced = true;
+    void vscode.window.showInformationMessage(
+      `Fallow: release v${extensionVersion} is not published yet. Using the installed binaries until it is${scheduled ? "; the extension retries in the background" : ""}.`,
+    );
+  }
+  return stalePath;
+};
+
+export const getInstalledBinaryPath = (
+  context: vscode.ExtensionContext,
+  outputChannel?: vscode.OutputChannel,
+): Promise<string | null> => getManagedBinaryPath(context, LSP_BINARY_NAME, "LSP", outputChannel);
+
+export const getInstalledCliPath = (
+  context: vscode.ExtensionContext,
+  outputChannel?: vscode.OutputChannel,
+): Promise<string | null> => getManagedBinaryPath(context, CLI_BINARY_NAME, "CLI", outputChannel);
+
+/** Download a single binary asset from a GitHub release. Returns the dest path or null. */
+const downloadAsset = async (
+  release: GithubRelease,
+  binaryName: string,
+  target: string,
+  dir: string,
+  signal?: AbortSignal,
+): Promise<string | null> => {
+  const extension = getExecutableExtension();
+  const assetName = `${binaryName}-${target}${extension}`;
+  const asset = release.assets.find((a) => a.name === assetName);
+
+  if (!asset) {
+    return null;
+  }
+
+  const signatureAsset = release.assets.find(
+    (candidate) => candidate.name === `${assetName}${SIGNATURE_SUFFIX}`,
+  );
+  const expectedDigest = normalizeSha256Digest(asset.digest);
+
+  const destPath = path.join(dir, `${binaryName}${extension}`);
+  const signaturePath = getSignaturePath(destPath);
+  const digestPath = getDigestPath(destPath);
+  const targetPath = getTargetPath(destPath);
+
+  // Download and verify on unique temp paths, then publish atomically. Two
+  // windows that reach this point concurrently (after a stolen or unavailable
+  // lock) write to different temp files and never truncate the same in-use
+  // binary, which is the Windows EPERM/EBUSY trigger from issue #1091.
+  const tempBinary = uniqueTempPath(dir, binaryName);
+  const tempSignature = getSignaturePath(tempBinary);
+  const tempDigest = getDigestPath(tempBinary);
+  const tempTarget = getTargetPath(tempBinary);
+  // Track whether we replaced the final sidecars so a later failure can roll
+  // them back instead of leaving a sidecar that points at a missing binary.
+  let sidecarsPublished = false;
+
+  try {
+    await httpsDownload(asset.browser_download_url, tempBinary, signal);
+
+    if (signatureAsset) {
+      await httpsDownload(signatureAsset.browser_download_url, tempSignature, signal);
+
+      // verifyBinarySignature reads `${tempBinary}.sig`, i.e. tempSignature.
+      if (!verifyBinarySignature(tempBinary)) {
+        throw new Error(`${assetName} failed Ed25519 signature verification`);
+      }
+    } else if (expectedDigest) {
+      if (!verifyBinaryDigest(tempBinary, expectedDigest)) {
+        throw new Error(`${assetName} failed SHA-256 digest verification`);
+      }
+      // Stage the digest marker next to the temp binary so it publishes the
+      // same way the signature does.
+      writeDigestMarker(tempBinary, expectedDigest);
+    } else {
+      throw new Error(`${assetName} is missing both a signature asset and a GitHub release digest`);
+    }
+
+    if (os.platform() !== "win32") {
+      fs.chmodSync(tempBinary, 0o755);
+    }
+
+    // Publish sidecars to their final paths BEFORE the binary, then rename the
+    // binary last. A reader in another window gates on the binary existing, so
+    // it never observes a binary without its signature/digest.
+    if (signatureAsset) {
+      publishSidecar(tempSignature, signaturePath);
+      if (fs.existsSync(digestPath)) {
+        fs.unlinkSync(digestPath);
+      }
+    } else {
+      publishSidecar(tempDigest, digestPath);
+      if (fs.existsSync(signaturePath)) {
+        fs.unlinkSync(signaturePath);
+      }
+    }
+    fs.writeFileSync(tempTarget, target, "utf-8");
+    publishSidecar(tempTarget, targetPath);
+    sidecarsPublished = true;
+
+    renameIntoPlace(tempBinary, destPath);
+  } catch (error) {
+    const candidates = [tempBinary, tempSignature, tempDigest, tempTarget];
+    // If we published sidecars but the binary never landed, the final sidecars
+    // now describe a missing binary; roll them back so the next activation does
+    // not reuse or trip over an orphan marker.
+    if (sidecarsPublished) {
+      candidates.push(signaturePath, digestPath, targetPath);
+    }
+    for (const candidate of candidates) {
+      try {
+        if (fs.existsSync(candidate)) {
+          fs.unlinkSync(candidate);
+        }
+      } catch {
+        // Best-effort cleanup on failed downloads.
+      }
+    }
+    throw error;
+  }
+
+  return destPath;
+};
+
+const promptAfterDownloadFailure = async (message: string): Promise<boolean> => {
+  const choice = await vscode.window.showErrorMessage(
+    message,
+    "Retry",
+    "Open Settings",
+    "Show Output",
+  );
+
+  if (choice === "Open Settings") {
+    void vscode.commands.executeCommand("workbench.action.openSettings", "fallow");
+  }
+
+  if (choice === "Show Output") {
+    void vscode.commands.executeCommand("fallow.showOutput");
+  }
+
+  return choice === "Retry";
+};
+
+const ensurePlatformTarget = (): string | null => {
+  const target = getPlatformTarget();
+  if (!target) {
+    void vscode.window.showErrorMessage(
+      `Fallow: unsupported platform ${os.platform()}-${os.arch()}`,
+    );
+    return null;
+  }
+
+  return target;
+};
+
+const downloadManagedBinary = async (
+  context: vscode.ExtensionContext,
+  binaryName: string,
+  label: string,
+  outputChannel?: vscode.OutputChannel,
+): Promise<string | null> => {
+  const target = ensurePlatformTarget();
+  if (!target) {
+    return null;
+  }
+
+  return vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Fallow: Downloading ${label} binary...`,
+      cancellable: true,
+    },
+    async (_progress, token) => {
+      const aborter = new AbortController();
+      const cancellation = token.onCancellationRequested(() => aborter.abort());
+      try {
+        for (;;) {
+          if (token.isCancellationRequested) {
+            return null;
+          }
+          const dir = getInstallDir(context);
+          try {
+            // The lock holds only for one download attempt; user prompts run
+            // outside it so a modal never blocks a sibling window.
+            const result = await withInstallLock(
+              dir,
+              async (): Promise<{ path: string; toast: string | null } | { tag: string }> => {
+                // A sibling window may have installed it while we waited for the
+                // lock; reuse it instead of downloading again.
+                const existing = await getManagedBinaryPath(context, binaryName, label);
+                if (existing) {
+                  return { path: existing, toast: null };
+                }
+
+                const release = await fetchReleaseForExtension(aborter.signal);
+                const binaryPath = await downloadAsset(
+                  release,
+                  binaryName,
+                  target,
+                  dir,
+                  aborter.signal,
+                );
+                if (!binaryPath) {
+                  return { tag: release.tag_name };
+                }
+
+                writeVersionMarker(dir, normalizeReleaseVersion(release));
+                return {
+                  path: binaryPath,
+                  toast: `Fallow: ${label} ${release.tag_name} installed.`,
+                };
+              },
+            );
+
+            if ("tag" in result) {
+              const shouldRetry = await promptAfterDownloadFailure(
+                `Fallow: no ${label} binary found for ${target} in release ${result.tag}.`,
+              );
+              if (shouldRetry) {
+                continue;
+              }
+              return null;
+            }
+
+            if (result.toast) {
+              void vscode.window.showInformationMessage(result.toast);
+            }
+            return result.path;
+          } catch (err) {
+            // The user cancelled; the abort rejection is not a failure to report.
+            if (token.isCancellationRequested) {
+              return null;
+            }
+            if (isReleaseNotPublished(err)) {
+              const stalePath = fallBackToInstalledBinary(
+                context,
+                binaryName,
+                label,
+                outputChannel,
+              );
+              if (stalePath) {
+                return stalePath;
+              }
+            }
+            const message = err instanceof Error ? err.message : String(err);
+            const shouldRetry = await promptAfterDownloadFailure(
+              `Fallow: failed to download ${label} binary: ${message}`,
+            );
+            if (!shouldRetry) {
+              return null;
+            }
+          }
+        }
+      } finally {
+        cancellation.dispose();
+      }
+    },
+  );
+};
+
+export const downloadCliBinary = async (
+  context: vscode.ExtensionContext,
+  outputChannel?: vscode.OutputChannel,
+): Promise<string | null> => downloadManagedBinary(context, CLI_BINARY_NAME, "CLI", outputChannel);
+
+export const downloadBinary = async (
+  context: vscode.ExtensionContext,
+  outputChannel?: vscode.OutputChannel,
+): Promise<string | null> => {
+  const target = ensurePlatformTarget();
+  if (!target) {
+    return null;
+  }
+
+  return vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Fallow: Downloading binaries...",
+      cancellable: true,
+    },
+    async (_progress, token) => {
+      const aborter = new AbortController();
+      const cancellation = token.onCancellationRequested(() => aborter.abort());
+      let cliRetried = false;
+
+      try {
+        for (;;) {
+          if (token.isCancellationRequested) {
+            return null;
+          }
+          const dir = getInstallDir(context);
+          try {
+            // One lock per attempt; prompts run outside the lock. The locked body
+            // double-checks each binary so a sibling-installed copy is reused.
+            const result = await withInstallLock(dir, async (): Promise<LspCliInstall> => {
+              let lspPath = await getManagedBinaryPath(context, LSP_BINARY_NAME, "LSP");
+              let lspDownloaded = false;
+              let release: GithubRelease | null = null;
+
+              if (!lspPath) {
+                release = await fetchReleaseForExtension(aborter.signal);
+                lspPath = await downloadAsset(
+                  release,
+                  LSP_BINARY_NAME,
+                  target,
+                  dir,
+                  aborter.signal,
+                );
+                if (!lspPath) {
+                  return { kind: "lsp-missing", tag: release.tag_name };
+                }
+                writeVersionMarker(dir, normalizeReleaseVersion(release));
+                lspDownloaded = true;
+              }
+
+              let cliPath = await getManagedBinaryPath(context, CLI_BINARY_NAME, "CLI");
+              let cliDownloaded = false;
+              let cliError: string | null = null;
+
+              if (!cliPath) {
+                if (!release) {
+                  release = await fetchReleaseForExtension(aborter.signal);
+                }
+                try {
+                  cliPath = await downloadAsset(
+                    release,
+                    CLI_BINARY_NAME,
+                    target,
+                    dir,
+                    aborter.signal,
+                  );
+                  cliDownloaded = cliPath !== null;
+                } catch (cliErr) {
+                  // A user cancel must stay silent, not surface as a CLI failure.
+                  if (aborter.signal.aborted) {
+                    throw cliErr;
+                  }
+                  cliError = cliErr instanceof Error ? cliErr.message : String(cliErr);
+                }
+              }
+
+              const tag = release ? release.tag_name : (readVersionMarker(dir) ?? "");
+              return {
+                kind: "ready",
+                lspPath,
+                lspDownloaded,
+                cliPath,
+                cliDownloaded,
+                cliError,
+                tag,
+              };
+            });
+
+            if (result.kind === "lsp-missing") {
+              const shouldRetry = await promptAfterDownloadFailure(
+                `Fallow: no LSP binary found for ${target} in release ${result.tag}.`,
+              );
+              if (shouldRetry) {
+                continue;
+              }
+              return null;
+            }
+
+            if (!result.cliPath) {
+              // CLI is best-effort: prompt once, then warn and keep the LSP.
+              if (!cliRetried) {
+                cliRetried = true;
+                const reason = result.cliError
+                  ? `Fallow: failed to download CLI binary: ${result.cliError}`
+                  : `Fallow: no CLI binary found for ${target} in release ${result.tag}. Tree views and fix commands require the fallow CLI.`;
+                const shouldRetry = await promptAfterDownloadFailure(reason);
+                if (shouldRetry) {
+                  continue;
+                }
+              }
+              void vscode.window.showWarningMessage(
+                `Fallow: LSP ${result.tag} installed. CLI binary is still missing, so tree views and fix commands need another CLI source.`,
+              );
+              return result.lspPath;
+            }
+
+            if (result.lspDownloaded || result.cliDownloaded) {
+              void vscode.window.showInformationMessage(
+                `Fallow: ${result.tag} installed (LSP + CLI).`,
+              );
+            }
+            return result.lspPath;
+          } catch (err) {
+            // The user cancelled; the abort rejection is not a failure to report.
+            if (token.isCancellationRequested) {
+              return null;
+            }
+            if (isReleaseNotPublished(err)) {
+              const stalePath = fallBackToInstalledBinary(
+                context,
+                LSP_BINARY_NAME,
+                "LSP",
+                outputChannel,
+              );
+              if (stalePath) {
+                return stalePath;
+              }
+            }
+            const message = err instanceof Error ? err.message : String(err);
+            const shouldRetry = await promptAfterDownloadFailure(
+              isReleaseNotPublished(err)
+                ? `Fallow: release v${getExtensionVersion() ?? "?"} is not published yet and no earlier binary is installed. Retry in a few minutes.`
+                : `Fallow: failed to download binaries: ${message}`,
+            );
+            if (!shouldRetry) {
+              return null;
+            }
+          }
+        }
+      } finally {
+        cancellation.dispose();
+      }
+    },
+  );
+};

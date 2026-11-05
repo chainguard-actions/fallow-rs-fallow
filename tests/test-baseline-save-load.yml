@@ -1,0 +1,51 @@
+name: Test save-baseline then baseline suppresses known issues
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-baseline-save
+          type-aware: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+      - name: Assert baseline file saved
+        run: |
+          f="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: baseline file not saved"
+            exit 1
+          fi
+          cat "$f"; echo
+          jq empty "$f" || { echo "FAIL: baseline is not valid JSON"; exit 1; }
+          echo "PASS"
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          fail-on-issues: 'true'
+          artifacts-dir: fallow-artifacts-baseline-load
+          type-aware: 'false'
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+      - name: Assert baseline suppressed all known issues
+        env:
+          ISSUES: ${{ steps.load.outputs.issues }}
+          OUTCOME: ${{ steps.load.outcome }}
+        run: |
+          echo "issues: $ISSUES outcome: $OUTCOME"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues after loading the baseline"
+            exit 1
+          fi
+          echo "PASS"

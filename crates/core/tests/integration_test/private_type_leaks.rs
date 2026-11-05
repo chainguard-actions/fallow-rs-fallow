@@ -1,0 +1,250 @@
+use super::common::{create_config, fixture_path};
+
+fn create_private_type_leak_config(root: std::path::PathBuf) -> fallow_config::ResolvedConfig {
+    let mut config = create_config(root);
+    config.rules.private_type_leaks = fallow_config::Severity::Warn;
+    config
+}
+
+#[test]
+fn rule_off_reports_no_private_type_leaks() {
+    let root = fixture_path("private-type-leaks");
+    let config = create_config(root);
+    assert_eq!(
+        config.rules.private_type_leaks,
+        fallow_config::Severity::Off
+    );
+
+    let results = fallow_core::analyze(&config).expect("analysis should succeed");
+
+    assert!(
+        results.private_type_leaks.is_empty(),
+        "private-type-leaks off must suppress all findings, found: {:?}",
+        results.private_type_leaks
+    );
+}
+
+#[test]
+fn exported_signatures_report_same_file_private_types() {
+    let root = fixture_path("private-type-leaks");
+    let config = create_private_type_leak_config(root);
+    let results = fallow_core::analyze(&config).expect("analysis should succeed");
+
+    let leaks: Vec<(&str, &str)> = results
+        .private_type_leaks
+        .iter()
+        .map(|leak| (leak.leak.export_name.as_str(), leak.leak.type_name.as_str()))
+        .collect();
+
+    assert!(
+        leaks.contains(&("Component", "Props")),
+        "Component should report Props as a private type leak, found: {leaks:?}"
+    );
+    assert!(
+        leaks.contains(&("Service", "Options")),
+        "Service should report Options as a private type leak, found: {leaks:?}"
+    );
+    assert!(
+        !leaks.contains(&("Service", "InternalState")),
+        "ECMAScript private fields should not be treated as public signature leaks: {leaks:?}"
+    );
+    assert!(
+        !leaks.contains(&("UsesExportedType", "PublicBacking")),
+        "exported backing types should not be reported as private leaks: {leaks:?}"
+    );
+}
+
+#[test]
+fn exported_signature_backing_types_are_not_unused_type_exports() {
+    let root = fixture_path("private-type-leaks");
+    let config = create_private_type_leak_config(root);
+    let results = fallow_core::analyze(&config).expect("analysis should succeed");
+
+    let unused_types: Vec<&str> = results
+        .unused_types
+        .iter()
+        .map(|export| export.export.export_name.as_str())
+        .collect();
+
+    assert!(
+        !unused_types.contains(&"PublicBacking"),
+        "PublicBacking backs public signatures and should not become an unused type export: {unused_types:?}"
+    );
+}
+
+#[test]
+fn storybook_story_files_are_skipped() {
+    let root = fixture_path("private-type-leaks");
+    let config = create_private_type_leak_config(root);
+    let results = fallow_core::analyze(&config).expect("analysis should succeed");
+
+    let storybook_leaks: Vec<&str> = results
+        .private_type_leaks
+        .iter()
+        .filter(|leak| leak.leak.path.ends_with("Component.stories.ts"))
+        .map(|leak| leak.leak.export_name.as_str())
+        .collect();
+
+    assert!(
+        storybook_leaks.is_empty(),
+        "storybook story files should be skipped, but found leaks for: {storybook_leaks:?}"
+    );
+}
+
+#[test]
+fn route_convention_files_are_skipped() {
+    let root = fixture_path("private-type-leaks");
+    let config = create_private_type_leak_config(root);
+    let results = fallow_core::analyze(&config).expect("analysis should succeed");
+
+    let convention_paths = [
+        "app/blog/[slug]/page.tsx", // Next.js App Router
+        "pages/[slug].tsx",         // Next.js Pages Router
+        "app/routes/posts.$id.tsx", // Remix / TanStack Router
+        "src/templates/post.tsx",   // Gatsby
+        "app/+not-found.tsx",       // Expo Router special file (`+*` glob)
+    ];
+
+    for relative in &convention_paths {
+        let leaks: Vec<&str> = results
+            .private_type_leaks
+            .iter()
+            .filter(|leak| {
+                leak.leak
+                    .path
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .contains(relative)
+            })
+            .map(|leak| leak.leak.export_name.as_str())
+            .collect();
+        assert!(
+            leaks.is_empty(),
+            "route convention file {relative} should be skipped, but found leaks for: {leaks:?}"
+        );
+    }
+
+    let index_leaks: Vec<&str> = results
+        .private_type_leaks
+        .iter()
+        .filter(|leak| {
+            leak.leak
+                .path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .ends_with("src/index.ts")
+        })
+        .map(|leak| leak.leak.export_name.as_str())
+        .collect();
+    assert!(
+        index_leaks.contains(&"Component"),
+        "non-route src/index.ts must still be analyzed, expected Component leak in {index_leaks:?}"
+    );
+
+    let helper_leaks: Vec<&str> = results
+        .private_type_leaks
+        .iter()
+        .filter(|leak| {
+            leak.leak
+                .path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .ends_with("app/routes/utils/format.ts")
+        })
+        .map(|leak| leak.leak.export_name.as_str())
+        .collect();
+    assert!(
+        helper_leaks.contains(&"formatDate"),
+        "co-located route helper should still report private-type-leak, found: {helper_leaks:?}"
+    );
+}
+
+#[test]
+fn wrapper_call_and_type_assertion_initializers_back_exported_types() {
+    let root = fixture_path("signature-wrapper-initializers");
+    let config = create_private_type_leak_config(root);
+    let results = fallow_core::analyze(&config).expect("analysis should succeed");
+
+    let unused_types: Vec<&str> = results
+        .unused_types
+        .iter()
+        .map(|export| export.export.export_name.as_str())
+        .collect();
+    for backed in ["MemoProps", "RefProps", "ContextValue", "Mode"] {
+        assert!(
+            !unused_types.contains(&backed),
+            "{backed} backs an exported const initializer and should not be an unused type export: {unused_types:?}"
+        );
+    }
+    assert!(
+        unused_types.contains(&"HiddenValue"),
+        "HiddenValue backs only a non-exported const and should stay unused: {unused_types:?}"
+    );
+
+    let leaks: Vec<(&str, &str)> = results
+        .private_type_leaks
+        .iter()
+        .map(|leak| (leak.leak.export_name.as_str(), leak.leak.type_name.as_str()))
+        .collect();
+    assert!(
+        leaks.contains(&("StateContext", "LocalState")),
+        "a non-exported type argument of an exported wrapper call should be a private type leak: {leaks:?}"
+    );
+}
+
+#[test]
+fn inferred_factory_return_types_are_not_unused_type_exports() {
+    let root = fixture_path("inferred-factory-return-types");
+    let config = create_config(root);
+    let results = fallow_core::analyze(&config).expect("analysis should succeed");
+
+    let unused_types: Vec<&str> = results
+        .unused_types
+        .iter()
+        .map(|export| export.export.export_name.as_str())
+        .collect();
+
+    for backing in ["Answers", "Snapshot", "Settings"] {
+        assert!(
+            !unused_types.contains(&backing),
+            "{backing} is part of the inferred return of a used factory: {unused_types:?}"
+        );
+    }
+    assert!(
+        unused_types.contains(&"Scratch"),
+        "Scratch only annotates a local value that the factory does not return: {unused_types:?}"
+    );
+}
+
+#[test]
+fn satisfies_clause_types_are_used_but_do_not_leak() {
+    let root = fixture_path("signature-satisfies-clause");
+    let config = create_private_type_leak_config(root);
+    let results = fallow_core::analyze(&config).expect("analysis should succeed");
+
+    let unused_types: Vec<&str> = results
+        .unused_types
+        .iter()
+        .map(|export| export.export.export_name.as_str())
+        .collect();
+    for backed in ["Channel", "EventHandler", "EventPayload"] {
+        assert!(
+            !unused_types.contains(&backed),
+            "{backed} shapes an exported const and should not be an unused type export: {unused_types:?}"
+        );
+    }
+    assert!(
+        unused_types.contains(&"HiddenShape"),
+        "HiddenShape checks only a non-exported const and should stay unused: {unused_types:?}"
+    );
+
+    let leaks: Vec<(&str, &str)> = results
+        .private_type_leaks
+        .iter()
+        .map(|leak| (leak.leak.export_name.as_str(), leak.leak.type_name.as_str()))
+        .collect();
+    assert!(
+        !leaks.contains(&("LIMITS", "LocalLimits")),
+        "a satisfies clause does not change the exported type, so it is not a private type leak: {leaks:?}"
+    );
+}

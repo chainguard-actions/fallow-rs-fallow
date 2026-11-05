@@ -1,0 +1,883 @@
+use std::path::PathBuf;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+const fn default_max_cyclomatic() -> u16 {
+    20
+}
+
+const fn default_max_cognitive() -> u16 {
+    15
+}
+
+/// Savoia and Evans (2007) canonical CRAP threshold: CC=5 untested gives
+/// exactly `5^2 + 5 = 30`, marking the boundary where refactoring or test
+/// coverage becomes recommended.
+const fn default_max_crap() -> f64 {
+    30.0
+}
+
+const fn default_crap_refactor_band() -> u16 {
+    5
+}
+
+/// SIG unit-size "very high risk" boundary: functions over 60 lines of code.
+/// This is the default line-count threshold above which a function is reported
+/// as an oversized "large function".
+const fn default_max_unit_size() -> u32 {
+    60
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if passes a reference"
+)]
+const fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
+/// Default for `suggest_inline_suppression`: emit `suppress-line` actions
+/// alongside health findings unless a baseline is active or the team has
+/// opted out via config.
+const fn default_suggest_inline_suppression() -> bool {
+    true
+}
+
+/// Default bot/service-account author patterns filtered from ownership metrics.
+///
+/// Matches common CI bot signatures and service-account naming conventions.
+/// Users can extend via `health.ownership.botPatterns` in config.
+///
+/// Note on `[bot]` matching: globset treats `[abc]` as a character class.
+/// To match the literal `[bot]` substring (used by GitHub App bots), escape
+/// the brackets as `\[bot\]`.
+///
+/// `*noreply*` is intentionally NOT a default. Most human GitHub contributors
+/// commit from `<id>+<handle>@users.noreply.github.com` addresses (GitHub's
+/// privacy default). Filtering on `noreply` would silently exclude the
+/// majority of real authors. The actual bot accounts already match via the
+/// `\[bot\]` literal (e.g., `github-actions[bot]@users.noreply.github.com`).
+fn default_bot_patterns() -> Vec<String> {
+    vec![
+        r"*\[bot\]*".to_string(),
+        "dependabot*".to_string(),
+        "renovate*".to_string(),
+        "github-actions*".to_string(),
+        "svc-*".to_string(),
+        "*-service-account*".to_string(),
+    ]
+}
+
+const fn default_email_mode() -> EmailMode {
+    EmailMode::Handle
+}
+
+/// Privacy mode for author emails emitted in ownership output.
+///
+/// Defaults to `handle` (local-part only, no domain) so SARIF and JSON
+/// artifacts do not leak raw email addresses into CI pipelines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum EmailMode {
+    /// Show the raw email address as it appears in git history.
+    /// Use for public repositories where history is already exposed.
+    Raw,
+    /// Show the local-part only (before the `@`). Mailmap-resolved where possible.
+    /// Default. Balances readability and privacy.
+    Handle,
+    /// Show a stable `xxh3:<16hex>` pseudonym derived from the raw email.
+    /// Non-cryptographic; suitable to keep raw emails out of CI artifacts
+    /// (SARIF, code-scanning uploads) but not as a security primitive:
+    /// a known list of org emails can be brute-forced into a rainbow table.
+    /// Use in regulated environments where even local-parts are sensitive.
+    Anonymized,
+    /// Legacy spelling for [`EmailMode::Anonymized`].
+    Hash,
+}
+
+/// Configuration for ownership analysis (`fallow health --hotspots --ownership`).
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnershipConfig {
+    /// Glob patterns (matched against the author email local-part) that
+    /// identify bot or service-account commits to exclude from ownership
+    /// signals. Overrides the defaults entirely when set.
+    #[serde(default = "default_bot_patterns")]
+    pub bot_patterns: Vec<String>,
+
+    /// Privacy mode for emitted author emails. Defaults to `handle`.
+    /// Override on the CLI via `--ownership-emails=raw|handle|anonymized`.
+    /// The legacy spelling `hash` is still accepted for compatibility.
+    #[serde(default = "default_email_mode")]
+    pub email_mode: EmailMode,
+}
+
+impl Default for OwnershipConfig {
+    fn default() -> Self {
+        Self {
+            bot_patterns: default_bot_patterns(),
+            email_mode: default_email_mode(),
+        }
+    }
+}
+
+/// Thresholds for change coupling (`change_coupling` in `fallow health`).
+///
+/// The defaults are the Code Maat defaults. A pair of files is hidden coupling
+/// when each file has `minRevisions` commits, the pair shares
+/// `minSharedRevisions` commits, the coupling degree reaches `minDegree`, and
+/// no import or re-export chain connects the two files.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ChangeCouplingConfig {
+    /// Skip a commit that changes more analyzed files than this (default:
+    /// 30, from 2 to 1000). Bulk commits (renames, format passes) create
+    /// false pairs. The upper bound keeps the pair count of one commit small.
+    #[serde(default = "default_coupling_max_files_per_commit")]
+    #[schemars(range(min = 2, max = 1000))]
+    pub max_files_per_commit: usize,
+    /// Minimum commits for each file of a pair (default: 5).
+    #[serde(default = "default_coupling_min_revisions")]
+    pub min_revisions: u32,
+    /// Minimum commits that change both files of a pair (default: 5).
+    #[serde(default = "default_coupling_min_shared_revisions")]
+    pub min_shared_revisions: u32,
+    /// Minimum coupling degree, from 0 to 1 (default: 0.3). The degree is the
+    /// number of shared commits divided by the mean commit count of the two
+    /// files.
+    #[serde(default = "default_coupling_min_degree")]
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub min_degree: f64,
+}
+
+const fn default_coupling_max_files_per_commit() -> usize {
+    30
+}
+
+const fn default_coupling_min_revisions() -> u32 {
+    5
+}
+
+const fn default_coupling_min_shared_revisions() -> u32 {
+    5
+}
+
+const fn default_coupling_min_degree() -> f64 {
+    0.3
+}
+
+/// Smallest `maxFilesPerCommit`: a commit needs two files to form a pair.
+const MIN_COUPLING_FILES_PER_COMMIT: usize = 2;
+
+/// Largest `maxFilesPerCommit`. A commit with `n` files gives `n * (n - 1) / 2`
+/// pairs, so a higher value lets one bulk commit dominate the run time.
+const MAX_COUPLING_FILES_PER_COMMIT: usize = 1000;
+
+impl ChangeCouplingConfig {
+    /// Validate the ranges that serde cannot express.
+    #[must_use]
+    pub fn errors(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        if !(MIN_COUPLING_FILES_PER_COMMIT..=MAX_COUPLING_FILES_PER_COMMIT)
+            .contains(&self.max_files_per_commit)
+        {
+            errors.push(format!(
+                "health.changeCoupling.maxFilesPerCommit must be from {MIN_COUPLING_FILES_PER_COMMIT} to {MAX_COUPLING_FILES_PER_COMMIT}, found {}",
+                self.max_files_per_commit
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.min_degree) {
+            errors.push(format!(
+                "health.changeCoupling.minDegree must be from 0 to 1, found {}",
+                self.min_degree
+            ));
+        }
+        errors
+    }
+}
+
+impl Default for ChangeCouplingConfig {
+    fn default() -> Self {
+        Self {
+            max_files_per_commit: default_coupling_max_files_per_commit(),
+            min_revisions: default_coupling_min_revisions(),
+            min_shared_revisions: default_coupling_min_shared_revisions(),
+            min_degree: default_coupling_min_degree(),
+        }
+    }
+}
+
+/// How `fallow health` counts cyclomatic complexity for its gates.
+///
+/// The policy changes the cyclomatic value that the `maxCyclomatic` gate reads
+/// and the cyclomatic value in every CRAP score. It does not change the health
+/// score, the complexity density, or the hotspot ranking: those keep the
+/// standard count so that grades stay comparable across projects.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CyclomaticPolicy {
+    /// Count every decision point, `&&`, `||`, and `??` operator (`McCabe`).
+    #[default]
+    Standard,
+    /// Count a literal membership chain as one predicate. A chain such as
+    /// `kind === "a" || kind === "b" || kind === "c"` adds no cyclomatic
+    /// increments for its `||` operators. Only strict equality checks of one
+    /// identifier against string, number, bigint, boolean, or `null` literals
+    /// qualify. Member access, calls, mixed operators, and different operands
+    /// keep the standard count.
+    LiteralMembership,
+}
+
+impl CyclomaticPolicy {
+    /// Whether this is the default `standard` policy.
+    #[must_use]
+    pub const fn is_standard(&self) -> bool {
+        matches!(self, Self::Standard)
+    }
+}
+
+/// Configuration for complexity health metrics (`fallow health`).
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HealthConfig {
+    /// Maximum allowed cyclomatic complexity per function (default: 20).
+    /// Functions exceeding this threshold are reported. Governs findings
+    /// only; the health score's complexity penalties use fixed calibration
+    /// (use `health.ignore` to remove a file from the score).
+    #[serde(default = "default_max_cyclomatic")]
+    pub max_cyclomatic: u16,
+
+    /// How the cyclomatic gate counts complexity (default: `standard`).
+    /// `literal-membership` counts a chain of strict equality checks of one
+    /// identifier against primitive literals (`kind === "a" || kind === "b"`)
+    /// as one predicate. The policy applies to the `maxCyclomatic` gate and
+    /// to every CRAP score, so the `maxCrap` gate reads the same value.
+    /// Findings then report the standard value as `standard_cyclomatic`. The
+    /// health score, complexity density, and hotspots keep the standard
+    /// count. Older fallow versions reject this key as unknown, so pair it
+    /// with `minimumVersion`.
+    #[serde(default, skip_serializing_if = "CyclomaticPolicy::is_standard")]
+    pub cyclomatic_policy: CyclomaticPolicy,
+
+    /// Maximum allowed cognitive complexity per function (default: 15).
+    /// Functions exceeding this threshold are reported. Governs findings
+    /// only, never the health score.
+    #[serde(default = "default_max_cognitive")]
+    pub max_cognitive: u16,
+
+    /// Maximum allowed CRAP (Change Risk Anti-Patterns) score per function
+    /// (default: 30.0). CRAP combines cyclomatic complexity with test
+    /// coverage: high complexity plus low coverage produces a high CRAP
+    /// score. Functions meeting or exceeding this threshold are reported.
+    /// Use `--coverage` with Istanbul data for accurate per-function CRAP;
+    /// otherwise fallow estimates coverage from the module graph. Governs
+    /// findings and the threshold-relative file-score signals
+    /// (`crap_above_threshold`, the `risk` triage tag, and the
+    /// `add_test_coverage` refactoring target); measured values such as
+    /// `crap_max` and the overall health score never move with it. Set to
+    /// `0` to disable CRAP enforcement entirely: no findings, nothing counts
+    /// above threshold, and file-score rows disclose baseline breaches as
+    /// exempt instead. The `complexity-crap` rule is different: it decides if
+    /// a finding fails the run, and `off` hides the findings but keeps the
+    /// file-score signals.
+    #[serde(default = "default_max_crap")]
+    pub max_crap: f64,
+
+    /// Band below `maxCyclomatic` where CRAP-only findings also receive a
+    /// secondary `refactor-function` action (default: 5). Set to `0` to only
+    /// suggest refactoring when cyclomatic already meets the configured
+    /// threshold.
+    #[serde(default = "default_crap_refactor_band")]
+    pub crap_refactor_band: u16,
+
+    /// Maximum function length in lines of code before it is reported as an
+    /// oversized "large function" (default: 60). Raise it globally, or per file
+    /// via `thresholdOverrides[].maxUnitSize`, to relax the bar for generated or
+    /// test files (where a `describe()` block spans hundreds of lines) without
+    /// disabling complexity checks on those files. This filters the reported
+    /// large-functions list only; the descriptive unit-size profile and the
+    /// health score still reflect raw sizes against fixed calibration (the
+    /// `unit_size` penalty keeps its `>60` LOC very-high-risk edge so grades
+    /// stay comparable across projects; use `health.ignore` to remove a file
+    /// from the score entirely).
+    #[serde(default = "default_max_unit_size")]
+    pub max_unit_size: u32,
+
+    /// Maximum file length in physical lines before the file is reported as a
+    /// complexity finding with `exceeded: "file_lines"` (default: `0`, off).
+    /// Every line counts, also blank lines and comment lines. A final newline
+    /// does not add a line. Set a limit such as `500` to enable the check, and
+    /// raise it per file via `thresholdOverrides[].maxFileLines`. The
+    /// `complexity-file-lines` rule decides if a finding fails the run. In
+    /// `fallow audit`, a long file that did not grow stays inherited. Older
+    /// fallow versions reject this key as unknown, so pair it with
+    /// `minimumVersion`.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub max_file_lines: u32,
+
+    /// Path to Istanbul coverage data (coverage-final.json) or raw V8 coverage
+    /// (a `NODE_V8_COVERAGE` directory or one V8 JSON file) for accurate
+    /// per-function CRAP scores. Relative paths resolve against the project root. The CLI
+    /// `--coverage` flag and `FALLOW_COVERAGE` environment variable override
+    /// this value. Consulted by `fallow health`, bare `fallow`, `fallow audit`,
+    /// `fallow viz`, and the MCP `audit` / `check_health` tools.
+    #[serde(default)]
+    pub coverage: Option<PathBuf>,
+
+    /// Absolute prefix to strip from Istanbul file paths before CRAP matching.
+    /// Use when coverage was generated under a different checkout root in CI
+    /// or Docker. The CLI `--coverage-root` flag and `FALLOW_COVERAGE_ROOT`
+    /// environment variable override this value. Consulted by `fallow health`,
+    /// bare `fallow`, `fallow audit`, `fallow viz`, and the MCP `audit` /
+    /// `check_health` tools.
+    #[serde(default)]
+    pub coverage_root: Option<PathBuf>,
+
+    /// Glob patterns to exclude from complexity analysis.
+    /// A single `*` stays within one path segment; use `**` to match across directories.
+    #[serde(default)]
+    pub ignore: Vec<String>,
+
+    /// Per-file or per-function threshold overrides. These keep exceptional
+    /// functions visible as configured numeric ceilings instead of hiding them
+    /// behind binary suppressions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub threshold_overrides: Vec<HealthThresholdOverride>,
+
+    /// Ownership analysis configuration. Controls bot filtering and email
+    /// privacy mode for `--ownership` output.
+    #[serde(default)]
+    pub ownership: OwnershipConfig,
+
+    /// Change coupling thresholds for the `change_coupling` section and the
+    /// hidden-coupling refactoring targets. Older fallow versions reject this
+    /// key as unknown, so pair it with `minimumVersion` set to the release
+    /// that added it.
+    #[serde(default)]
+    pub change_coupling: ChangeCouplingConfig,
+
+    /// Whether health JSON output emits `suppress-line` action hints
+    /// alongside complexity findings (default: `true`). Set to `false` to
+    /// opt out across the project: useful for teams that manage suppressions
+    /// exclusively through `// fallow-ignore-*` comments authored by hand or
+    /// through the `fallow.suppress` LSP code action, but who do not want
+    /// CI-driven `suppress-line` action hints in their JSON output.
+    /// `--baseline` activates auto-omission regardless of this setting,
+    /// since baseline files are a separate suppression mechanism.
+    #[serde(default = "default_suggest_inline_suppression")]
+    pub suggest_inline_suppression: bool,
+}
+
+impl Default for HealthConfig {
+    fn default() -> Self {
+        Self {
+            max_cyclomatic: default_max_cyclomatic(),
+            cyclomatic_policy: CyclomaticPolicy::Standard,
+            max_cognitive: default_max_cognitive(),
+            max_crap: default_max_crap(),
+            crap_refactor_band: default_crap_refactor_band(),
+            max_unit_size: default_max_unit_size(),
+            max_file_lines: 0,
+            coverage: None,
+            coverage_root: None,
+            ignore: vec![],
+            threshold_overrides: vec![],
+            ownership: OwnershipConfig::default(),
+            change_coupling: ChangeCouplingConfig::default(),
+            suggest_inline_suppression: default_suggest_inline_suppression(),
+        }
+    }
+}
+
+/// Per-file or per-function health threshold override.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HealthThresholdOverride {
+    /// Project-root-relative file globs this override applies to.
+    /// A single `*` stays within one path segment; use `**` to match across directories.
+    pub files: Vec<String>,
+    /// Exact emitted function names this override applies to. Empty means every
+    /// function in matching files. Synthetic units are matched by their emitted
+    /// name, so `"<template>"` and `"<snippet:NAME>"` are valid keys. The
+    /// synthetic `"<module>"` unit is not: it carries a file's module-scope
+    /// decision points into the aggregate metrics and never produces a finding,
+    /// so there is no ceiling for an override to move.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub functions: Vec<String>,
+    /// Local cyclomatic complexity ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cyclomatic: Option<u16>,
+    /// Local cognitive complexity ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cognitive: Option<u16>,
+    /// Local CRAP ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_crap: Option<f64>,
+    /// Local unit-size ceiling: maximum function length in lines of code before
+    /// it is reported as an oversized "large function". Leave `functions` empty
+    /// to relax the bar for every function in the matching files (which covers
+    /// both the `describe()` wrapper and the individual `it()` blocks in a test
+    /// suite).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_unit_size: Option<u32>,
+    /// Local file-length ceiling in physical lines. `0` turns the file-length
+    /// check off for the matching files. The ceiling applies to whole files,
+    /// so an entry that sets it must leave `functions` empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_file_lines: Option<u32>,
+    /// Human-readable rationale for the exception.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl HealthThresholdOverride {
+    /// Return true when the override configures at least one local ceiling.
+    #[must_use]
+    pub const fn has_any_threshold(&self) -> bool {
+        self.max_cyclomatic.is_some()
+            || self.max_cognitive.is_some()
+            || self.max_crap.is_some()
+            || self.max_unit_size.is_some()
+            || self.max_file_lines.is_some()
+    }
+}
+
+impl HealthConfig {
+    /// Whether the file-length check can report a finding: the global
+    /// `maxFileLines` is above `0`, or an override sets a `maxFileLines`.
+    #[must_use]
+    pub fn file_lines_check_enabled(&self) -> bool {
+        self.max_file_lines > 0
+            || self
+                .threshold_overrides
+                .iter()
+                .any(|entry| entry.max_file_lines.is_some_and(|max| max > 0))
+    }
+
+    /// Validate semantic constraints that serde cannot express.
+    #[must_use]
+    pub fn threshold_override_errors(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        for (index, override_entry) in self.threshold_overrides.iter().enumerate() {
+            if override_entry.files.is_empty() {
+                errors.push(format!(
+                    "health.thresholdOverrides[{index}].files must contain at least one pattern"
+                ));
+            }
+            if !override_entry.has_any_threshold() {
+                errors.push(format!(
+                    "health.thresholdOverrides[{index}] must set at least one of maxCyclomatic, maxCognitive, maxCrap, maxUnitSize, or maxFileLines"
+                ));
+            }
+            if override_entry.max_file_lines.is_some() && !override_entry.functions.is_empty() {
+                errors.push(format!(
+                    "health.thresholdOverrides[{index}].maxFileLines applies to whole files; move it to an entry without functions"
+                ));
+            }
+        }
+        errors
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn change_coupling_ranges_are_validated() {
+        assert!(ChangeCouplingConfig::default().errors().is_empty());
+        let at_bounds = ChangeCouplingConfig {
+            max_files_per_commit: 1000,
+            min_degree: 1.0,
+            ..ChangeCouplingConfig::default()
+        };
+        assert!(at_bounds.errors().is_empty());
+
+        for (max_files_per_commit, min_degree) in [(1, 0.3), (1001, 0.3), (30, -0.1), (30, 1.5)] {
+            let config = ChangeCouplingConfig {
+                max_files_per_commit,
+                min_degree,
+                ..ChangeCouplingConfig::default()
+            };
+            assert_eq!(
+                config.errors().len(),
+                1,
+                "maxFilesPerCommit {max_files_per_commit}, minDegree {min_degree}"
+            );
+        }
+        let nan = ChangeCouplingConfig {
+            min_degree: f64::NAN,
+            ..ChangeCouplingConfig::default()
+        };
+        assert_eq!(nan.errors().len(), 1);
+    }
+
+    #[test]
+    fn health_config_defaults() {
+        let config = HealthConfig::default();
+        assert_eq!(config.max_cyclomatic, 20);
+        assert_eq!(config.max_cognitive, 15);
+        assert!((config.max_crap - 30.0).abs() < f64::EPSILON);
+        assert_eq!(config.crap_refactor_band, 5);
+        assert_eq!(config.max_unit_size, 60);
+        assert!(config.coverage.is_none());
+        assert!(config.coverage_root.is_none());
+        assert!(config.ignore.is_empty());
+        assert!(config.threshold_overrides.is_empty());
+        assert_eq!(config.change_coupling.max_files_per_commit, 30);
+        assert_eq!(config.change_coupling.min_revisions, 5);
+        assert_eq!(config.change_coupling.min_shared_revisions, 5);
+        assert!((config.change_coupling.min_degree - 0.3).abs() < f64::EPSILON);
+        let ownership = OwnershipConfig::default();
+        assert_eq!(config.ownership.bot_patterns, ownership.bot_patterns);
+        assert_eq!(config.ownership.email_mode, ownership.email_mode);
+    }
+
+    #[test]
+    fn health_config_json_all_fields() {
+        let json = r#"{
+            "maxCyclomatic": 30,
+            "maxCognitive": 25,
+            "maxCrap": 50.0,
+            "crapRefactorBand": 3,
+            "coverage": "coverage/coverage-final.json",
+            "coverageRoot": "/ci/workspace",
+            "ignore": ["**/generated/**", "vendor/**"],
+            "thresholdOverrides": [{
+                "files": ["components/auth/src/index.ts"],
+                "functions": ["createAuthModule"],
+                "maxCognitive": 25,
+                "reason": "linear module assembly; agreed 2026-06"
+            }]
+        }"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_cyclomatic, 30);
+        assert_eq!(config.max_cognitive, 25);
+        assert!((config.max_crap - 50.0).abs() < f64::EPSILON);
+        assert_eq!(config.crap_refactor_band, 3);
+        assert_eq!(
+            config.coverage,
+            Some(PathBuf::from("coverage/coverage-final.json"))
+        );
+        assert_eq!(config.coverage_root, Some(PathBuf::from("/ci/workspace")));
+        assert_eq!(config.ignore, vec!["**/generated/**", "vendor/**"]);
+        assert_eq!(config.threshold_overrides.len(), 1);
+        assert_eq!(
+            config.threshold_overrides[0].files,
+            vec!["components/auth/src/index.ts"]
+        );
+        assert_eq!(
+            config.threshold_overrides[0].functions,
+            vec!["createAuthModule"]
+        );
+        assert_eq!(config.threshold_overrides[0].max_cognitive, Some(25));
+    }
+
+    #[test]
+    fn health_config_json_partial_uses_defaults() {
+        let json = r#"{"maxCyclomatic": 10}"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_cyclomatic, 10);
+        assert_eq!(config.max_cognitive, 15); // default
+        assert!((config.max_crap - 30.0).abs() < f64::EPSILON); // default
+        assert_eq!(config.crap_refactor_band, 5); // default
+        assert!(config.ignore.is_empty()); // default
+        assert!(config.threshold_overrides.is_empty()); // default
+    }
+
+    #[test]
+    fn health_config_json_only_max_crap() {
+        let json = r#"{"maxCrap": 15.5}"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert!((config.max_crap - 15.5).abs() < f64::EPSILON);
+        assert_eq!(config.max_cyclomatic, 20); // default
+        assert_eq!(config.cyclomatic_policy, CyclomaticPolicy::Standard);
+        assert_eq!(config.max_cognitive, 15); // default
+        assert_eq!(config.crap_refactor_band, 5); // default
+    }
+
+    #[test]
+    fn health_config_json_empty_object_uses_all_defaults() {
+        let config: HealthConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.max_cyclomatic, 20);
+        assert_eq!(config.max_cognitive, 15);
+        assert_eq!(config.crap_refactor_band, 5);
+        assert!(config.ignore.is_empty());
+        assert!(config.threshold_overrides.is_empty());
+    }
+
+    #[test]
+    fn health_config_json_only_ignore() {
+        let json = r#"{"ignore": ["test/**"]}"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_cyclomatic, 20); // default
+        assert_eq!(config.max_cognitive, 15); // default
+        assert_eq!(config.ignore, vec!["test/**"]);
+        assert!(config.threshold_overrides.is_empty());
+    }
+
+    #[test]
+    fn health_config_toml_all_fields() {
+        let toml_str = r#"
+maxCyclomatic = 25
+maxCognitive = 20
+ignore = ["generated/**", "vendor/**"]
+
+[[thresholdOverrides]]
+files = ["src/auth.ts"]
+maxCognitive = 25
+"#;
+        let config: HealthConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.max_cyclomatic, 25);
+        assert_eq!(config.max_cognitive, 20);
+        assert_eq!(config.ignore, vec!["generated/**", "vendor/**"]);
+        assert_eq!(config.threshold_overrides.len(), 1);
+        assert_eq!(config.threshold_overrides[0].max_cognitive, Some(25));
+    }
+
+    #[test]
+    fn health_config_toml_defaults() {
+        let config: HealthConfig = toml::from_str("").unwrap();
+        assert_eq!(config.max_cyclomatic, 20);
+        assert_eq!(config.max_cognitive, 15);
+        assert!(config.ignore.is_empty());
+        assert!(config.threshold_overrides.is_empty());
+    }
+
+    #[test]
+    fn health_config_json_roundtrip() {
+        let config = HealthConfig {
+            max_cyclomatic: 50,
+            cyclomatic_policy: CyclomaticPolicy::LiteralMembership,
+            max_cognitive: 40,
+            max_crap: 75.0,
+            crap_refactor_band: 4,
+            max_unit_size: 120,
+            max_file_lines: 500,
+            ignore: vec!["test/**".to_string()],
+            threshold_overrides: vec![HealthThresholdOverride {
+                files: vec!["src/auth.ts".to_string()],
+                functions: Vec::new(),
+                max_cyclomatic: Some(30),
+                max_cognitive: None,
+                max_crap: Some(45.0),
+                max_unit_size: None,
+                max_file_lines: None,
+                reason: Some("framework assembly".to_string()),
+            }],
+            coverage: None,
+            coverage_root: None,
+            ownership: OwnershipConfig::default(),
+            change_coupling: ChangeCouplingConfig {
+                min_degree: 0.4,
+                ..ChangeCouplingConfig::default()
+            },
+            suggest_inline_suppression: false,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: HealthConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.max_cyclomatic, 50);
+        assert_eq!(
+            restored.cyclomatic_policy,
+            CyclomaticPolicy::LiteralMembership
+        );
+        assert!((restored.change_coupling.min_degree - 0.4).abs() < f64::EPSILON);
+        assert_eq!(restored.max_cognitive, 40);
+        assert!((restored.max_crap - 75.0).abs() < f64::EPSILON);
+        assert_eq!(restored.crap_refactor_band, 4);
+        assert_eq!(restored.max_unit_size, 120);
+        assert_eq!(restored.max_file_lines, 500);
+        assert_eq!(restored.ignore, vec!["test/**"]);
+        assert_eq!(restored.threshold_overrides.len(), 1);
+        assert_eq!(restored.threshold_overrides[0].max_cyclomatic, Some(30));
+        assert_eq!(restored.threshold_overrides[0].max_crap, Some(45.0));
+        assert!(!restored.suggest_inline_suppression);
+    }
+
+    #[test]
+    fn health_config_threshold_override_omitted_functions_matches_all() {
+        let json = r#"{
+            "thresholdOverrides": [{
+                "files": ["src/auth.ts"],
+                "maxCognitive": 25
+            }]
+        }"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        let override_entry = &config.threshold_overrides[0];
+        assert!(override_entry.functions.is_empty());
+        assert_eq!(override_entry.max_cognitive, Some(25));
+        assert!(config.threshold_override_errors().is_empty());
+    }
+
+    #[test]
+    fn health_config_threshold_override_validation_requires_files() {
+        let json = r#"{
+            "thresholdOverrides": [{
+                "files": [],
+                "maxCognitive": 25
+            }]
+        }"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            config.threshold_override_errors(),
+            vec!["health.thresholdOverrides[0].files must contain at least one pattern"]
+        );
+    }
+
+    #[test]
+    fn health_config_threshold_override_validation_requires_threshold() {
+        let json = r#"{
+            "thresholdOverrides": [{
+                "files": ["src/auth.ts"],
+                "reason": "temporary"
+            }]
+        }"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            config.threshold_override_errors(),
+            vec![
+                "health.thresholdOverrides[0] must set at least one of maxCyclomatic, maxCognitive, maxCrap, maxUnitSize, or maxFileLines"
+            ]
+        );
+    }
+
+    #[test]
+    fn health_config_threshold_override_max_unit_size_only_is_valid() {
+        let json = r#"{
+            "thresholdOverrides": [{
+                "files": ["**/*.test.*"],
+                "maxUnitSize": 500
+            }]
+        }"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        let override_entry = &config.threshold_overrides[0];
+        assert_eq!(override_entry.max_unit_size, Some(500));
+        assert!(override_entry.max_cyclomatic.is_none());
+        assert!(override_entry.has_any_threshold());
+        assert!(config.threshold_override_errors().is_empty());
+    }
+
+    #[test]
+    fn health_config_threshold_override_max_file_lines() {
+        let json = r#"{
+            "maxFileLines": 500,
+            "thresholdOverrides": [
+                {"files": ["src/generated/**"], "maxFileLines": 0},
+                {"files": ["src/a.ts"], "functions": ["f"], "maxFileLines": 900}
+            ]
+        }"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_file_lines, 500);
+        assert_eq!(config.threshold_overrides[0].max_file_lines, Some(0));
+        assert!(config.threshold_overrides[0].has_any_threshold());
+        assert_eq!(
+            config.threshold_override_errors(),
+            vec![
+                "health.thresholdOverrides[1].maxFileLines applies to whole files; move it to an entry without functions"
+            ]
+        );
+        assert_eq!(HealthConfig::default().max_file_lines, 0);
+    }
+
+    #[test]
+    fn health_config_json_only_max_unit_size() {
+        let json = r#"{"maxUnitSize": 100}"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_unit_size, 100);
+        assert_eq!(config.max_cyclomatic, 20); // default
+        assert!(config.threshold_overrides.is_empty());
+    }
+
+    #[test]
+    fn health_config_threshold_override_rejects_unknown_keys() {
+        let err = serde_json::from_str::<HealthConfig>(
+            r#"{"thresholdOverrides":[{"files":["src/auth.ts"],"maxCogntive":25}]}"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("maxCogntive"));
+    }
+
+    #[test]
+    fn health_config_suggest_inline_suppression_default_true() {
+        let config = HealthConfig::default();
+        assert!(config.suggest_inline_suppression);
+    }
+
+    #[test]
+    fn health_config_suggest_inline_suppression_explicit_false() {
+        let json = r#"{"suggestInlineSuppression": false}"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.suggest_inline_suppression);
+    }
+
+    #[test]
+    fn health_config_suggest_inline_suppression_omitted_uses_default() {
+        let config: HealthConfig = serde_json::from_str("{}").unwrap();
+        assert!(config.suggest_inline_suppression);
+    }
+
+    #[test]
+    fn health_config_zero_thresholds() {
+        let json = r#"{"maxCyclomatic": 0, "maxCognitive": 0}"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_cyclomatic, 0);
+        assert_eq!(config.max_cognitive, 0);
+    }
+
+    #[test]
+    fn health_config_large_thresholds() {
+        let json = r#"{"maxCyclomatic": 65535, "maxCognitive": 65535}"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_cyclomatic, u16::MAX);
+        assert_eq!(config.max_cognitive, u16::MAX);
+    }
+
+    #[test]
+    fn ownership_config_default_has_bot_patterns() {
+        let cfg = OwnershipConfig::default();
+        assert!(cfg.bot_patterns.iter().any(|p| p == r"*\[bot\]*"));
+        assert!(cfg.bot_patterns.iter().any(|p| p == "dependabot*"));
+        assert!(cfg.bot_patterns.iter().any(|p| p == "github-actions*"));
+        assert!(
+            !cfg.bot_patterns.iter().any(|p| p == "*noreply*"),
+            "*noreply* must not be a default bot pattern (filters real human \
+             contributors using GitHub's privacy default email)"
+        );
+        assert_eq!(cfg.email_mode, EmailMode::Handle);
+    }
+
+    #[test]
+    fn ownership_config_json_overrides_defaults() {
+        let json = r#"{
+            "ownership": {
+                "botPatterns": ["custom-bot*"],
+                "emailMode": "raw"
+            }
+        }"#;
+        let config: HealthConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.ownership.bot_patterns, vec!["custom-bot*"]);
+        assert_eq!(config.ownership.email_mode, EmailMode::Raw);
+    }
+
+    #[test]
+    fn ownership_config_email_mode_kebab_case() {
+        for (mode, repr) in [
+            (EmailMode::Raw, "\"raw\""),
+            (EmailMode::Handle, "\"handle\""),
+            (EmailMode::Anonymized, "\"anonymized\""),
+            (EmailMode::Hash, "\"hash\""),
+        ] {
+            let s = serde_json::to_string(&mode).unwrap();
+            assert_eq!(s, repr);
+            let back: EmailMode = serde_json::from_str(repr).unwrap();
+            assert_eq!(back, mode);
+        }
+    }
+
+    #[test]
+    fn ownership_config_email_mode_accepts_legacy_hash_alias() {
+        let back: EmailMode = serde_json::from_str("\"hash\"").unwrap();
+        assert_eq!(back, EmailMode::Hash);
+    }
+}

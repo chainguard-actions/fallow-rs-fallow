@@ -1,0 +1,51 @@
+name: Test dead-code on a clean project
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean-project
+          version: 3.40.0
+          format: json
+          artifacts-dir: fallow-artifacts-clean
+          type-aware: 'false'
+      - name: Assert issues output is 0
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a non-negative integer"
+            exit 1
+          fi
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues on clean project"
+            exit 1
+          fi
+          echo "PASS"
+      - name: Assert results file exists and is valid JSON
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          if [ -z "$RESULTS" ]; then
+            echo "FAIL: results output empty"
+            exit 1
+          fi
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: results file not found"
+            exit 1
+          fi
+          if ! jq empty "$f"; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
+          echo "PASS"

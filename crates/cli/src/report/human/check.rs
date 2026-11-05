@@ -1,0 +1,4359 @@
+#[path = "check_component_health.rs"]
+mod component_health;
+#[path = "check_summary_footer.rs"]
+mod summary_footer;
+
+use component_health::push_react_component_health_sections;
+use summary_footer::build_summary_footer;
+
+use crate::report::sink::outln;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use colored::Colorize;
+use fallow_config::{RulesConfig, Severity};
+use fallow_engine::test_paths::is_test_path;
+use fallow_types::output_dead_code::*;
+use fallow_types::results::{
+    AnalysisResults, DuplicateExport, TestOnlyDependency, TypeOnlyDependency, UnusedDependency,
+    UnusedExport, UnusedMember,
+};
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use super::{
+    GroupedByFileInput, MAX_FLAT_ITEMS, build_grouped_by_file, build_section_header, format_path,
+    print_explain_tip_if_tty, push_section_footer_rollup, push_section_footer_with_count,
+    push_section_footer_with_fixability,
+};
+use crate::report::ArchitectureLayout;
+use crate::report::grouping::OwnershipResolver;
+use crate::report::shared::NAMESPACE_BARREL_HINT;
+use crate::report::{
+    Level, elide_common_prefix, format_display_path, plural, relative_path, severity_to_level,
+    split_dir_filename,
+};
+
+#[path = "check_config_quality.rs"]
+mod config_quality;
+use config_quality::emit_config_quality_signal;
+
+#[path = "check_dependency_override_sections.rs"]
+mod dependency_override_sections;
+#[path = "check_framework_key_sections.rs"]
+mod framework_key_sections;
+use dependency_override_sections::{
+    UnusedDependencyOverridesInput, push_misconfigured_dependency_overrides_section,
+    push_unused_dependency_overrides_section,
+};
+use framework_key_sections::push_framework_key_sections;
+
+/// Minimum number of duplicate-export findings before the human section is
+/// allowed to surface the namespace-barrel orientation hint. Below this floor
+/// the hint is noise outweighing the value it provides.
+const NAMESPACE_BARREL_HINT_MIN_FINDINGS: usize = 3;
+
+/// Minimum ratio of barrel-shaped findings (locations all match
+/// `**/<dir>/index.{ts,tsx,js,jsx,mjs,cjs}`, case-insensitive on the extension)
+/// before the hint fires.
+const NAMESPACE_BARREL_HINT_MIN_RATIO: f32 = 0.8;
+
+/// Whether a duplicate-export location's path is shaped like a namespace-barrel
+/// `index` file. The basename must be exactly `index`; the extension may be any
+/// of the documented JS / TS module forms in any case (the case-insensitivity
+/// applies to the EXTENSION only, so `Index.ts` does not match).
+fn is_namespace_barrel_location(path: &Path) -> bool {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    if stem != "index" {
+        return false;
+    }
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs"
+    )
+}
+
+/// Ratio of `items` whose every `DuplicateLocation` matches the namespace-barrel
+/// shape. Findings with fewer than two locations (already excluded from the
+/// human render) are skipped to keep the denominator aligned with what the user
+/// actually sees on screen.
+fn namespace_barrel_match_ratio(items: &[DuplicateExportFinding]) -> f32 {
+    let renderable: Vec<&DuplicateExport> = items
+        .iter()
+        .map(|d| &d.export)
+        .filter(|d| d.locations.len() >= 2)
+        .collect();
+    if renderable.is_empty() {
+        return 0.0;
+    }
+    let matches = renderable
+        .iter()
+        .filter(|dup| {
+            dup.locations
+                .iter()
+                .all(|loc| is_namespace_barrel_location(&loc.path))
+        })
+        .count();
+    matches as f32 / renderable.len() as f32
+}
+
+/// Whether the namespace-barrel hint should fire for this section. Gate
+/// is `findings >= NAMESPACE_BARREL_HINT_MIN_FINDINGS` AND
+/// `ratio >= NAMESPACE_BARREL_HINT_MIN_RATIO`. The floor prevents the hint
+/// from spamming small projects where the user already knows the layout; the
+/// ratio guards against false positives in mixed codebases.
+fn should_show_namespace_barrel_hint(items: &[DuplicateExportFinding]) -> bool {
+    let renderable_count = items
+        .iter()
+        .filter(|d| d.export.locations.len() >= 2)
+        .count();
+    if renderable_count < NAMESPACE_BARREL_HINT_MIN_FINDINGS {
+        return false;
+    }
+    namespace_barrel_match_ratio(items) >= NAMESPACE_BARREL_HINT_MIN_RATIO
+}
+
+/// Maximum files shown per grouped section (unused exports, types, etc.).
+const MAX_GROUPED_FILES: usize = 10;
+/// Maximum detail items shown per file within a grouped section.
+const MAX_ITEMS_PER_FILE: usize = 5;
+/// Threshold above which unused files switch to directory-grouped rollup.
+const DIR_ROLLUP_THRESHOLD: usize = 200;
+/// Threshold above which truncation hints suggest scoping flags.
+const SCOPING_HINT_THRESHOLD: usize = 500;
+
+/// Build a truncation message, adding scoping suggestions for very high counts.
+///
+/// The `total_issues` parameter is the total across ALL categories (not just this section).
+/// The scoping hint fires when either the per-section overflow OR the total issue count
+/// exceeds the threshold, so medium-sized projects with dispersed issues still see the hint.
+fn truncation_hint(remaining: usize, total_issues: usize) -> String {
+    if remaining > SCOPING_HINT_THRESHOLD || total_issues > SCOPING_HINT_THRESHOLD {
+        format!("... and {remaining} more; try --workspace <name> or --changed-since main to scope")
+    } else {
+        format!("... and {remaining} more (--format json for full list)")
+    }
+}
+
+/// Insert a dimmed test/src breakdown line when the majority of items are in test paths.
+///
+/// The annotation is inserted before the last blank line of the current section
+/// so it appears just before the section gap. Paths are classified relative to
+/// `root`, so a directory above the project root never makes a file a test.
+fn insert_test_src_split<T>(
+    lines: &mut Vec<String>,
+    items: &[T],
+    root: &Path,
+    get_path: impl Fn(&T) -> &Path,
+) {
+    if items.len() < 5 {
+        return;
+    }
+    let test_count = items
+        .iter()
+        .filter(|item| {
+            let path = get_path(item);
+            is_test_path(root, path.strip_prefix(root).unwrap_or(path))
+        })
+        .count();
+    let src_count = items.len() - test_count;
+    if test_count == 0 || src_count == 0 {
+        return;
+    }
+    let test_pct = (test_count * 100) / items.len();
+    if test_pct < 30 {
+        return;
+    }
+    let annotation = format!(
+        "  {}",
+        format!("{src_count} in src, {test_count} in test files").dimmed()
+    );
+    if lines.last().is_some_and(String::is_empty) {
+        let pos = lines.len() - 1;
+        lines.insert(pos, annotation);
+    } else {
+        lines.push(annotation);
+    }
+}
+
+pub(in crate::report) struct PrintHumanInput<'a> {
+    pub results: &'a AnalysisResults,
+    pub root: &'a Path,
+    pub rules: &'a RulesConfig,
+    pub elapsed: Duration,
+    pub quiet: bool,
+    pub top: Option<usize>,
+    pub show_explain_tip: bool,
+    pub explain: bool,
+    /// Whether a gate of this run fails it. Picks the mark of the final
+    /// status line.
+    pub run_fails: bool,
+    /// Files an armed `parse-error` gate failed on; see [`clean_status_line`].
+    pub failed_parse_files: usize,
+    /// Where the architecture findings render.
+    pub architecture_layout: ArchitectureLayout,
+}
+
+/// The final status line of a run with no finding.
+///
+/// When an armed `parse-error` gate failed, the run exits 1, so the line says
+/// that instead of "No issues found". The gate lines that follow name the
+/// files.
+fn clean_status_line(elapsed: Duration, failed_parse_files: usize) -> String {
+    let seconds = elapsed.as_secs_f64();
+    if failed_parse_files == 0 {
+        return format!("\u{2713} No issues found ({seconds:.2}s)")
+            .green()
+            .bold()
+            .to_string();
+    }
+    let noun = if failed_parse_files == 1 {
+        "file did"
+    } else {
+        "files did"
+    };
+    format!(
+        "\u{2717} 0 issues, parse-error gate failed: {failed_parse_files} {noun} not parse ({seconds:.2}s)"
+    )
+    .red()
+    .bold()
+    .to_string()
+}
+
+pub(in crate::report) fn print_human(input: &PrintHumanInput<'_>) {
+    if !input.quiet {
+        eprintln!();
+        emit_config_quality_signal(input.results, input.root);
+    }
+
+    let total = input.results.total_issues();
+    print_explain_tip_if_tty(input.show_explain_tip && total > 0, input.quiet);
+
+    let lines = build_layout_lines(&LayoutLinesInput {
+        results: input.results,
+        root: input.root,
+        rules: input.rules,
+        top: input.top,
+        explain: input.explain,
+        layout: input.architecture_layout,
+    });
+    for line in lines {
+        outln!("{line}");
+    }
+
+    if !input.quiet {
+        print_human_footer(input, total);
+    }
+}
+
+fn print_human_footer(input: &PrintHumanInput<'_>, total: usize) {
+    if total == 0 {
+        eprintln!(
+            "{}",
+            clean_status_line(input.elapsed, input.failed_parse_files)
+        );
+        return;
+    }
+
+    let unused_file_set: FxHashSet<&std::path::Path> = input
+        .results
+        .unused_files
+        .iter()
+        .map(|f| f.file.path.as_path())
+        .collect();
+    let suppressed_exports = input
+        .results
+        .unused_exports
+        .iter()
+        .filter(|e| unused_file_set.contains(e.export.path.as_path()))
+        .count();
+    let suppressed_types = input
+        .results
+        .unused_types
+        .iter()
+        .filter(|e| unused_file_set.contains(e.export.path.as_path()))
+        .count();
+    let summary = build_summary_footer(input.results, suppressed_exports, suppressed_types);
+    eprintln!(
+        "{}",
+        super::findings_status_line(
+            &format!("{summary} ({:.2}s)", input.elapsed.as_secs_f64()),
+            input.run_fails,
+        )
+    );
+    print_suppression_footer(input.results);
+    if let Some(line) = cascade_footer(input.results) {
+        eprintln!("  {}", line.dimmed());
+    }
+}
+
+/// The footer line for the findings that the cascade filter hid, or `None`
+/// when it hid nothing.
+fn cascade_footer(results: &AnalysisResults) -> Option<String> {
+    let hidden = results.cascade_hidden;
+    if hidden == 0 {
+        return None;
+    }
+    let (verb, pronoun) = if hidden == 1 {
+        ("is", "it")
+    } else {
+        ("are", "them")
+    };
+    Some(format!(
+        "{hidden} finding{} in unused files {verb} hidden \u{00b7} --show-cascade shows {pronoun}",
+        plural(hidden)
+    ))
+}
+
+fn print_suppression_footer(results: &AnalysisResults) {
+    if let Some(line) = suppression_footer(results) {
+        eprintln!("  {}", line.dimmed());
+    }
+}
+
+/// The footer line for the suppression counts, or `None` when the run has no
+/// suppression.
+///
+/// An empty stale list does not mean "none found": a rule set to `off` or an
+/// issue-type filter also empties it. So the line names a stale count only
+/// when the count is above zero.
+fn suppression_footer(results: &AnalysisResults) -> Option<String> {
+    let stale = results.stale_suppressions.len();
+    if results.suppression_count == 0 && stale == 0 {
+        return None;
+    }
+    let total = results.total_issues();
+    let stale_part = if stale > 0 {
+        format!(" \u{00b7} {stale} stale suppression{}", plural(stale))
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "{total} issue{} \u{00b7} {} suppressed{stale_part}",
+        plural(total),
+        results.suppression_count,
+    ))
+}
+
+/// Build human-readable output lines for analysis results.
+///
+/// Each section (unused files, exports, etc.) produces a header line followed by
+/// detail lines. Empty sections are omitted entirely.
+#[cfg(test)]
+fn build_human_lines(
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+    top: Option<usize>,
+) -> Vec<String> {
+    build_human_lines_with_explain(results, root, rules, top, false)
+}
+
+fn build_human_lines_with_explain(
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+    top: Option<usize>,
+    explain: bool,
+) -> Vec<String> {
+    with_explain(
+        build_dead_code_lines(results, root, rules, top, true),
+        explain,
+    )
+}
+
+struct LayoutLinesInput<'a> {
+    results: &'a AnalysisResults,
+    root: &'a Path,
+    rules: &'a RulesConfig,
+    top: Option<usize>,
+    explain: bool,
+    layout: ArchitectureLayout,
+}
+
+/// Build the human lines for an [`ArchitectureLayout`]. `Embedded` returns the
+/// classic dead-code report. `Split` and `Only` move the architecture findings
+/// to one "Architecture" category: after the dead-code categories for bare
+/// `fallow`, first for `fallow architecture`.
+fn build_layout_lines(input: &LayoutLinesInput<'_>) -> Vec<String> {
+    let LayoutLinesInput {
+        results,
+        root,
+        rules,
+        top,
+        explain,
+        layout,
+    } = *input;
+    if layout == ArchitectureLayout::Embedded {
+        return build_human_lines_with_explain(results, root, rules, top, explain);
+    }
+    let dead_code = with_explain(
+        build_dead_code_lines(results, root, rules, top, false),
+        explain,
+    );
+    let architecture = with_explain(build_architecture_lines(results, root, rules), explain);
+    let (first, second) = if layout == ArchitectureLayout::Only {
+        (architecture, dead_code)
+    } else {
+        (dead_code, architecture)
+    };
+    first.into_iter().chain(second).collect()
+}
+
+fn with_explain(lines: Vec<String>, explain: bool) -> Vec<String> {
+    if explain {
+        inject_explain_blocks(lines)
+    } else {
+        lines
+    }
+}
+
+/// The "Architecture" category: import cycles, boundary violations and
+/// rule-pack policy violations. Empty when the results hold none.
+fn build_architecture_lines(
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !crate::report::has_architecture_findings(results) {
+        return lines;
+    }
+    push_category_header(&mut lines, "Architecture");
+    let total_issues = results.total_issues();
+    push_architecture_sections(&mut lines, results, root, rules, total_issues);
+    build_policy_violations_section(&mut lines, &results.policy_violations, root, total_issues);
+    lines
+}
+
+/// The dead-code report lines. With `include_architecture` false, the
+/// "Structure" and "Policy" categories leave out the architecture findings.
+fn build_dead_code_lines(
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+    top: Option<usize>,
+    include_architecture: bool,
+) -> Vec<String> {
+    let max_items = top.unwrap_or(MAX_FLAT_ITEMS);
+    let max_grouped_files = top.unwrap_or(MAX_GROUPED_FILES);
+    let total_issues = results.total_issues();
+    let mut lines = Vec::new();
+
+    build_unused_code_section(&mut UnusedCodeSectionInput {
+        lines: &mut lines,
+        results,
+        root,
+        rules,
+        max_items,
+        max_grouped_files,
+        total_issues,
+    });
+    build_dependencies_section(&mut DependencySectionInput {
+        lines: &mut lines,
+        results,
+        root,
+        rules,
+        max_items,
+        max_grouped_files,
+        total_issues,
+    });
+    let sections = SectionInput {
+        results,
+        root,
+        rules,
+        total_issues,
+        include_architecture,
+    };
+    build_structure_section(&mut lines, &sections);
+    build_policy_section(&mut lines, &sections);
+    build_maintenance_section(
+        &mut lines,
+        results,
+        root,
+        rules,
+        total_issues,
+        max_grouped_files,
+    );
+    lines
+}
+
+/// Shared input of the "Structure" and "Policy" category builders.
+struct SectionInput<'a> {
+    results: &'a AnalysisResults,
+    root: &'a Path,
+    rules: &'a RulesConfig,
+    total_issues: usize,
+    /// Render the architecture findings inside these categories.
+    include_architecture: bool,
+}
+
+fn inject_explain_blocks(lines: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(lines.len());
+    for line in lines {
+        let explain = check_explain_for_header(&line);
+        out.push(line);
+        if let Some(rule) = explain {
+            out.push(format!(
+                "  {}",
+                format!("Description: {}", rule.full).dimmed()
+            ));
+        }
+    }
+    out
+}
+
+fn check_explain_for_header(line: &str) -> Option<&'static crate::explain::RuleDef> {
+    let mappings = [
+        ("Unused files", "fallow/unused-file"),
+        ("Unused exports", "fallow/unused-export"),
+        ("Unused type exports", "fallow/unused-type"),
+        ("Private type leaks", "fallow/private-type-leak"),
+        (
+            "Deprecated exports in use",
+            "fallow/deprecated-export-in-use",
+        ),
+        ("Unused dependencies", "fallow/unused-dependency"),
+        ("Unused devDependencies", "fallow/unused-dev-dependency"),
+        (
+            "Unused optionalDependencies",
+            "fallow/unused-optional-dependency",
+        ),
+        ("Type-only dependencies", "fallow/type-only-dependency"),
+        (
+            "Test-only production dependencies",
+            "fallow/test-only-dependency",
+        ),
+        (
+            "Dev dependencies used in production",
+            "fallow/dev-dependency-in-production",
+        ),
+        ("Unused enum members", "fallow/unused-enum-member"),
+        ("Unused class members", "fallow/unused-class-member"),
+        ("Unused namespace members", "fallow/unused-namespace-member"),
+        ("Unused store members", "fallow/unused-store-member"),
+        ("Unresolved imports", "fallow/unresolved-import"),
+        ("Unlisted dependencies", "fallow/unlisted-dependency"),
+        ("Unlisted binaries", "fallow/unlisted-binary"),
+        ("Duplicate exports", "fallow/duplicate-export"),
+        ("Circular dependencies", "fallow/circular-dependency"),
+        ("Re-Export Cycles", "fallow/re-export-cycle"),
+        ("Package cycles", "fallow/package-cycle"),
+        ("Boundary violations", "fallow/boundary-violation"),
+        ("Stale suppressions", "fallow/stale-suppression"),
+        ("Unused catalog entries", "fallow/unused-catalog-entry"),
+        ("Empty catalog groups", "fallow/empty-catalog-group"),
+        (
+            "Unresolved catalog references",
+            "fallow/unresolved-catalog-reference",
+        ),
+        (
+            "Unused dependency overrides",
+            "fallow/unused-dependency-override",
+        ),
+        (
+            "Misconfigured dependency overrides",
+            "fallow/misconfigured-dependency-override",
+        ),
+        ("Invalid client exports", "fallow/invalid-client-export"),
+        (
+            "Mixed client/server barrels",
+            "fallow/mixed-client-server-barrel",
+        ),
+        ("Unprovided injects", "fallow/unprovided-inject"),
+        ("Unrendered components", "fallow/unrendered-component"),
+        ("Misplaced directives", "fallow/misplaced-directive"),
+    ];
+    let (_, rule_id) = mappings
+        .iter()
+        .find(|(title, _)| line.contains(&format!("{title} (")))?;
+    crate::explain::rule_by_id(rule_id)
+}
+
+/// `── Label ───...` header followed by a blank line, dimmed.
+/// Matches the pre-refactor literal byte-for-byte: 2 leading bars, the
+/// space-wrapped label, then exactly 37 trailing bars.
+fn push_category_header(lines: &mut Vec<String>, label: &str) {
+    let mut header = String::from("\u{2500}\u{2500} ");
+    header.push_str(label);
+    header.push(' ');
+    for _ in 0..37 {
+        header.push('\u{2500}');
+    }
+    lines.push(header.dimmed().to_string());
+    lines.push(String::new());
+}
+
+/// Insert "(N more in files already reported as unused)" note before the
+/// trailing blank line of a section (so any test/src split annotation stays
+/// last). No-op when `suppressed` is zero.
+fn push_suppressed_count_note(lines: &mut Vec<String>, suppressed: usize) {
+    if suppressed == 0 {
+        return;
+    }
+    let pos = if lines.last().is_some_and(String::is_empty) {
+        lines.len() - 1
+    } else {
+        lines.len()
+    };
+    lines.insert(
+        pos,
+        format!(
+            "  {}",
+            format!("({suppressed} more in files already reported as unused)").dimmed()
+        ),
+    );
+}
+
+/// The compact dimmed parenthetical a finding line carries when a degraded
+/// parse could have distorted its verdict, matching how `(re-export)` and the
+/// other per-finding annotations render. Empty when there is no caveat, so a
+/// project that parses cleanly renders byte-identically.
+fn dimmed_caveat_suffix(caveats: &[ReachabilityCaveat]) -> String {
+    caveat_suffix(caveats)
+        .map(|suffix| suffix.dimmed().to_string())
+        .unwrap_or_default()
+}
+
+fn format_unused_export(e: &UnusedExport, caveats: &[ReachabilityCaveat]) -> String {
+    let tag = if e.is_re_export {
+        " (re-export)".dimmed().to_string()
+    } else {
+        String::new()
+    };
+    let deprecated = if e.deprecated {
+        " (marked @deprecated)".dimmed().to_string()
+    } else {
+        String::new()
+    };
+    format!(
+        "{} {}{}{}{}",
+        format!(":{}", e.line).dimmed(),
+        e.export_name.bold(),
+        tag,
+        deprecated,
+        dimmed_caveat_suffix(caveats),
+    )
+}
+
+fn format_deprecated_export_in_use(
+    entry: &fallow_types::output_dead_code::DeprecatedExportInUseFinding,
+) -> String {
+    let e = &entry.export;
+    let noun = if e.consumer_count == 1 {
+        "consumer"
+    } else {
+        "consumers"
+    };
+    let scope = if e.public_api {
+        " (public API)".dimmed().to_string()
+    } else {
+        String::new()
+    };
+    let reason = e
+        .deprecated_reason
+        .as_deref()
+        .map_or_else(String::new, |reason| {
+            format!(": {reason}").dimmed().to_string()
+        });
+    format!(
+        "{} {} still used by {} {noun}{scope}{reason}",
+        format!(":{}", e.line).dimmed(),
+        e.export_name.bold(),
+        e.consumer_count,
+    )
+}
+
+fn format_private_type_leak(
+    entry: &fallow_types::output_dead_code::PrivateTypeLeakFinding,
+) -> String {
+    let e = &entry.leak;
+    format!(
+        "{} {} references private type {}",
+        format!(":{}", e.line).dimmed(),
+        e.export_name.bold(),
+        e.type_name.bold()
+    )
+}
+
+fn format_unused_member(m: &UnusedMember, caveats: &[ReachabilityCaveat]) -> String {
+    format!(
+        "{} {}{}",
+        format!(":{}", m.line).dimmed(),
+        format!("{}.{}", m.parent_name, m.member_name).bold(),
+        dimmed_caveat_suffix(caveats),
+    )
+}
+
+/// Width a dependency line renders within, including the two-space indent that
+/// `push_human_pkg_dep_section` prepends.
+const DEP_LINE_WIDTH: usize = 80;
+
+/// Fixed cost of `  {name} ({label})`: the indent, the separating space, and
+/// the parentheses. What is left after the package name is the label budget.
+const DEP_LINE_DECORATION: usize = 5;
+
+/// Manifest path of the workspace root. It says nothing beyond "the root", so
+/// the label drops it and keeps only the cross-workspace clause.
+const ROOT_MANIFEST: &str = "package.json";
+
+/// Clause introducing the workspaces that import the package.
+const IMPORTED_IN: &str = "imported in ";
+
+/// Clause introducing the workspaces that declare the package and import it.
+const DECLARED_AND_IMPORTED_IN: &str = "declared and imported in ";
+
+/// The relation between a dependency finding and the workspaces its label
+/// lists.
+#[derive(Clone, Copy)]
+enum WorkspaceClause {
+    /// The workspaces import the package, but the declaring manifest does not.
+    ImportedIn,
+    /// The workspaces declare the package and import it, so the root
+    /// declaration of the finding stays unused.
+    DeclaredAndImportedIn,
+}
+
+impl WorkspaceClause {
+    const fn intro(self) -> &'static str {
+        match self {
+            Self::ImportedIn => IMPORTED_IN,
+            Self::DeclaredAndImportedIn => DECLARED_AND_IMPORTED_IN,
+        }
+    }
+
+    /// Whether the label names a root manifest. The clause names other
+    /// manifests that declare the same package, so the label must say which
+    /// declaration the finding is about.
+    const fn names_root_manifest(self) -> bool {
+        matches!(self, Self::DeclaredAndImportedIn)
+    }
+}
+
+/// Marker for a path shortened from the left.
+const PATH_ELLIPSIS: &str = ".../";
+
+/// Narrowest label worth rendering, the width of a manifest path elided to its
+/// file name. Below it the parenthetical carries nothing, so the package
+/// renders bare.
+const MIN_LABEL_WIDTH: usize = 16;
+
+/// Narrowest workspace clause worth rendering: one elided path plus a
+/// `+N more`.
+const MIN_WORKSPACE_LIST_WIDTH: usize = 18;
+
+/// Shorten a path from the left so a deep manifest or workspace path cannot
+/// push a dependency line past `DEP_LINE_WIDTH`. A path is identified by its
+/// innermost segments, so the head goes first; whole segments are kept wherever
+/// they fit, because a half-eaten directory name reads as a different
+/// directory. Callers keep the budget wider than the marker.
+fn elide_path(path: &str, budget: usize) -> String {
+    if path.chars().count() <= budget {
+        return path.to_string();
+    }
+    let tail_budget = budget.saturating_sub(PATH_ELLIPSIS.chars().count());
+    let tail = path
+        .match_indices('/')
+        .map(|(offset, _)| &path[offset + 1..])
+        .find(|tail| tail.chars().count() <= tail_budget)
+        .map_or_else(
+            // One segment wider than the budget: its tail is where a generated
+            // or numbered name differs.
+            || {
+                let skip = path.chars().count().saturating_sub(tail_budget);
+                path.chars().skip(skip).collect()
+            },
+            str::to_string,
+        );
+    format!("{PATH_ELLIPSIS}{tail}")
+}
+
+/// Whether an elided manifest path still names the directory that declares the
+/// dependency, instead of collapsing onto the `package.json` tail every
+/// manifest shares.
+fn names_owning_directory(manifest: &str) -> bool {
+    manifest
+        .strip_prefix(PATH_ELLIPSIS)
+        .unwrap_or(manifest)
+        .contains('/')
+}
+
+/// Join the importing workspaces under `budget`, collapsing the tail into
+/// `+N more`.
+///
+/// The collapse promises no route. `used_in_workspaces` is uncapped in JSON, so
+/// a `--format json for full list` pointer would hold, but it costs more width
+/// than the whole clause has, and the package name is already on the line for a
+/// reader to query with. This is how the review brief caps an inline list.
+fn summarize_workspaces(workspaces: &[String], budget: usize) -> String {
+    let mut shown = 0usize;
+    let mut width = 0usize;
+    for workspace in workspaces {
+        let separator = usize::from(shown > 0) * ", ".len();
+        let omitted = workspaces.len() - shown - 1;
+        // Keep room for the suffix the omitted workspaces will need.
+        let suffix = if omitted == 0 {
+            0
+        } else {
+            format!(" +{omitted} more").chars().count()
+        };
+        let next = width + separator + workspace.chars().count();
+        if shown > 0 && next + suffix > budget {
+            break;
+        }
+        width = next;
+        shown += 1;
+    }
+    // The first workspace always renders, elided if it alone overruns.
+    let shown = shown.max(1).min(workspaces.len());
+    let joined = workspaces[..shown].join(", ");
+    let omitted = workspaces.len() - shown;
+    if omitted == 0 {
+        return elide_path(&joined, budget);
+    }
+    let suffix = format!(" +{omitted} more");
+    let head = elide_path(&joined, budget.saturating_sub(suffix.chars().count()));
+    format!("{head}{suffix}")
+}
+
+/// Build the parenthetical for a dependency line: where the package is declared
+/// and which workspaces import it, both bounded so the label holds within
+/// `budget`. `None` means there is nothing to say (a root manifest with no
+/// cross-workspace consumers) and the caller renders the name alone.
+///
+/// The manifest path outranks the workspace clause. Once seating a clause has
+/// eroded the path down to `.../package.json`, the label no longer names a
+/// package, and a reader cannot edit a manifest they cannot identify, so the
+/// path takes the whole label and the clause goes.
+///
+/// Split out from the printer so the wording and the width are testable.
+fn dep_label(
+    pkg_label: &str,
+    clause: WorkspaceClause,
+    workspaces: &[String],
+    budget: usize,
+) -> Option<String> {
+    // A package name wide enough to leave no usable budget renders bare. The
+    // name is never shortened: it is the identity a reader looks up and passes
+    // to `fallow fix`, and a truncated one is unusable.
+    if budget < MIN_LABEL_WIDTH {
+        return None;
+    }
+    if workspaces.is_empty() {
+        return (pkg_label != ROOT_MANIFEST).then(|| elide_path(pkg_label, budget));
+    }
+    let manifest =
+        (pkg_label != ROOT_MANIFEST || clause.names_root_manifest()).then_some(pkg_label);
+    let intro = clause.intro();
+    let separator = if manifest.is_some() { "; " } else { "" };
+    let clause_width = separator.chars().count() + intro.chars().count();
+    let head = match manifest {
+        Some(ROOT_MANIFEST) => ROOT_MANIFEST.to_string(),
+        Some(path) => {
+            let head = elide_path(
+                path,
+                budget.saturating_sub(clause_width + MIN_WORKSPACE_LIST_WIDTH),
+            );
+            if !names_owning_directory(&head) {
+                return Some(elide_path(path, budget));
+            }
+            head
+        }
+        None => String::new(),
+    };
+    let Some(list_budget) = budget
+        .checked_sub(head.chars().count() + clause_width)
+        .filter(|width| *width >= MIN_WORKSPACE_LIST_WIDTH)
+    else {
+        // The root manifest names nothing without its clause.
+        return (!head.is_empty() && head != ROOT_MANIFEST).then_some(head);
+    };
+    let list = summarize_workspaces(workspaces, list_budget);
+    Some(format!("{head}{separator}{intro}{list}"))
+}
+
+/// Render `name` plus its bounded label. `reserved` is the width of the text
+/// the caller appends to the line, for example a caveat parenthetical, so the
+/// label leaves room for it inside `DEP_LINE_WIDTH`.
+fn format_dep_with_pkg(
+    name: &str,
+    pkg_path: &Path,
+    (clause, context_workspaces): (WorkspaceClause, &[PathBuf]),
+    root: &Path,
+    reserved: usize,
+) -> String {
+    // Normalized separators: the label's elision snaps to path segments, and a
+    // Windows-shaped path would otherwise present as one unbreakable segment.
+    let pkg_label = format_display_path(pkg_path, root);
+    let workspaces: Vec<String> = context_workspaces
+        .iter()
+        .map(|path| format_display_path(path, root))
+        .collect();
+    let budget =
+        DEP_LINE_WIDTH.saturating_sub(name.chars().count() + DEP_LINE_DECORATION + reserved);
+    match dep_label(&pkg_label, clause, &workspaces, budget) {
+        Some(label) => format!("{} ({})", name.bold(), label.dimmed()),
+        None => name.bold().to_string(),
+    }
+}
+
+/// The label context of an unused dependency. A workspace finding lists the
+/// other workspaces that import the package. A root finding lists the
+/// workspaces whose own declaration their imports use.
+fn unused_dependency_context(dep: &UnusedDependency) -> (WorkspaceClause, &[PathBuf]) {
+    if dep.used_in_workspaces.is_empty() && !dep.declared_and_imported_in.is_empty() {
+        (
+            WorkspaceClause::DeclaredAndImportedIn,
+            &dep.declared_and_imported_in,
+        )
+    } else {
+        (WorkspaceClause::ImportedIn, &dep.used_in_workspaces)
+    }
+}
+
+/// Shared accessor for the dep types rendered with `format_dep_with_pkg`
+/// (package name + owning package.json path). Kept crate-private since it
+/// exists only to deduplicate the closures inside build_dependencies_section.
+trait NamedPkgDep {
+    fn pkg_name(&self) -> &str;
+    fn pkg_path(&self) -> &Path;
+    /// The workspaces the label lists and their relation to the finding.
+    fn workspace_context(&self) -> (WorkspaceClause, &[PathBuf]) {
+        (WorkspaceClause::ImportedIn, &[])
+    }
+    /// Degraded-parse caveats on the verdict behind this finding. Only the
+    /// three unused-dependency arrays carry them; every other dep finding
+    /// answers the question from a manifest rather than from the import graph.
+    fn caveats(&self) -> &[ReachabilityCaveat] {
+        &[]
+    }
+}
+
+impl NamedPkgDep for UnusedDependency {
+    fn pkg_name(&self) -> &str {
+        &self.package_name
+    }
+    fn pkg_path(&self) -> &Path {
+        &self.path
+    }
+    fn workspace_context(&self) -> (WorkspaceClause, &[PathBuf]) {
+        unused_dependency_context(self)
+    }
+}
+
+impl NamedPkgDep for TypeOnlyDependency {
+    fn pkg_name(&self) -> &str {
+        &self.package_name
+    }
+    fn pkg_path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl NamedPkgDep for TestOnlyDependency {
+    fn pkg_name(&self) -> &str {
+        &self.package_name
+    }
+    fn pkg_path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl NamedPkgDep for UnusedDependencyFinding {
+    fn pkg_name(&self) -> &str {
+        &self.dep.package_name
+    }
+    fn pkg_path(&self) -> &Path {
+        &self.dep.path
+    }
+    fn workspace_context(&self) -> (WorkspaceClause, &[PathBuf]) {
+        unused_dependency_context(&self.dep)
+    }
+    fn caveats(&self) -> &[ReachabilityCaveat] {
+        &self.reachability_caveats
+    }
+}
+
+impl NamedPkgDep for UnusedDevDependencyFinding {
+    fn pkg_name(&self) -> &str {
+        &self.dep.package_name
+    }
+    fn pkg_path(&self) -> &Path {
+        &self.dep.path
+    }
+    fn workspace_context(&self) -> (WorkspaceClause, &[PathBuf]) {
+        unused_dependency_context(&self.dep)
+    }
+    fn caveats(&self) -> &[ReachabilityCaveat] {
+        &self.reachability_caveats
+    }
+}
+
+impl NamedPkgDep for UnusedOptionalDependencyFinding {
+    fn pkg_name(&self) -> &str {
+        &self.dep.package_name
+    }
+    fn pkg_path(&self) -> &Path {
+        &self.dep.path
+    }
+    fn workspace_context(&self) -> (WorkspaceClause, &[PathBuf]) {
+        unused_dependency_context(&self.dep)
+    }
+    fn caveats(&self) -> &[ReachabilityCaveat] {
+        &self.reachability_caveats
+    }
+}
+
+impl NamedPkgDep for TypeOnlyDependencyFinding {
+    fn pkg_name(&self) -> &str {
+        &self.dep.package_name
+    }
+    fn pkg_path(&self) -> &Path {
+        &self.dep.path
+    }
+}
+
+impl NamedPkgDep for TestOnlyDependencyFinding {
+    fn pkg_name(&self) -> &str {
+        &self.dep.package_name
+    }
+    fn pkg_path(&self) -> &Path {
+        &self.dep.path
+    }
+}
+
+impl NamedPkgDep for DevDependencyInProductionFinding {
+    fn pkg_name(&self) -> &str {
+        &self.dep.package_name
+    }
+    fn pkg_path(&self) -> &Path {
+        &self.dep.path
+    }
+}
+
+struct HumanPkgDepSectionInput<'a, T> {
+    lines: &'a mut Vec<String>,
+    items: &'a [T],
+    title: &'static str,
+    severity: Severity,
+    max_items: usize,
+    total_issues: usize,
+    root: &'a Path,
+}
+
+fn push_human_pkg_dep_section<T: NamedPkgDep>(input: &mut HumanPkgDepSectionInput<'_, T>) {
+    build_human_section_ex(
+        HumanSectionInput {
+            lines: input.lines,
+            items: input.items,
+            title: input.title,
+            level: severity_to_level(input.severity),
+            max: input.max_items,
+            total_issues: input.total_issues,
+        },
+        |dep| {
+            let caveat_width = caveat_suffix(dep.caveats()).map_or(0, |text| text.chars().count());
+            vec![format!(
+                "  {}{}",
+                format_dep_with_pkg(
+                    dep.pkg_name(),
+                    dep.pkg_path(),
+                    dep.workspace_context(),
+                    input.root,
+                    caveat_width,
+                ),
+                dimmed_caveat_suffix(dep.caveats()),
+            )]
+        },
+    );
+}
+
+struct UnusedCodeSectionInput<'a> {
+    lines: &'a mut Vec<String>,
+    results: &'a AnalysisResults,
+    root: &'a Path,
+    rules: &'a RulesConfig,
+    max_items: usize,
+    max_grouped_files: usize,
+    total_issues: usize,
+}
+
+fn build_unused_code_section(input: &mut UnusedCodeSectionInput<'_>) {
+    let unused_file_set: FxHashSet<&Path> = input
+        .results
+        .unused_files
+        .iter()
+        .map(|f| f.file.path.as_path())
+        .collect();
+    let filtered_exports: Vec<UnusedExportFinding> = input
+        .results
+        .unused_exports
+        .iter()
+        .filter(|e| !unused_file_set.contains(e.export.path.as_path()))
+        .cloned()
+        .collect();
+    let filtered_types: Vec<UnusedTypeFinding> = input
+        .results
+        .unused_types
+        .iter()
+        .filter(|e| !unused_file_set.contains(e.export.path.as_path()))
+        .cloned()
+        .collect();
+    let suppressed_exports = input.results.unused_exports.len() - filtered_exports.len();
+    let suppressed_types = input.results.unused_types.len() - filtered_types.len();
+
+    let has_unused_code = !input.results.unused_files.is_empty()
+        || !filtered_exports.is_empty()
+        || !filtered_types.is_empty()
+        || !input.results.private_type_leaks.is_empty()
+        || !input.results.unused_enum_members.is_empty()
+        || !input.results.unused_class_members.is_empty()
+        || !input.results.unused_store_members.is_empty()
+        || !input.results.unused_namespace_members.is_empty();
+    if !has_unused_code {
+        return;
+    }
+    push_category_header(input.lines, "Unused Code");
+
+    push_unused_files_section(input);
+    push_unused_export_sections(
+        input,
+        &filtered_exports,
+        &filtered_types,
+        suppressed_exports,
+        suppressed_types,
+    );
+
+    build_unused_member_sections(
+        input.lines,
+        input.results,
+        input.root,
+        input.rules,
+        input.max_grouped_files,
+    );
+}
+
+/// Renders the unused-files block (dir-rollup or flat) plus the test/src split.
+fn push_unused_files_section(input: &mut UnusedCodeSectionInput<'_>) {
+    if input.results.unused_files.len() > DIR_ROLLUP_THRESHOLD {
+        build_dir_rollup_section(
+            input.lines,
+            &input.results.unused_files,
+            input.root,
+            input.rules,
+            input.total_issues,
+        );
+    } else {
+        build_human_section_ex(
+            HumanSectionInput {
+                lines: input.lines,
+                items: &input.results.unused_files,
+                title: "Unused files",
+                level: severity_to_level(input.rules.unused_files),
+                max: input.max_items,
+                total_issues: input.total_issues,
+            },
+            |file| {
+                let path_str = format_display_path(&file.file.path, input.root);
+                vec![format!(
+                    "  {}{}",
+                    format_path(&path_str),
+                    dimmed_caveat_suffix(&file.reachability_caveats),
+                )]
+            },
+        );
+    }
+    insert_test_src_split(input.lines, &input.results.unused_files, input.root, |f| {
+        &f.file.path
+    });
+}
+
+/// Renders the unused-export, unused-type, and private-type-leak grouped sections.
+fn push_unused_export_sections(
+    input: &mut UnusedCodeSectionInput<'_>,
+    filtered_exports: &[UnusedExportFinding],
+    filtered_types: &[UnusedTypeFinding],
+    suppressed_exports: usize,
+    suppressed_types: usize,
+) {
+    let has_fixable_export = filtered_exports
+        .iter()
+        .flat_map(|finding| &finding.actions)
+        .any(fallow_types::output::IssueAction::is_auto_fixable);
+    build_human_grouped_section_with_fixability(
+        GroupedSectionInput {
+            lines: input.lines,
+            items: filtered_exports,
+            title: "Unused exports",
+            level: severity_to_level(input.rules.unused_exports),
+            root: input.root,
+            max_files: input.max_grouped_files,
+            get_path: |e| e.export.path.as_path(),
+            format_detail: &|e: &UnusedExportFinding| {
+                format_unused_export(&e.export, &e.reachability_caveats)
+            },
+        },
+        has_fixable_export,
+    );
+    push_suppressed_count_note(input.lines, suppressed_exports);
+    insert_test_src_split(input.lines, filtered_exports, input.root, |e| {
+        &e.export.path
+    });
+
+    let has_fixable_type = filtered_types
+        .iter()
+        .flat_map(|finding| &finding.actions)
+        .any(fallow_types::output::IssueAction::is_auto_fixable);
+    build_human_grouped_section_with_fixability(
+        GroupedSectionInput {
+            lines: input.lines,
+            items: filtered_types,
+            title: "Unused type exports",
+            level: severity_to_level(input.rules.unused_types),
+            root: input.root,
+            max_files: input.max_grouped_files,
+            get_path: |e| e.export.path.as_path(),
+            format_detail: &|e: &UnusedTypeFinding| {
+                format_unused_export(&e.export, &e.reachability_caveats)
+            },
+        },
+        has_fixable_type,
+    );
+    push_suppressed_count_note(input.lines, suppressed_types);
+
+    build_human_grouped_section(GroupedSectionInput {
+        lines: input.lines,
+        items: &input.results.private_type_leaks,
+        title: "Private type leaks",
+        level: severity_to_level(input.rules.private_type_leaks),
+        root: input.root,
+        max_files: input.max_grouped_files,
+        get_path: |e| e.leak.path.as_path(),
+        format_detail: &format_private_type_leak,
+    });
+}
+
+fn build_unused_member_sections(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+    max_grouped_files: usize,
+) {
+    let has_fixable_enum_member = results
+        .unused_enum_members
+        .iter()
+        .flat_map(|finding| &finding.actions)
+        .any(fallow_types::output::IssueAction::is_auto_fixable);
+    build_human_grouped_section_with_fixability(
+        GroupedSectionInput {
+            lines,
+            items: &results.unused_enum_members,
+            title: "Unused enum members",
+            level: severity_to_level(rules.unused_enum_members),
+            root,
+            max_files: max_grouped_files,
+            get_path: |m| m.member.path.as_path(),
+            format_detail: &|m: &UnusedEnumMemberFinding| {
+                format_unused_member(&m.member, &m.reachability_caveats)
+            },
+        },
+        has_fixable_enum_member,
+    );
+
+    let has_fixable_class_member = results
+        .unused_class_members
+        .iter()
+        .flat_map(|finding| &finding.actions)
+        .any(fallow_types::output::IssueAction::is_auto_fixable);
+    build_human_grouped_section_with_fixability(
+        GroupedSectionInput {
+            lines,
+            items: &results.unused_class_members,
+            title: "Unused class members",
+            level: severity_to_level(rules.unused_class_members),
+            root,
+            max_files: max_grouped_files,
+            get_path: |m| m.member.path.as_path(),
+            format_detail: &|m: &UnusedClassMemberFinding| {
+                format_unused_member(&m.member, &m.reachability_caveats)
+            },
+        },
+        has_fixable_class_member,
+    );
+
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.unused_store_members,
+        title: "Unused store members",
+        level: severity_to_level(rules.unused_store_members),
+        root,
+        max_files: max_grouped_files,
+        get_path: |m| m.member.path.as_path(),
+        format_detail: &|m: &UnusedStoreMemberFinding| {
+            format_unused_member(&m.member, &m.reachability_caveats)
+        },
+    });
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.unused_namespace_members,
+        title: "Unused namespace members",
+        level: severity_to_level(rules.unused_namespace_members),
+        root,
+        max_files: max_grouped_files,
+        get_path: |m| m.member.path.as_path(),
+        format_detail: &|m: &UnusedNamespaceMemberFinding| {
+            format_unused_member(&m.member, &m.reachability_caveats)
+        },
+    });
+}
+
+struct DependencySectionInput<'a> {
+    lines: &'a mut Vec<String>,
+    results: &'a AnalysisResults,
+    root: &'a Path,
+    rules: &'a RulesConfig,
+    max_items: usize,
+    max_grouped_files: usize,
+    total_issues: usize,
+}
+
+fn build_dependencies_section(input: &mut DependencySectionInput<'_>) {
+    if !has_dependency_findings(input.results) {
+        return;
+    }
+    push_category_header(input.lines, "Dependencies");
+
+    push_package_dependency_sections(
+        input.lines,
+        input.results,
+        input.root,
+        input.rules,
+        input.max_items,
+        input.total_issues,
+    );
+    push_import_dependency_sections(ImportDependencySectionInput {
+        lines: input.lines,
+        results: input.results,
+        root: input.root,
+        rules: input.rules,
+        max_items: input.max_items,
+        max_grouped_files: input.max_grouped_files,
+        total_issues: input.total_issues,
+    });
+    push_catalog_dependency_sections(
+        input.lines,
+        input.results,
+        input.root,
+        input.rules,
+        input.max_items,
+        input.total_issues,
+    );
+    push_dependency_override_sections(
+        input.lines,
+        input.results,
+        input.root,
+        input.rules,
+        input.max_items,
+        input.total_issues,
+    );
+}
+
+fn has_dependency_findings(results: &AnalysisResults) -> bool {
+    !results.unused_dependencies.is_empty()
+        || !results.unused_dev_dependencies.is_empty()
+        || !results.unused_optional_dependencies.is_empty()
+        || !results.unresolved_imports.is_empty()
+        || !results.unlisted_dependencies.is_empty()
+        || !results.unlisted_binaries.is_empty()
+        || !results.type_only_dependencies.is_empty()
+        || !results.test_only_dependencies.is_empty()
+        || !results.dev_dependencies_in_production.is_empty()
+        || !results.unused_catalog_entries.is_empty()
+        || !results.empty_catalog_groups.is_empty()
+        || !results.unresolved_catalog_references.is_empty()
+        || !results.unused_dependency_overrides.is_empty()
+        || !results.misconfigured_dependency_overrides.is_empty()
+}
+
+fn push_package_dependency_sections(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+    max_items: usize,
+    total_issues: usize,
+) {
+    push_human_pkg_dep_section(&mut HumanPkgDepSectionInput {
+        lines,
+        items: &results.unused_dependencies,
+        title: "Unused dependencies",
+        severity: rules.unused_dependencies,
+        max_items,
+        total_issues,
+        root,
+    });
+    push_human_pkg_dep_section(&mut HumanPkgDepSectionInput {
+        lines,
+        items: &results.unused_dev_dependencies,
+        title: "Unused devDependencies",
+        severity: rules.unused_dev_dependencies,
+        max_items,
+        total_issues,
+        root,
+    });
+    push_human_pkg_dep_section(&mut HumanPkgDepSectionInput {
+        lines,
+        items: &results.unused_optional_dependencies,
+        title: "Unused optionalDependencies",
+        severity: rules.unused_optional_dependencies,
+        max_items,
+        total_issues,
+        root,
+    });
+}
+
+struct ImportDependencySectionInput<'a> {
+    lines: &'a mut Vec<String>,
+    results: &'a AnalysisResults,
+    root: &'a Path,
+    rules: &'a RulesConfig,
+    max_items: usize,
+    max_grouped_files: usize,
+    total_issues: usize,
+}
+
+fn push_import_dependency_sections(input: ImportDependencySectionInput<'_>) {
+    let ImportDependencySectionInput {
+        lines,
+        results,
+        root,
+        rules,
+        max_items,
+        max_grouped_files,
+        total_issues,
+    } = input;
+
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.unresolved_imports,
+        title: "Unresolved imports",
+        level: severity_to_level(rules.unresolved_imports),
+        root,
+        max_files: max_grouped_files,
+        get_path: |i| i.import.path.as_path(),
+        format_detail: &|i| {
+            format!(
+                "{} {}",
+                format!(":{}", i.import.line).dimmed(),
+                i.import.specifier.bold()
+            )
+        },
+    });
+    build_human_section_ex(
+        HumanSectionInput {
+            lines,
+            items: &results.unlisted_dependencies,
+            title: "Unlisted dependencies",
+            level: severity_to_level(rules.unlisted_dependencies),
+            max: max_items,
+            total_issues,
+        },
+        |dep| vec![format!("  {}", dep.dep.package_name.bold())],
+    );
+    build_human_section_ex(
+        HumanSectionInput {
+            lines,
+            items: &results.unlisted_binaries,
+            title: "Unlisted binaries",
+            level: severity_to_level(rules.unlisted_binaries),
+            max: max_items,
+            total_issues,
+        },
+        |binary| unlisted_binary_lines(binary, root),
+    );
+    push_human_pkg_dep_section(&mut HumanPkgDepSectionInput {
+        lines,
+        items: &results.type_only_dependencies,
+        title: "Type-only dependencies (consider moving to devDependencies)",
+        severity: rules.type_only_dependencies,
+        max_items,
+        total_issues,
+        root,
+    });
+    push_human_pkg_dep_section(&mut HumanPkgDepSectionInput {
+        lines,
+        items: &results.test_only_dependencies,
+        title: "Test-only production dependencies (consider moving to devDependencies)",
+        severity: rules.test_only_dependencies,
+        max_items,
+        total_issues,
+        root,
+    });
+    push_human_pkg_dep_section(&mut HumanPkgDepSectionInput {
+        lines,
+        items: &results.dev_dependencies_in_production,
+        title: "Dev dependencies used in production (consider moving to dependencies)",
+        severity: rules.dev_dependencies_in_production,
+        max_items,
+        total_issues,
+        root,
+    });
+}
+
+/// Shown use sites per unlisted binary before the rest collapse into a count.
+const UNLISTED_BINARY_SITES_SHOWN: usize = 3;
+
+fn unlisted_binary_lines(
+    finding: &fallow_types::output_dead_code::UnlistedBinaryFinding,
+    root: &Path,
+) -> Vec<String> {
+    let mut lines = vec![format!("  {}", finding.binary.binary_name.bold())];
+    for site in finding
+        .binary
+        .used_in
+        .iter()
+        .take(UNLISTED_BINARY_SITES_SHOWN)
+    {
+        let location = format!("{}:{}", format_display_path(&site.path, root), site.line);
+        let line = match &site.script_name {
+            Some(script) => format!(
+                "    {} {}",
+                location.dimmed(),
+                format!("(script {script})").dimmed()
+            ),
+            None => format!("    {}", location.dimmed()),
+        };
+        lines.push(line);
+    }
+    let hidden = finding
+        .binary
+        .used_in
+        .len()
+        .saturating_sub(UNLISTED_BINARY_SITES_SHOWN);
+    if hidden > 0 {
+        lines.push(format!("    {}", format!("... and {hidden} more").dimmed()));
+    }
+    lines
+}
+
+fn push_catalog_dependency_sections(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+    max_items: usize,
+    total_issues: usize,
+) {
+    let mut ctx = CatalogSectionContext {
+        lines,
+        root,
+        max_items,
+        total_issues,
+    };
+    push_unused_catalog_entries_section(
+        &mut ctx,
+        &results.unused_catalog_entries,
+        rules.unused_catalog_entries,
+    );
+    push_empty_catalog_groups_section(
+        &mut ctx,
+        &results.empty_catalog_groups,
+        rules.empty_catalog_groups,
+    );
+    push_unresolved_catalog_references_section(
+        &mut ctx,
+        &results.unresolved_catalog_references,
+        rules.unresolved_catalog_references,
+    );
+}
+
+struct CatalogSectionContext<'a> {
+    lines: &'a mut Vec<String>,
+    root: &'a Path,
+    max_items: usize,
+    total_issues: usize,
+}
+
+fn push_dependency_override_sections(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+    max_items: usize,
+    total_issues: usize,
+) {
+    push_unused_dependency_overrides_section(UnusedDependencyOverridesInput {
+        lines,
+        findings: &results.unused_dependency_overrides,
+        severity: rules.unused_dependency_overrides,
+        max_items,
+        total_issues,
+        root,
+    });
+    push_misconfigured_dependency_overrides_section(
+        lines,
+        &results.misconfigured_dependency_overrides,
+        rules.misconfigured_dependency_overrides,
+        max_items,
+        total_issues,
+        root,
+    );
+}
+
+/// Render unused pnpm catalog entries in a flat column layout (matches knip's
+/// shape): `entry_name  catalog_name  path:line`. Skipped when the list is
+/// empty or the rule is `Off` (which already removed entries upstream).
+fn push_unused_catalog_entries_section(
+    ctx: &mut CatalogSectionContext<'_>,
+    entries: &[fallow_types::output_dead_code::UnusedCatalogEntryFinding],
+    severity: fallow_config::Severity,
+) {
+    if entries.is_empty() {
+        return;
+    }
+    let level = severity_to_level(severity);
+    build_human_section_ex(
+        HumanSectionInput {
+            lines: &mut *ctx.lines,
+            items: entries,
+            title: "Unused catalog entries",
+            level,
+            max: ctx.max_items,
+            total_issues: ctx.total_issues,
+        },
+        |entry| {
+            let entry = &entry.entry;
+            let path_display = ctx.root.join(&entry.path);
+            let mut row = format!(
+                "  {entry_name}  {catalog}  {loc}",
+                entry_name = entry.entry_name.bold(),
+                catalog = entry.catalog_name.dimmed(),
+                loc = format!(
+                    "{}:{}",
+                    format_display_path(&path_display, ctx.root),
+                    entry.line
+                )
+                .dimmed(),
+            );
+            let mut out = vec![row];
+            if !entry.hardcoded_consumers.is_empty() {
+                let consumers = entry
+                    .hardcoded_consumers
+                    .iter()
+                    .map(|p| format_display_path(p, ctx.root))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                row = format!("    {}: {consumers}", "hardcoded in".dimmed());
+                out.push(row);
+            }
+            out
+        },
+    );
+}
+
+fn push_empty_catalog_groups_section(
+    ctx: &mut CatalogSectionContext<'_>,
+    groups: &[fallow_types::output_dead_code::EmptyCatalogGroupFinding],
+    severity: fallow_config::Severity,
+) {
+    if groups.is_empty() {
+        return;
+    }
+    let level = severity_to_level(severity);
+    build_human_section_ex(
+        HumanSectionInput {
+            lines: &mut *ctx.lines,
+            items: groups,
+            title: "Empty catalog groups",
+            level,
+            max: ctx.max_items,
+            total_issues: ctx.total_issues,
+        },
+        |group| {
+            let group = &group.group;
+            let path_display = ctx.root.join(&group.path);
+            vec![format!(
+                "  {catalog}  {loc}",
+                catalog = group.catalog_name.bold(),
+                loc = format!(
+                    "{}:{}",
+                    format_display_path(&path_display, ctx.root),
+                    group.line
+                )
+                .dimmed(),
+            )]
+        },
+    );
+}
+
+/// Render unresolved pnpm catalog references using the same two-tier shape as
+/// `unused-catalog-entries`: a headline `entry_name  catalog_name  path:line`
+/// row, then an indented "not in catalog ...; available in: ..." second line.
+/// The default catalog gets a special case: the indented text reads "not in the
+/// default catalog" instead of "not in catalog 'default'" because users who
+/// write bare `catalog:` think of it as "the catalog", not as a named one.
+fn push_unresolved_catalog_references_section(
+    ctx: &mut CatalogSectionContext<'_>,
+    findings: &[fallow_types::output_dead_code::UnresolvedCatalogReferenceFinding],
+    severity: fallow_config::Severity,
+) {
+    if findings.is_empty() {
+        return;
+    }
+    let level = severity_to_level(severity);
+    build_human_section_ex(
+        HumanSectionInput {
+            lines: &mut *ctx.lines,
+            items: findings,
+            title: "Unresolved catalog references",
+            level,
+            max: ctx.max_items,
+            total_issues: ctx.total_issues,
+        },
+        |finding| format_unresolved_catalog_reference(finding, ctx.root),
+    );
+}
+
+/// Formats one unresolved-catalog-reference finding into its headline row,
+/// detail row, and optional single-catalog suggestion.
+fn format_unresolved_catalog_reference(
+    finding: &fallow_types::output_dead_code::UnresolvedCatalogReferenceFinding,
+    root: &Path,
+) -> Vec<String> {
+    let finding = &finding.reference;
+    let path_display = root.join(&finding.path);
+    let catalog_label = if finding.catalog_name == "default" {
+        "default".to_string()
+    } else {
+        finding.catalog_name.clone()
+    };
+    let row = format!(
+        "  {entry_name}  {catalog}  {loc}",
+        entry_name = finding.entry_name.bold(),
+        catalog = catalog_label.dimmed(),
+        loc = format!(
+            "{}:{}",
+            format_display_path(&path_display, root),
+            finding.line
+        )
+        .dimmed(),
+    );
+    let mut out = vec![row];
+    let detail = if finding.catalog_name == "default" {
+        "not in the default catalog".to_string()
+    } else {
+        format!("not in catalog '{}'", finding.catalog_name)
+    };
+    let detail_line = if finding.available_in_catalogs.is_empty() {
+        format!("    {}", detail.dimmed())
+    } else {
+        format!(
+            "    {}; available in: {}",
+            detail.dimmed(),
+            finding.available_in_catalogs.join(", ").bold(),
+        )
+    };
+    out.push(detail_line);
+    if finding.available_in_catalogs.len() == 1 {
+        let target = &finding.available_in_catalogs[0];
+        out.push(format!(
+            "    {}",
+            format!("Suggested: switch to `catalog:{target}`").dimmed(),
+        ));
+    }
+    out
+}
+
+fn build_structure_section(lines: &mut Vec<String>, input: &SectionInput<'_>) {
+    let SectionInput {
+        results,
+        root,
+        rules,
+        total_issues,
+        include_architecture,
+    } = *input;
+    let has_architecture = include_architecture
+        && (!results.circular_dependencies.is_empty()
+            || !results.re_export_cycles.is_empty()
+            || !results.package_cycles.is_empty()
+            || !results.boundary_violations.is_empty()
+            || !results.boundary_coverage_violations.is_empty()
+            || !results.boundary_call_violations.is_empty());
+    if results.duplicate_exports.is_empty()
+        && results.duplicate_export_aliases.is_empty()
+        && !has_architecture
+    {
+        return;
+    }
+    push_category_header(lines, "Structure");
+
+    build_duplicate_exports_section(
+        lines,
+        &results.duplicate_exports,
+        severity_to_level(rules.duplicate_exports),
+        root,
+        total_issues,
+    );
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.duplicate_export_aliases,
+        title: "Duplicate export aliases",
+        level: severity_to_level(rules.duplicate_export_aliases),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |e: &fallow_types::output_dead_code::DuplicateExportAliasFinding| {
+            e.alias.path.as_path()
+        },
+        format_detail: &format_duplicate_export_alias,
+    });
+    if include_architecture {
+        push_architecture_sections(lines, results, root, rules, total_issues);
+    }
+}
+
+/// The cycle and boundary sub-sections, in the order the "Structure" category
+/// has always printed them.
+fn push_architecture_sections(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+    total_issues: usize,
+) {
+    build_circular_deps_section(
+        lines,
+        &results.circular_dependencies,
+        severity_to_level(rules.circular_dependencies),
+        root,
+        total_issues,
+    );
+    build_re_export_cycles_section(
+        lines,
+        &results.re_export_cycles,
+        severity_to_level(rules.re_export_cycle),
+        root,
+        total_issues,
+    );
+    build_package_cycles_section(
+        lines,
+        &results.package_cycles,
+        severity_to_level(rules.package_cycle),
+        root,
+        total_issues,
+    );
+    build_boundary_violations_section(
+        lines,
+        &results.boundary_violations,
+        severity_to_level(rules.boundary_violation),
+        root,
+        total_issues,
+    );
+    build_boundary_coverage_violations_section(
+        lines,
+        &results.boundary_coverage_violations,
+        severity_to_level(rules.boundary_violation),
+        root,
+        total_issues,
+    );
+    build_boundary_call_violations_section(
+        lines,
+        &results.boundary_call_violations,
+        severity_to_level(rules.boundary_violation),
+        root,
+        total_issues,
+    );
+}
+
+/// Build the Policy category (rule-pack findings). Separate from Structure
+/// because policy is user-authored project rules, not architecture analysis.
+fn build_policy_section(lines: &mut Vec<String>, input: &SectionInput<'_>) {
+    let SectionInput {
+        results,
+        root,
+        rules,
+        total_issues,
+        include_architecture,
+    } = *input;
+    if (!include_architecture || results.policy_violations.is_empty())
+        && results.invalid_client_exports.is_empty()
+        && results.mixed_client_server_barrels.is_empty()
+        && results.misplaced_directives.is_empty()
+        && results.unprovided_injects.is_empty()
+        && results.unrendered_components.is_empty()
+        && results.unused_component_props.is_empty()
+        && results.absent_component_props.is_empty()
+        && results.unused_component_emits.is_empty()
+        && results.unused_component_inputs.is_empty()
+        && results.unused_component_outputs.is_empty()
+        && results.unused_svelte_events.is_empty()
+        && results.unused_effect_layers.is_empty()
+        && results.unused_tagged_errors.is_empty()
+        && results.unproduced_catch_tags.is_empty()
+        && results.unused_server_actions.is_empty()
+        && results.unused_load_data_keys.is_empty()
+        && results.route_collisions.is_empty()
+        && results.dynamic_segment_name_conflicts.is_empty()
+        && results.prop_drilling_chains.is_empty()
+        && results.thin_wrappers.is_empty()
+        && results.duplicate_prop_shapes.is_empty()
+    {
+        return;
+    }
+    push_category_header(lines, "Policy");
+    if include_architecture {
+        build_policy_violations_section(lines, &results.policy_violations, root, total_issues);
+    }
+    build_framework_policy_section(lines, results, root, rules);
+    build_component_policy_section(lines, results, root, rules);
+    build_route_policy_section(lines, results, root, rules);
+}
+
+fn build_framework_policy_section(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+) {
+    push_client_server_policy_sections(lines, results, root, rules);
+    push_provider_render_policy_sections(lines, results, root, rules);
+}
+
+/// Render the client/server boundary policy sections (invalid client exports,
+/// mixed client/server barrels, misplaced directives).
+fn push_client_server_policy_sections(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+) {
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.invalid_client_exports,
+        title: "Invalid client exports",
+        level: severity_to_level(rules.invalid_client_export),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |e: &fallow_types::output_dead_code::InvalidClientExportFinding| {
+            e.export.path.as_path()
+        },
+        format_detail: &format_invalid_client_export,
+    });
+
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.mixed_client_server_barrels,
+        title: "Mixed client/server barrels",
+        level: severity_to_level(rules.mixed_client_server_barrel),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |b: &fallow_types::output_dead_code::MixedClientServerBarrelFinding| {
+            b.barrel.path.as_path()
+        },
+        format_detail: &format_mixed_client_server_barrel,
+    });
+
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.misplaced_directives,
+        title: "Misplaced directives",
+        level: severity_to_level(rules.misplaced_directive),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |d: &fallow_types::output_dead_code::MisplacedDirectiveFinding| {
+            d.directive_site.path.as_path()
+        },
+        format_detail: &format_misplaced_directive,
+    });
+}
+
+/// Render the provider/render policy sections (unprovided injects, unrendered
+/// components).
+fn push_provider_render_policy_sections(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+) {
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.unprovided_injects,
+        title: "Unprovided injects",
+        level: severity_to_level(rules.unprovided_injects),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |i: &fallow_types::output_dead_code::UnprovidedInjectFinding| {
+            i.inject.path.as_path()
+        },
+        format_detail: &format_unprovided_inject,
+    });
+
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.unrendered_components,
+        title: "Unrendered components",
+        level: severity_to_level(rules.unrendered_components),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |c: &fallow_types::output_dead_code::UnrenderedComponentFinding| {
+            c.component.path.as_path()
+        },
+        format_detail: &format_unrendered_component,
+    });
+}
+
+fn build_component_policy_section(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+) {
+    push_component_io_sections(lines, results, root, rules);
+    push_framework_key_sections(lines, results, root, rules);
+}
+
+/// Render the component IO policy sections (props, React health, emits, inputs,
+/// outputs).
+fn push_component_io_sections(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+) {
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.absent_component_props,
+        title: "Absent optional component props",
+        level: if results
+            .absent_component_props
+            .iter()
+            .any(|finding| finding.effective_severity == Some(EffectiveSeverity::Error))
+        {
+            crate::report::Level::Error
+        } else {
+            crate::report::Level::Warn
+        },
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |finding: &AbsentComponentPropFinding| finding.prop.path.as_path(),
+        format_detail: &|finding: &AbsentComponentPropFinding| {
+            let prop = &finding.prop;
+            let callers = prop
+                .inspected_call_sites
+                .iter()
+                .map(|site| format!("{}:{}", format_display_path(&site.path, root), site.line))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                ":{} {}.{} (default: {})\n    {}\n    Inspected callers: {}",
+                prop.line,
+                prop.component_name,
+                prop.prop_name,
+                if prop.has_default {
+                    "present"
+                } else {
+                    "absent"
+                },
+                prop.explanation,
+                callers
+            )
+        },
+    });
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.unused_component_props,
+        title: "Unused component props",
+        level: severity_to_level(rules.unused_component_props),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |p: &fallow_types::output_dead_code::UnusedComponentPropFinding| {
+            p.prop.path.as_path()
+        },
+        format_detail: &format_unused_component_prop,
+    });
+
+    push_react_component_health_sections(lines, results, root);
+
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.unused_component_emits,
+        title: "Unused component emits",
+        level: severity_to_level(rules.unused_component_emits),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |e: &fallow_types::output_dead_code::UnusedComponentEmitFinding| {
+            e.emit.path.as_path()
+        },
+        format_detail: &format_unused_component_emit,
+    });
+
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.unused_component_inputs,
+        title: "Unused component inputs",
+        level: severity_to_level(rules.unused_component_inputs),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |i: &fallow_types::output_dead_code::UnusedComponentInputFinding| {
+            i.input.path.as_path()
+        },
+        format_detail: &format_unused_component_input,
+    });
+
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.unused_component_outputs,
+        title: "Unused component outputs",
+        level: severity_to_level(rules.unused_component_outputs),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |o: &fallow_types::output_dead_code::UnusedComponentOutputFinding| {
+            o.output.path.as_path()
+        },
+        format_detail: &format_unused_component_output,
+    });
+}
+
+/// Render the Next.js App Router route-tree policy sections (route collisions
+/// and dynamic-segment name conflicts). Split out of `build_policy_section` to
+/// keep that orchestrator under the unit-size limit.
+fn build_route_policy_section(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+) {
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.route_collisions,
+        title: "Route collisions",
+        level: severity_to_level(rules.route_collision),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |c: &fallow_types::output_dead_code::RouteCollisionFinding| {
+            c.collision.path.as_path()
+        },
+        format_detail: &format_route_collision,
+    });
+
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.dynamic_segment_name_conflicts,
+        title: "Dynamic segment conflicts",
+        level: severity_to_level(rules.dynamic_segment_name_conflict),
+        root,
+        max_files: MAX_FLAT_ITEMS,
+        get_path: |c: &fallow_types::output_dead_code::DynamicSegmentNameConflictFinding| {
+            c.conflict.path.as_path()
+        },
+        format_detail: &format_dynamic_segment_name_conflict,
+    });
+}
+
+fn format_invalid_client_export(
+    entry: &fallow_types::output_dead_code::InvalidClientExportFinding,
+) -> String {
+    let e = &entry.export;
+    format!(
+        "{} {} {}",
+        format!(":{}", e.line).dimmed(),
+        e.export_name.bold(),
+        format!("(from \"{}\")", e.directive).dimmed(),
+    )
+}
+
+fn format_mixed_client_server_barrel(
+    entry: &fallow_types::output_dead_code::MixedClientServerBarrelFinding,
+) -> String {
+    let b = &entry.barrel;
+    format!(
+        "{} {}",
+        format!(":{}", b.line).dimmed(),
+        format!(
+            "re-exports client \"{}\" and server-only \"{}\"",
+            b.client_origin, b.server_origin
+        )
+        .dimmed(),
+    )
+}
+
+fn format_misplaced_directive(
+    entry: &fallow_types::output_dead_code::MisplacedDirectiveFinding,
+) -> String {
+    let d = &entry.directive_site;
+    format!(
+        "{} {}",
+        format!(":{}", d.line).dimmed(),
+        format!(
+            "\"{}\" is not in the leading position and is ignored",
+            d.directive
+        )
+        .dimmed(),
+    )
+}
+
+fn format_unprovided_inject(
+    entry: &fallow_types::output_dead_code::UnprovidedInjectFinding,
+) -> String {
+    let i = &entry.inject;
+    format!(
+        "{} {} {}",
+        format!(":{}", i.line).dimmed(),
+        i.key_name.bold(),
+        format!(
+            "has no matching provide({}) in this project; at runtime it returns undefined (provide the key or remove this inject)",
+            i.key_name
+        )
+        .dimmed(),
+    )
+}
+
+fn format_unrendered_component(
+    entry: &fallow_types::output_dead_code::UnrenderedComponentFinding,
+) -> String {
+    let c = &entry.component;
+    // Lit: the `component_name` is the registered TAG, so render it as a custom
+    // element `<x-foo>` (the user's mental model + searchable artifact) with
+    // wording that names the registration.
+    if c.framework == "lit" {
+        return format!(
+            "{} {} {}",
+            format!(":{}", c.line).dimmed(),
+            format!("<{}>", c.component_name).bold(),
+            "is a registered custom element but rendered in no template (render it or remove it)"
+                .dimmed(),
+        );
+    }
+    format!(
+        "{} {} {}",
+        format!(":{}", c.line).dimmed(),
+        c.component_name.bold(),
+        "is reachable but rendered nowhere in this project (render it somewhere or remove it)"
+            .dimmed(),
+    )
+}
+
+fn format_unused_component_prop(
+    entry: &fallow_types::output_dead_code::UnusedComponentPropFinding,
+) -> String {
+    let p = &entry.prop;
+    format!(
+        "{} {} {}",
+        format!(":{}", p.line).dimmed(),
+        p.prop_name.bold(),
+        "is declared but referenced nowhere in this component (remove it or use it)".dimmed(),
+    )
+}
+
+/// Anchor a prop-drilling chain to its SOURCE hop file for grouped display.
+fn prop_drilling_anchor(
+    c: &fallow_types::output_dead_code::PropDrillingChainFinding,
+) -> &std::path::Path {
+    c.chain
+        .hops
+        .first()
+        .map_or_else(|| std::path::Path::new(""), |h| h.file.as_path())
+}
+
+fn format_prop_drilling_chain(
+    entry: &fallow_types::output_dead_code::PropDrillingChainFinding,
+) -> String {
+    let c = &entry.chain;
+    let trail = c
+        .hops
+        .iter()
+        .map(|h| h.component.as_str())
+        .collect::<Vec<_>>()
+        .join(" \u{2192} ");
+    let line = c.hops.first().map_or(0, |h| h.line);
+    format!(
+        "{} {} {}",
+        format!(":{line}").dimmed(),
+        c.prop.bold(),
+        format!(
+            "is forwarded unused through {trail} (depth {}); colocate the consumer or lift it to a \
+             context at a mid-chain hop",
+            c.depth
+        )
+        .dimmed(),
+    )
+}
+
+fn format_thin_wrapper(entry: &fallow_types::output_dead_code::ThinWrapperFinding) -> String {
+    let w = &entry.wrapper;
+    format!(
+        "{} {} {}",
+        format!(":{}", w.line).dimmed(),
+        w.component.bold(),
+        format!(
+            "is a thin wrapper around {} (candidate for inlining at call sites or deleting)",
+            w.child_component
+        )
+        .dimmed(),
+    )
+}
+
+fn format_duplicate_prop_shape(
+    entry: &fallow_types::output_dead_code::DuplicatePropShapeFinding,
+) -> String {
+    let d = &entry.shape;
+    format!(
+        "{} {} {}",
+        format!(":{}", d.line).dimmed(),
+        d.component.bold(),
+        format!(
+            "shares an identical prop shape {{{}}} with {} other component(s) (extract a shared Props type)",
+            d.shape.join(", "),
+            d.group_size.saturating_sub(1)
+        )
+        .dimmed(),
+    )
+}
+
+fn format_unused_component_emit(
+    entry: &fallow_types::output_dead_code::UnusedComponentEmitFinding,
+) -> String {
+    let e = &entry.emit;
+    format!(
+        "{} {} {}",
+        format!(":{}", e.line).dimmed(),
+        e.emit_name.bold(),
+        "is declared but emitted nowhere in this component (remove it or emit it)".dimmed(),
+    )
+}
+
+fn format_unused_component_input(
+    entry: &fallow_types::output_dead_code::UnusedComponentInputFinding,
+) -> String {
+    let i = &entry.input;
+    format!(
+        "{} {} {}",
+        format!(":{}", i.line).dimmed(),
+        i.input_name.bold(),
+        "is declared but read nowhere in this component (remove it or use it)".dimmed(),
+    )
+}
+
+fn format_unused_component_output(
+    entry: &fallow_types::output_dead_code::UnusedComponentOutputFinding,
+) -> String {
+    let o = &entry.output;
+    format!(
+        "{} {} {}",
+        format!(":{}", o.line).dimmed(),
+        o.output_name.bold(),
+        "is declared but emitted nowhere in this component (remove it or emit it)".dimmed(),
+    )
+}
+
+fn format_unused_effect_layer(
+    entry: &fallow_types::output_dead_code::UnusedEffectLayerFinding,
+) -> String {
+    let layer = &entry.layer;
+    format!(
+        "{} {} {} {}",
+        format!(":{}", layer.line).dimmed(),
+        layer.name.bold(),
+        "is composed only into layers that nothing uses:".dimmed(),
+        layer.dead_consumers.join(", ").dimmed(),
+    )
+}
+
+fn format_duplicate_export_alias(
+    entry: &fallow_types::output_dead_code::DuplicateExportAliasFinding,
+) -> String {
+    let alias = &entry.alias;
+    format!(
+        "{} {} {} {}",
+        format!(":{}", alias.line).dimmed(),
+        alias.local_name.bold(),
+        "is exported as".dimmed(),
+        alias.export_names.join(", "),
+    )
+}
+
+fn format_unused_tagged_error(
+    entry: &fallow_types::output_dead_code::UnusedTaggedErrorFinding,
+) -> String {
+    let error = &entry.error;
+    format!(
+        "{} {} {}",
+        format!(":{}", error.line).dimmed(),
+        error.name.bold(),
+        "is never constructed or failed with (remove it or fail with it)".dimmed(),
+    )
+}
+
+fn format_unproduced_catch_tag(
+    entry: &fallow_types::output_dead_code::UnproducedCatchTagFinding,
+) -> String {
+    let catch_tag = &entry.catch_tag;
+    format!(
+        "{} {} {}",
+        format!(":{}", catch_tag.line).dimmed(),
+        catch_tag.tag.bold(),
+        "is caught, but no code in this project produces it".dimmed(),
+    )
+}
+
+fn format_unused_svelte_event(
+    entry: &fallow_types::output_dead_code::UnusedSvelteEventFinding,
+) -> String {
+    let e = &entry.event;
+    format!(
+        "{} {} {}",
+        format!(":{}", e.line).dimmed(),
+        e.event_name.bold(),
+        "is dispatched but listened to nowhere in the project (remove it or listen for it)"
+            .dimmed(),
+    )
+}
+
+fn format_unused_server_action(
+    entry: &fallow_types::output_dead_code::UnusedServerActionFinding,
+) -> String {
+    let a = &entry.action;
+    format!(
+        "{} {} {}",
+        format!(":{}", a.line).dimmed(),
+        a.action_name.bold(),
+        "is exported from a \"use server\" file but no code in this project references it".dimmed(),
+    )
+}
+
+fn format_unused_load_data_key(
+    entry: &fallow_types::output_dead_code::UnusedLoadDataKeyFinding,
+) -> String {
+    let k = &entry.key;
+    format!(
+        "{} {} {}",
+        format!(":{}", k.line).dimmed(),
+        k.key_name.bold(),
+        "is returned from load() but no consumer reads it (sibling +page.svelte data.<key> or \
+         project-wide page.data.<key>)"
+            .dimmed(),
+    )
+}
+
+fn format_route_collision(entry: &fallow_types::output_dead_code::RouteCollisionFinding) -> String {
+    let c = &entry.collision;
+    let others = c.conflicting_paths.len();
+    let plural = if others == 1 { "" } else { "s" };
+    format!(
+        "{}",
+        format!(
+            "resolves to {} (shared with {others} other route file{plural}; route groups and \
+             slots do not change the URL)",
+            c.url
+        )
+        .dimmed(),
+    )
+}
+
+fn format_dynamic_segment_name_conflict(
+    entry: &fallow_types::output_dead_code::DynamicSegmentNameConflictFinding,
+) -> String {
+    let c = &entry.conflict;
+    format!(
+        "{}",
+        format!(
+            "crashes at runtime: different slug names ({}) at the same dynamic path {}; \
+             next build passes but the route fails on its first request (rename to one \
+             consistent slug)",
+            c.conflicting_segments.join(" vs "),
+            c.position
+        )
+        .dimmed(),
+    )
+}
+
+/// Build the rule-pack policy-violation section. The header level reflects
+/// the EFFECTIVE per-finding severities (error when any finding is error),
+/// because rule-level `severity` overrides the `policy-violation` master.
+fn build_policy_violations_section(
+    lines: &mut Vec<String>,
+    items: &[fallow_types::output_dead_code::PolicyViolationFinding],
+    root: &Path,
+    total_issues: usize,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let level = policy_violations_level(items);
+    let title = "Policy violations";
+    lines.push(build_section_header(title, items.len(), level));
+
+    let shown = items.len().min(MAX_FLAT_ITEMS);
+    for entry in &items[..shown] {
+        let v = &entry.violation;
+        let path = format_display_path(&v.path, root);
+        let detail = match &v.message {
+            Some(message) => format!("banned by `{}/{}`: {message}", v.pack, v.rule_id),
+            None => format!("banned by `{}/{}`", v.pack, v.rule_id),
+        };
+        lines.push(format!(
+            "  {}:{} {} {}",
+            path,
+            v.line,
+            v.matched,
+            detail.dimmed(),
+        ));
+    }
+    if items.len() > MAX_FLAT_ITEMS {
+        let remaining = items.len() - MAX_FLAT_ITEMS;
+        lines.push(format!(
+            "  {}",
+            truncation_hint(remaining, total_issues).dimmed()
+        ));
+    }
+    lines.push(format!(
+        "  {}",
+        "suppress: // fallow-ignore-next-line policy-violation:<pack>/<rule-id> (or policy-violation for every rule-pack rule)"
+            .dimmed()
+    ));
+    push_section_footer_with_count(lines, title, items.len());
+    lines.push(String::new());
+}
+
+fn build_maintenance_section(
+    lines: &mut Vec<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+    total_issues: usize,
+    max_grouped_files: usize,
+) {
+    if results.stale_suppressions.is_empty() && results.deprecated_exports_in_use.is_empty() {
+        return;
+    }
+    push_category_header(lines, "Maintenance");
+
+    build_human_grouped_section(GroupedSectionInput {
+        lines,
+        items: &results.deprecated_exports_in_use,
+        title: "Deprecated exports in use",
+        level: severity_to_level(rules.deprecated_exports_in_use),
+        root,
+        max_files: max_grouped_files,
+        get_path: |e| e.export.path.as_path(),
+        format_detail: &format_deprecated_export_in_use,
+    });
+    build_stale_suppressions_section(
+        lines,
+        &results.stale_suppressions,
+        severity_to_level(rules.stale_suppressions),
+        root,
+        total_issues,
+    );
+}
+
+/// Directory-grouped rollup for large unused file counts.
+///
+/// Instead of listing individual files (which is overwhelming at 200+), groups
+/// by top-level directory and shows file counts per directory.
+fn build_dir_rollup_section(
+    lines: &mut Vec<String>,
+    unused_files: &[fallow_types::output_dead_code::UnusedFileFinding],
+    root: &Path,
+    rules: &RulesConfig,
+    total_issues: usize,
+) {
+    if unused_files.is_empty() {
+        return;
+    }
+    let title = "Unused files";
+    let level = severity_to_level(rules.unused_files);
+    lines.push(build_section_header(title, unused_files.len(), level));
+
+    let dir_counts = unused_file_dir_counts(unused_files, root);
+
+    let total = unused_files.len();
+    let dominant = dir_counts
+        .iter()
+        .find(|(_, count, is_dir)| *is_dir && count * 100 / total.max(1) > 80)
+        .map(|(dir, _, _)| dir.clone());
+
+    let display_entries =
+        unused_file_display_entries(unused_files, root, &dir_counts, dominant.as_deref());
+
+    render_dir_rollup_entries(lines, &display_entries, total_issues);
+    push_rollup_caveat_note(lines, unused_files);
+    push_section_footer_rollup(lines, title, unused_files.len());
+    lines.push(String::new());
+}
+
+/// The directory rollup collapses the per-file lines the flat section carries
+/// a caveat suffix on, so the caveat is stated once for the section instead.
+/// Silent when nothing degraded, keeping a clean project byte-identical.
+fn push_rollup_caveat_note(
+    lines: &mut Vec<String>,
+    unused_files: &[fallow_types::output_dead_code::UnusedFileFinding],
+) {
+    let caveated = unused_files
+        .iter()
+        .filter(|finding| !finding.reachability_caveats.is_empty())
+        .count();
+    if caveated == 0 {
+        return;
+    }
+    let mut present: Vec<ReachabilityCaveat> = unused_files
+        .iter()
+        .flat_map(|finding| finding.reachability_caveats.iter().copied())
+        .collect();
+    present.sort_unstable();
+    present.dedup();
+    let Some(labels) = caveat_labels(&present) else {
+        return;
+    };
+    lines.push(format!(
+        "  {}",
+        format!("({caveated} of these carry a caveat: {labels})").dimmed()
+    ));
+}
+
+fn unused_file_dir_counts(
+    unused_files: &[fallow_types::output_dead_code::UnusedFileFinding],
+    root: &Path,
+) -> Vec<(String, usize, bool)> {
+    let mut dir_counts: Vec<(String, usize, bool)> = Vec::new();
+    let mut dir_map: FxHashMap<String, usize> = FxHashMap::default();
+    for f in unused_files {
+        let rel = relative_path(&f.file.path, root);
+        let (dir, is_dir) = if rel.components().count() <= 1 {
+            ("(project root)".to_string(), false)
+        } else {
+            (
+                rel.components().next().map_or_else(
+                    || ".".to_string(),
+                    |c| c.as_os_str().to_string_lossy().to_string(),
+                ),
+                true,
+            )
+        };
+        if let Some(&idx) = dir_map.get(&dir) {
+            dir_counts[idx].1 += 1;
+        } else {
+            dir_map.insert(dir.clone(), dir_counts.len());
+            dir_counts.push((dir, 1, is_dir));
+        }
+    }
+    dir_counts.sort_by_key(|b| std::cmp::Reverse(b.1));
+    dir_counts
+}
+
+fn unused_file_display_entries(
+    unused_files: &[fallow_types::output_dead_code::UnusedFileFinding],
+    root: &Path,
+    dir_counts: &[(String, usize, bool)],
+    dominant: Option<&str>,
+) -> Vec<(String, usize, bool)> {
+    let Some(dom_dir) = dominant else {
+        return dir_counts.to_vec();
+    };
+
+    let mut sub_counts: Vec<(String, usize, bool)> = Vec::new();
+    let mut sub_map: FxHashMap<String, usize> = FxHashMap::default();
+    for f in unused_files {
+        let rel = relative_path(&f.file.path, root);
+        let mut components = rel.components();
+        let first = components
+            .next()
+            .map(|c| c.as_os_str().to_string_lossy().to_string());
+        if first.as_deref() == Some(dom_dir) {
+            // The next component is a subdirectory only while something follows
+            // it. On `src/orphan.ts` it is the file itself, and labelling that
+            // as a directory printed `src/orphan.ts/`; the file belongs to the
+            // dominant directory.
+            let rest: Vec<_> = components.collect();
+            let sub_key = match rest.as_slice() {
+                [sub, _, ..] => format!("{}/{}", dom_dir, sub.as_os_str().to_string_lossy()),
+                _ => dom_dir.to_string(),
+            };
+            if let Some(&idx) = sub_map.get(&sub_key) {
+                sub_counts[idx].1 += 1;
+            } else {
+                sub_map.insert(sub_key.clone(), sub_counts.len());
+                sub_counts.push((sub_key, 1, true));
+            }
+        }
+    }
+    sub_counts.sort_by_key(|b| std::cmp::Reverse(b.1));
+    let mut combined = sub_counts;
+    for entry in dir_counts {
+        if entry.0 != dom_dir {
+            combined.push(entry.clone());
+        }
+    }
+    combined
+}
+
+fn render_dir_rollup_entries(
+    lines: &mut Vec<String>,
+    display_entries: &[(String, usize, bool)],
+    total_issues: usize,
+) {
+    let shown = display_entries.len().min(MAX_FLAT_ITEMS);
+    for (dir, count, is_dir) in &display_entries[..shown] {
+        let label = if *is_dir {
+            format!("{dir}/").bold().to_string()
+        } else {
+            dir.dimmed().to_string()
+        };
+        lines.push(format!("  {}  {} file{}", label, count, plural(*count)));
+    }
+    if display_entries.len() > MAX_FLAT_ITEMS {
+        let remaining = display_entries.len() - MAX_FLAT_ITEMS;
+        let hint = if remaining > SCOPING_HINT_THRESHOLD || total_issues > SCOPING_HINT_THRESHOLD {
+            format!(
+                "... and {remaining} more director{}, try --workspace <name> or --changed-since main to scope",
+                if remaining == 1 { "y" } else { "ies" }
+            )
+        } else {
+            format!(
+                "... and {remaining} more director{} (--format json for full list)",
+                if remaining == 1 { "y" } else { "ies" }
+            )
+        };
+        lines.push(format!("  {}", hint.dimmed()));
+    }
+}
+
+/// Append a non-empty section with a header, doc-link footer, and truncated items.
+/// The non-closure inputs to [`build_human_section_ex`], bundled so the entry
+/// point takes the section descriptor plus the per-item formatter closure
+/// instead of seven positional parameters.
+struct HumanSectionInput<'a, T> {
+    lines: &'a mut Vec<String>,
+    items: &'a [T],
+    title: &'a str,
+    level: Level,
+    max: usize,
+    total_issues: usize,
+}
+
+fn build_human_section_ex<T>(
+    section: HumanSectionInput<'_, T>,
+    format_lines: impl Fn(&T) -> Vec<String>,
+) {
+    let HumanSectionInput {
+        lines,
+        items,
+        title,
+        level,
+        max,
+        total_issues,
+    } = section;
+    if items.is_empty() {
+        return;
+    }
+    lines.push(build_section_header(title, items.len(), level));
+    let shown = items.len().min(max);
+    for item in &items[..shown] {
+        for line in format_lines(item) {
+            lines.push(line);
+        }
+    }
+    if items.len() > max {
+        let remaining = items.len() - max;
+        lines.push(format!(
+            "  {}",
+            truncation_hint(remaining, total_issues).dimmed()
+        ));
+    }
+    push_section_footer_with_count(lines, title, items.len());
+    lines.push(String::new());
+}
+
+/// Append a non-empty section whose items are grouped by file path (truncated).
+///
+/// Files are sorted by item count descending. Shows `(N exports)` next to each
+/// file header. Truncates to `max_files` files and `MAX_ITEMS_PER_FILE`
+/// items per file.
+struct GroupedSectionInput<'a, T, P, F>
+where
+    P: Fn(&'a T) -> &'a Path,
+    F: Fn(&T) -> String,
+{
+    lines: &'a mut Vec<String>,
+    items: &'a [T],
+    title: &'a str,
+    level: Level,
+    root: &'a Path,
+    max_files: usize,
+    get_path: P,
+    format_detail: &'a F,
+}
+
+fn build_human_grouped_section<'a, T, P, F>(input: GroupedSectionInput<'a, T, P, F>)
+where
+    P: Fn(&'a T) -> &'a Path,
+    F: Fn(&T) -> String,
+{
+    build_human_grouped_section_impl(input, None);
+}
+
+fn build_human_grouped_section_with_fixability<'a, T, P, F>(
+    input: GroupedSectionInput<'a, T, P, F>,
+    has_auto_fixable_action: bool,
+) where
+    P: Fn(&'a T) -> &'a Path,
+    F: Fn(&T) -> String,
+{
+    build_human_grouped_section_impl(input, Some(has_auto_fixable_action));
+}
+
+fn build_human_grouped_section_impl<'a, T, P, F>(
+    input: GroupedSectionInput<'a, T, P, F>,
+    auto_fixable_override: Option<bool>,
+) where
+    P: Fn(&'a T) -> &'a Path,
+    F: Fn(&T) -> String,
+{
+    let GroupedSectionInput {
+        lines,
+        items,
+        title,
+        level,
+        root,
+        max_files,
+        get_path,
+        format_detail,
+    } = input;
+    if items.is_empty() {
+        return;
+    }
+    lines.push(build_section_header(title, items.len(), level));
+    build_grouped_by_file(GroupedByFileInput {
+        lines,
+        items,
+        root,
+        get_path,
+        format_detail,
+        max_files,
+        max_items_per_file: MAX_ITEMS_PER_FILE,
+    });
+    if let Some(has_auto_fixable_action) = auto_fixable_override {
+        push_section_footer_with_fixability(lines, title, items.len(), has_auto_fixable_action);
+    } else {
+        push_section_footer_with_count(lines, title, items.len());
+    }
+    lines.push(String::new());
+}
+
+/// Build duplicate exports grouped by file pair instead of flat list.
+fn build_duplicate_exports_section(
+    lines: &mut Vec<String>,
+    items: &[fallow_types::output_dead_code::DuplicateExportFinding],
+    level: Level,
+    root: &Path,
+    total_issues: usize,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let title = "Duplicate exports";
+    lines.push(build_section_header(title, items.len(), level));
+
+    let pair_groups = collect_duplicate_export_pairs(items, root);
+
+    let shown = pair_groups.len().min(MAX_FLAT_ITEMS);
+    for (file_a, file_b, exports) in &pair_groups[..shown] {
+        push_duplicate_export_group(lines, file_a, file_b, exports);
+    }
+
+    let truncation_emitted = pair_groups.len() > MAX_FLAT_ITEMS;
+    if truncation_emitted {
+        let remaining = pair_groups.len() - MAX_FLAT_ITEMS;
+        lines.push(format!(
+            "  {}",
+            truncation_hint(remaining, total_issues).dimmed()
+        ));
+    }
+    if should_show_namespace_barrel_hint(items) {
+        if truncation_emitted {
+            lines.push(String::new());
+        }
+        lines.push(format!("  {}", NAMESPACE_BARREL_HINT.dimmed()));
+    }
+    push_section_footer_with_count(lines, title, items.len());
+    lines.push(String::new());
+}
+
+/// Group duplicate-export findings by their first two distinct file paths,
+/// collecting the export names per pair and sorting groups by export count desc.
+fn collect_duplicate_export_pairs<'a>(
+    items: &'a [fallow_types::output_dead_code::DuplicateExportFinding],
+    root: &Path,
+) -> Vec<(String, String, Vec<&'a str>)> {
+    let mut pair_groups: Vec<(String, String, Vec<&str>)> = Vec::new();
+    let mut pair_map: rustc_hash::FxHashMap<(String, String), usize> =
+        rustc_hash::FxHashMap::default();
+
+    for dup in items {
+        let dup = &dup.export;
+        if dup.locations.len() < 2 {
+            continue;
+        }
+        let mut paths: Vec<String> = dup
+            .locations
+            .iter()
+            .map(|loc| format_display_path(&loc.path, root))
+            .collect();
+        paths.sort();
+        paths.dedup();
+
+        let key = (paths[0].clone(), paths.get(1).cloned().unwrap_or_default());
+        if let Some(&group_idx) = pair_map.get(&key) {
+            pair_groups[group_idx].2.push(&dup.export_name);
+        } else {
+            pair_map.insert(key, pair_groups.len());
+            pair_groups.push((
+                paths[0].clone(),
+                paths.get(1).cloned().unwrap_or_default(),
+                vec![&dup.export_name],
+            ));
+        }
+    }
+
+    pair_groups.sort_by_key(|b| std::cmp::Reverse(b.2.len()));
+    pair_groups
+}
+
+/// Render one duplicate-export pair group: the source file, the linked file with
+/// export count, and the (possibly truncated) export list.
+fn push_duplicate_export_group(
+    lines: &mut Vec<String>,
+    file_a: &str,
+    file_b: &str,
+    exports: &[&str],
+) {
+    let export_list = if exports.len() <= 5 {
+        exports
+            .iter()
+            .map(|e| e.bold().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        let mut display: Vec<String> = exports[..5].iter().map(|e| e.bold().to_string()).collect();
+        display.push(format!("... +{}", exports.len() - 5).dimmed().to_string());
+        display.join(", ")
+    };
+
+    let elided_b = elide_common_prefix(file_a, file_b);
+    lines.push(format!("  {}", format_path(file_a)));
+    lines.push(format!(
+        "    {} {} ({} export{})",
+        "\u{2194}".dimmed(),
+        format_path(elided_b),
+        exports.len(),
+        plural(exports.len())
+    ));
+    lines.push(format!("    {export_list}"));
+    lines.push(String::new());
+}
+
+/// Build circular dependencies grouped by hub file with path elision.
+fn build_circular_deps_section(
+    lines: &mut Vec<String>,
+    items: &[fallow_types::output_dead_code::CircularDependencyFinding],
+    level: Level,
+    root: &Path,
+    total_issues: usize,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let title = "Circular dependencies";
+    lines.push(build_section_header(title, items.len(), level));
+
+    let hub_groups = circular_dependency_hub_groups(items, root);
+    let shown = hub_groups.len().min(MAX_FLAT_ITEMS);
+    for (hub_path, cycles) in &hub_groups[..shown] {
+        lines.push(circular_dependency_hub_line(hub_path, cycles.len()));
+        for cycle in cycles {
+            lines.push(circular_dependency_cycle_line(hub_path, cycle, root));
+        }
+        lines.push(String::new());
+    }
+
+    if hub_groups.len() > MAX_FLAT_ITEMS {
+        let hidden: usize = hub_groups[MAX_FLAT_ITEMS..]
+            .iter()
+            .map(|(_, cycles)| cycles.len())
+            .sum();
+        lines.push(format!(
+            "  {}",
+            truncation_hint(hidden, total_issues).dimmed()
+        ));
+        lines.push(String::new());
+    }
+    push_section_footer_with_count(lines, title, items.len());
+    if !lines.last().is_some_and(String::is_empty) {
+        lines.push(String::new());
+    }
+}
+
+fn circular_dependency_hub_groups<'a>(
+    items: &'a [fallow_types::output_dead_code::CircularDependencyFinding],
+    root: &Path,
+) -> Vec<(String, Vec<&'a fallow_types::results::CircularDependency>)> {
+    let mut hub_groups: Vec<(String, Vec<&'a fallow_types::results::CircularDependency>)> =
+        Vec::new();
+    let mut hub_map: rustc_hash::FxHashMap<String, usize> = rustc_hash::FxHashMap::default();
+
+    for entry in items {
+        let cycle = &entry.cycle;
+        let hub = cycle
+            .files
+            .first()
+            .map(|path| format_display_path(path, root))
+            .unwrap_or_default();
+        if let Some(&idx) = hub_map.get(&hub) {
+            hub_groups[idx].1.push(cycle);
+        } else {
+            hub_map.insert(hub.clone(), hub_groups.len());
+            hub_groups.push((hub, vec![cycle]));
+        }
+    }
+
+    hub_groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then_with(|| a.0.cmp(&b.0)));
+    hub_groups
+}
+
+fn circular_dependency_hub_line(hub_path: &str, cycle_count: usize) -> String {
+    let count_tag = if cycle_count > 1 {
+        format!(" ({cycle_count} cycles)").dimmed().to_string()
+    } else {
+        String::new()
+    };
+    format!("  {}{}", format_path(hub_path), count_tag)
+}
+
+fn circular_dependency_cycle_line(
+    hub_path: &str,
+    cycle: &fallow_types::results::CircularDependency,
+    root: &Path,
+) -> String {
+    let rel_paths: Vec<String> = cycle
+        .files
+        .iter()
+        .map(|path| format_display_path(path, root))
+        .collect();
+    let mut chain_parts: Vec<String> = rel_paths[1..]
+        .iter()
+        .map(|path| format_path(elide_common_prefix(hub_path, path)))
+        .collect();
+    let (_, hub_filename) = split_dir_filename(hub_path);
+    chain_parts.push(hub_filename.bold().to_string());
+
+    format!(
+        "    {} {}{}{}",
+        "\u{2192}".dimmed(),
+        chain_parts.join(&format!(" {} ", "\u{2192}".dimmed())),
+        circular_type_only_tag(cycle),
+        circular_cross_package_tag(cycle),
+    )
+}
+
+fn circular_type_only_tag(cycle: &fallow_types::results::CircularDependency) -> String {
+    if cycle
+        .files
+        .iter()
+        .all(|path| path.to_str().is_some_and(|s| s.ends_with(".d.ts")))
+    {
+        format!(" {}", "(type-only)".dimmed())
+    } else {
+        String::new()
+    }
+}
+
+fn circular_cross_package_tag(cycle: &fallow_types::results::CircularDependency) -> String {
+    if cycle.is_cross_package {
+        format!(" {}", "(cross-package)".dimmed())
+    } else {
+        String::new()
+    }
+}
+
+/// Build re-export cycles section. Each finding renders one path-list block
+/// per member, sized as "Cycle (N files)" for multi-node SCCs or
+/// "Self-loop (1 file)" for the single-file self-re-export case. The fix
+/// hint sits on the second line; the docs link is appended after the path
+/// list (matches the SARIF helpUri target so users land on the same anchor
+/// from any surface).
+fn build_re_export_cycles_section(
+    lines: &mut Vec<String>,
+    items: &[fallow_types::output_dead_code::ReExportCycleFinding],
+    level: Level,
+    root: &Path,
+    total_issues: usize,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let title = "Re-Export Cycles";
+    lines.push(build_section_header(title, items.len(), level));
+
+    let shown = items.len().min(MAX_FLAT_ITEMS);
+    for entry in &items[..shown] {
+        let cycle = &entry.cycle;
+        let first_path = cycle
+            .files
+            .first()
+            .map(|p| format_display_path(p, root))
+            .unwrap_or_default();
+        lines.push(format!("  {}", format_path(&first_path)));
+        let header_line = match cycle.kind {
+            fallow_types::results::ReExportCycleKind::SelfLoop => "Self-loop (1 file):".to_string(),
+            fallow_types::results::ReExportCycleKind::MultiNode => {
+                format!("Cycle ({} files):", cycle.files.len())
+            }
+        };
+        lines.push(format!("    {}", header_line.dimmed()));
+        for path in &cycle.files {
+            let rel = format_display_path(path, root);
+            lines.push(format!("      - {}", format_path(&rel)));
+        }
+        let fix_hint = match cycle.kind {
+            fallow_types::results::ReExportCycleKind::SelfLoop => {
+                "To fix: remove the `export * from './'` (or equivalent) inside this file."
+            }
+            fallow_types::results::ReExportCycleKind::MultiNode => {
+                "To fix: remove one `export * from` statement on any member file."
+            }
+        };
+        lines.push(format!("    {}", fix_hint.dimmed()));
+        lines.push(String::new());
+    }
+    if items.len() > MAX_FLAT_ITEMS {
+        let remaining = items.len() - MAX_FLAT_ITEMS;
+        lines.push(format!(
+            "  {}",
+            truncation_hint(remaining, total_issues).dimmed()
+        ));
+        lines.push(String::new());
+    }
+    push_section_footer_with_count(lines, title, items.len());
+    if !lines.last().is_some_and(String::is_empty) {
+        lines.push(String::new());
+    }
+}
+
+/// Build package cycles section. Each finding shows the package chain, then
+/// one example import per hop.
+fn build_package_cycles_section(
+    lines: &mut Vec<String>,
+    items: &[fallow_types::output_dead_code::PackageCycleFinding],
+    level: Level,
+    root: &Path,
+    total_issues: usize,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let title = "Package cycles";
+    lines.push(build_section_header(title, items.len(), level));
+
+    let arrow = format!(" {} ", "\u{2192}".dimmed());
+    let shown = items.len().min(MAX_FLAT_ITEMS);
+    for entry in &items[..shown] {
+        let cycle = &entry.cycle;
+        let mut chain: Vec<String> = cycle
+            .packages
+            .iter()
+            .map(|name| name.bold().to_string())
+            .collect();
+        if let Some(first) = chain.first().cloned() {
+            chain.push(first);
+        }
+        lines.push(format!("  {}", chain.join(&arrow)));
+        if cycle.group_truncated {
+            let note = format!(
+                "({})",
+                fallow_types::results::PackageCycle::GROUP_TRUNCATED_NOTE
+            );
+            lines.push(format!("    {}", note.dimmed()));
+        }
+        for edge in &cycle.edges {
+            let type_tag = if edge.type_only {
+                format!(" {}", "(type-only)".dimmed())
+            } else {
+                String::new()
+            };
+            lines.push(format!(
+                "    {}:{} {} {}{}",
+                format_display_path(&edge.path, root),
+                edge.line,
+                "\u{2192}".dimmed(),
+                format_display_path(&edge.target_path, root),
+                type_tag,
+            ));
+        }
+    }
+    if items.len() > MAX_FLAT_ITEMS {
+        let remaining = items.len() - MAX_FLAT_ITEMS;
+        lines.push(format!(
+            "  {}",
+            truncation_hint(remaining, total_issues).dimmed()
+        ));
+    }
+    push_section_footer_with_count(lines, title, items.len());
+    lines.push(String::new());
+}
+
+/// Build boundary violations section grouped by importing file.
+fn build_boundary_violations_section(
+    lines: &mut Vec<String>,
+    items: &[fallow_types::output_dead_code::BoundaryViolationFinding],
+    level: Level,
+    root: &Path,
+    total_issues: usize,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let title = "Boundary violations";
+    lines.push(build_section_header(title, items.len(), level));
+
+    let shown = items.len().min(MAX_FLAT_ITEMS);
+    for entry in &items[..shown] {
+        let v = &entry.violation;
+        let from = format_display_path(&v.from_path, root);
+        let to = format_display_path(&v.to_path, root);
+        let via = v.via_path.as_ref().map_or_else(String::new, |via| {
+            format!(
+                " {}",
+                format!("via {}", format_display_path(via, root)).dimmed()
+            )
+        });
+        lines.push(format!(
+            "  {}:{} {} {} {} {}{}",
+            from,
+            v.line,
+            "\u{2192}".dimmed(),
+            to,
+            format!("({}", v.from_zone).dimmed(),
+            format!("\u{2192} {})", v.to_zone).dimmed(),
+            via,
+        ));
+    }
+    if items.len() > MAX_FLAT_ITEMS {
+        let remaining = items.len() - MAX_FLAT_ITEMS;
+        lines.push(format!(
+            "  {}",
+            truncation_hint(remaining, total_issues).dimmed()
+        ));
+    }
+    push_section_footer_with_count(lines, title, items.len());
+    lines.push(String::new());
+}
+
+/// Build boundary coverage section for files matched by no zone.
+fn build_boundary_coverage_violations_section(
+    lines: &mut Vec<String>,
+    items: &[fallow_types::output_dead_code::BoundaryCoverageViolationFinding],
+    level: Level,
+    root: &Path,
+    total_issues: usize,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let title = "Boundary coverage";
+    lines.push(build_section_header(title, items.len(), level));
+
+    let shown = items.len().min(MAX_FLAT_ITEMS);
+    for entry in &items[..shown] {
+        let v = &entry.violation;
+        let path = format_display_path(&v.path, root);
+        lines.push(format!(
+            "  {}:{} {}",
+            path,
+            v.line,
+            "no matching boundary zone".dimmed(),
+        ));
+    }
+    if items.len() > MAX_FLAT_ITEMS {
+        let remaining = items.len() - MAX_FLAT_ITEMS;
+        lines.push(format!(
+            "  {}",
+            truncation_hint(remaining, total_issues).dimmed()
+        ));
+    }
+    push_section_footer_with_count(lines, title, items.len());
+    lines.push(String::new());
+}
+
+/// Build the forbidden-call section. Renders the written callee path next to
+/// the matched pattern and the zone, so users learn the segment-aware
+/// matching rule from the output itself.
+fn build_boundary_call_violations_section(
+    lines: &mut Vec<String>,
+    items: &[fallow_types::output_dead_code::BoundaryCallViolationFinding],
+    level: Level,
+    root: &Path,
+    total_issues: usize,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let title = "Boundary calls";
+    lines.push(build_section_header(title, items.len(), level));
+
+    let shown = items.len().min(MAX_FLAT_ITEMS);
+    for entry in &items[..shown] {
+        let v = &entry.violation;
+        let path = format_display_path(&v.path, root);
+        lines.push(format!(
+            "  {}:{} {} {}",
+            path,
+            v.line,
+            v.callee,
+            format!("matches forbidden `{}` in zone '{}'", v.pattern, v.zone).dimmed(),
+        ));
+    }
+    if items.len() > MAX_FLAT_ITEMS {
+        let remaining = items.len() - MAX_FLAT_ITEMS;
+        lines.push(format!(
+            "  {}",
+            truncation_hint(remaining, total_issues).dimmed()
+        ));
+    }
+    // The rule id is boundary-call-violation but the suppression token is the
+    // boundary FAMILY token, so spell it out; users would otherwise derive the
+    // wrong token by analogy with every finding where rule id and token align.
+    lines.push(format!(
+        "  {}",
+        "suppress: // fallow-ignore-next-line boundary-violation (one token covers all boundary findings)"
+            .dimmed()
+    ));
+    push_section_footer_with_count(lines, title, items.len());
+    lines.push(String::new());
+}
+
+fn build_stale_suppressions_section(
+    lines: &mut Vec<String>,
+    items: &[fallow_types::results::StaleSuppression],
+    level: Level,
+    root: &Path,
+    total_issues: usize,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let title = "Stale suppressions";
+    lines.push(build_section_header(title, items.len(), level));
+
+    let shown = items.len().min(MAX_FLAT_ITEMS);
+    for s in &items[..shown] {
+        let path_str = format_display_path(&s.path, root);
+        lines.push(format!(
+            "  {}:{}:{} {} {}",
+            path_str,
+            s.line,
+            s.col,
+            s.description().bold(),
+            format!("({})", s.explanation()).dimmed(),
+        ));
+    }
+    if items.len() > MAX_FLAT_ITEMS {
+        let remaining = items.len() - MAX_FLAT_ITEMS;
+        lines.push(format!(
+            "  {}",
+            truncation_hint(remaining, total_issues).dimmed()
+        ));
+    }
+    push_section_footer_with_count(lines, title, items.len());
+    lines.push(String::new());
+}
+
+/// Collect the unique CODEOWNERS patterns that matched files in a result set.
+///
+/// Returns up to 3 sorted patterns. Only meaningful for `Owner` mode.
+fn collect_matching_rules(
+    results: &AnalysisResults,
+    root: &Path,
+    resolver: &OwnershipResolver,
+) -> Vec<String> {
+    let mut rules: FxHashSet<String> = FxHashSet::default();
+    collect_dead_code_rules(&mut rules, results, root, resolver);
+    collect_graph_rules(&mut rules, results, root, resolver);
+    collect_boundary_rules(&mut rules, results, root, resolver);
+    collect_framework_rules(&mut rules, results, root, resolver);
+    collect_suppression_rules(&mut rules, results, root, resolver);
+    collect_dependency_rules(&mut rules, results, root, resolver);
+    collect_workspace_config_rules(&mut rules, results, root, resolver);
+    collect_component_health_rules(&mut rules, results, root, resolver);
+
+    let mut sorted: Vec<String> = rules.into_iter().collect();
+    sorted.sort();
+    sorted.truncate(3);
+    sorted
+}
+
+fn insert_matching_rule(
+    rules: &mut FxHashSet<String>,
+    path: &Path,
+    root: &Path,
+    resolver: &OwnershipResolver,
+) {
+    if let (_, Some(rule)) = resolver.resolve_with_rule(relative_path(path, root)) {
+        rules.insert(rule);
+    }
+}
+
+fn collect_dead_code_rules(
+    rules: &mut FxHashSet<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    resolver: &OwnershipResolver,
+) {
+    for f in &results.unused_files {
+        insert_matching_rule(rules, &f.file.path, root, resolver);
+    }
+    for e in &results.unused_exports {
+        insert_matching_rule(rules, &e.export.path, root, resolver);
+    }
+    for e in &results.unused_types {
+        insert_matching_rule(rules, &e.export.path, root, resolver);
+    }
+    for e in &results.private_type_leaks {
+        insert_matching_rule(rules, &e.leak.path, root, resolver);
+    }
+    for e in &results.deprecated_exports_in_use {
+        insert_matching_rule(rules, &e.export.path, root, resolver);
+    }
+    for m in &results.unused_enum_members {
+        insert_matching_rule(rules, &m.member.path, root, resolver);
+    }
+    for m in &results.unused_class_members {
+        insert_matching_rule(rules, &m.member.path, root, resolver);
+    }
+    for m in &results.unused_store_members {
+        insert_matching_rule(rules, &m.member.path, root, resolver);
+    }
+    for m in &results.unused_namespace_members {
+        insert_matching_rule(rules, &m.member.path, root, resolver);
+    }
+}
+
+fn collect_graph_rules(
+    rules: &mut FxHashSet<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    resolver: &OwnershipResolver,
+) {
+    for u in &results.unresolved_imports {
+        insert_matching_rule(rules, &u.import.path, root, resolver);
+    }
+    for c in &results.circular_dependencies {
+        if let Some(first) = c.cycle.files.first() {
+            insert_matching_rule(rules, first, root, resolver);
+        }
+    }
+}
+
+fn collect_boundary_rules(
+    rules: &mut FxHashSet<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    resolver: &OwnershipResolver,
+) {
+    for b in &results.boundary_violations {
+        insert_matching_rule(rules, &b.violation.from_path, root, resolver);
+    }
+    for b in &results.boundary_coverage_violations {
+        insert_matching_rule(rules, &b.violation.path, root, resolver);
+    }
+    for b in &results.boundary_call_violations {
+        insert_matching_rule(rules, &b.violation.path, root, resolver);
+    }
+    for v in &results.policy_violations {
+        insert_matching_rule(rules, &v.violation.path, root, resolver);
+    }
+}
+
+fn collect_framework_rules(
+    rules: &mut FxHashSet<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    resolver: &OwnershipResolver,
+) {
+    for e in &results.invalid_client_exports {
+        insert_matching_rule(rules, &e.export.path, root, resolver);
+    }
+    for b in &results.mixed_client_server_barrels {
+        insert_matching_rule(rules, &b.barrel.path, root, resolver);
+    }
+    for d in &results.misplaced_directives {
+        insert_matching_rule(rules, &d.directive_site.path, root, resolver);
+    }
+    for i in &results.unprovided_injects {
+        insert_matching_rule(rules, &i.inject.path, root, resolver);
+    }
+    for c in &results.unrendered_components {
+        insert_matching_rule(rules, &c.component.path, root, resolver);
+    }
+    for p in &results.unused_component_props {
+        insert_matching_rule(rules, &p.prop.path, root, resolver);
+    }
+    for p in &results.absent_component_props {
+        insert_matching_rule(rules, &p.prop.path, root, resolver);
+    }
+    for e in &results.unused_component_emits {
+        insert_matching_rule(rules, &e.emit.path, root, resolver);
+    }
+    for i in &results.unused_component_inputs {
+        insert_matching_rule(rules, &i.input.path, root, resolver);
+    }
+    for o in &results.unused_component_outputs {
+        insert_matching_rule(rules, &o.output.path, root, resolver);
+    }
+    for e in &results.unused_svelte_events {
+        insert_matching_rule(rules, &e.event.path, root, resolver);
+    }
+    for e in &results.unused_effect_layers {
+        insert_matching_rule(rules, &e.layer.path, root, resolver);
+    }
+    for a in &results.duplicate_export_aliases {
+        insert_matching_rule(rules, &a.alias.path, root, resolver);
+    }
+    for e in &results.unused_tagged_errors {
+        insert_matching_rule(rules, &e.error.path, root, resolver);
+    }
+    for e in &results.unproduced_catch_tags {
+        insert_matching_rule(rules, &e.catch_tag.path, root, resolver);
+    }
+    for a in &results.unused_server_actions {
+        insert_matching_rule(rules, &a.action.path, root, resolver);
+    }
+    for k in &results.unused_load_data_keys {
+        insert_matching_rule(rules, &k.key.path, root, resolver);
+    }
+    for c in &results.route_collisions {
+        insert_matching_rule(rules, &c.collision.path, root, resolver);
+    }
+    for c in &results.dynamic_segment_name_conflicts {
+        insert_matching_rule(rules, &c.conflict.path, root, resolver);
+    }
+}
+
+fn collect_suppression_rules(
+    rules: &mut FxHashSet<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    resolver: &OwnershipResolver,
+) {
+    for s in &results.stale_suppressions {
+        insert_matching_rule(rules, &s.path, root, resolver);
+    }
+}
+
+/// Uses the same file anchors as the grouping builder, so the header names the
+/// rule that put each finding in its group.
+fn collect_dependency_rules(
+    rules: &mut FxHashSet<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    resolver: &OwnershipResolver,
+) {
+    for d in &results.unused_dependencies {
+        insert_matching_rule(rules, &d.dep.path, root, resolver);
+    }
+    for d in &results.unused_dev_dependencies {
+        insert_matching_rule(rules, &d.dep.path, root, resolver);
+    }
+    for d in &results.unused_optional_dependencies {
+        insert_matching_rule(rules, &d.dep.path, root, resolver);
+    }
+    for d in &results.type_only_dependencies {
+        insert_matching_rule(rules, &d.dep.path, root, resolver);
+    }
+    for d in &results.test_only_dependencies {
+        insert_matching_rule(rules, &d.dep.path, root, resolver);
+    }
+    for d in &results.dev_dependencies_in_production {
+        insert_matching_rule(rules, &d.dep.path, root, resolver);
+    }
+    for d in &results.unlisted_dependencies {
+        if let Some(site) = d.dep.imported_from.first() {
+            insert_matching_rule(rules, &site.path, root, resolver);
+        }
+    }
+    for b in &results.unlisted_binaries {
+        if let Some(site) = b.binary.used_in.first() {
+            insert_matching_rule(rules, &site.path, root, resolver);
+        }
+    }
+    for d in &results.duplicate_exports {
+        if let Some(location) = d.export.locations.first() {
+            insert_matching_rule(rules, &location.path, root, resolver);
+        }
+    }
+}
+
+fn collect_workspace_config_rules(
+    rules: &mut FxHashSet<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    resolver: &OwnershipResolver,
+) {
+    for e in &results.unused_catalog_entries {
+        insert_matching_rule(rules, &e.entry.path, root, resolver);
+    }
+    for g in &results.empty_catalog_groups {
+        insert_matching_rule(rules, &g.group.path, root, resolver);
+    }
+    for r in &results.unresolved_catalog_references {
+        insert_matching_rule(rules, &r.reference.path, root, resolver);
+    }
+    for e in &results.unused_dependency_overrides {
+        insert_matching_rule(rules, &e.entry.path, root, resolver);
+    }
+    for e in &results.misconfigured_dependency_overrides {
+        insert_matching_rule(rules, &e.entry.path, root, resolver);
+    }
+}
+
+fn collect_component_health_rules(
+    rules: &mut FxHashSet<String>,
+    results: &AnalysisResults,
+    root: &Path,
+    resolver: &OwnershipResolver,
+) {
+    for c in &results.prop_drilling_chains {
+        if let Some(hop) = c.chain.hops.first() {
+            insert_matching_rule(rules, &hop.file, root, resolver);
+        }
+    }
+    for w in &results.thin_wrappers {
+        insert_matching_rule(rules, &w.wrapper.file, root, resolver);
+    }
+    for s in &results.duplicate_prop_shapes {
+        insert_matching_rule(rules, &s.shape.file, root, resolver);
+    }
+}
+
+/// Print analysis results grouped by owner or directory.
+///
+/// Each group gets a colored header with its key and issue count, followed by
+/// the same section output that `print_human` produces. Unowned groups get
+/// an advisory footer. Doc URL footers are deduplicated across groups.
+pub(in crate::report) struct PrintGroupedHumanInput<'a> {
+    pub(in crate::report) groups: &'a [crate::report::grouping::ResultGroup],
+    pub(in crate::report) root: &'a Path,
+    pub(in crate::report) rules: &'a RulesConfig,
+    pub(in crate::report) elapsed: Duration,
+    pub(in crate::report) quiet: bool,
+    pub(in crate::report) resolver: Option<&'a OwnershipResolver>,
+    pub(in crate::report) explain: bool,
+    /// Whether a gate of this run fails it. Picks the mark of the final
+    /// status line.
+    pub(in crate::report) run_fails: bool,
+    /// Files an armed `parse-error` gate failed on; see [`clean_status_line`].
+    pub(in crate::report) failed_parse_files: usize,
+    /// Where each group renders the architecture findings.
+    pub(in crate::report) architecture_layout: ArchitectureLayout,
+}
+
+/// Whether the results carry an advisory component health signal. These do not
+/// count toward `total_issues`, but the flat report shows them, so a group that
+/// holds only these signals must still render.
+fn has_component_health_signals(results: &AnalysisResults) -> bool {
+    results.prop_drilling_chains.len() > results.enforced_prop_drilling_count()
+        || results.thin_wrappers.len() > results.enforced_thin_wrapper_count()
+        || results.duplicate_prop_shapes.len() > results.enforced_duplicate_prop_shape_count()
+}
+
+fn grouped_issue_counts(groups: &[crate::report::grouping::ResultGroup]) -> Vec<(&str, usize)> {
+    let mut group_counts: Vec<(&str, usize)> = groups
+        .iter()
+        .map(|g| (g.key.as_str(), g.results.total_issues()))
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    group_counts.sort_by_key(|b| std::cmp::Reverse(b.1));
+    group_counts
+}
+
+fn emit_grouped_summary(group_counts: &[(&str, usize)]) {
+    if group_counts.is_empty() {
+        return;
+    }
+
+    let summary_parts: Vec<String> = group_counts
+        .iter()
+        .map(|(key, count)| format!("{key} {count}"))
+        .collect();
+    let summary = format!(
+        "{} group{}: {}",
+        group_counts.len(),
+        plural(group_counts.len()),
+        summary_parts.join(" \u{00b7} ")
+    );
+    outln!("{}", summary.dimmed());
+    outln!();
+}
+
+fn grouped_header_text(
+    group: &crate::report::grouping::ResultGroup,
+    root: &Path,
+    resolver: Option<&OwnershipResolver>,
+    total: usize,
+) -> String {
+    let issue_word = if total == 1 { "issue" } else { "issues" };
+    let breakdown = build_summary_footer(&group.results, 0, 0);
+    let signals = fallow_api::health_signal_header_part(&group.results);
+    let header_text = if breakdown.is_empty() {
+        format!("{} ({total} {issue_word}{signals})", group.key)
+    } else {
+        format!("{} ({total} {issue_word}: {breakdown}{signals})", group.key)
+    };
+
+    match resolver {
+        Some(r @ OwnershipResolver::Owner(_)) => {
+            let matched = collect_matching_rules(&group.results, root, r);
+            if matched.is_empty() {
+                header_text
+            } else {
+                format!("{header_text}, matched by {}", matched.join(", "))
+            }
+        }
+        _ => header_text,
+    }
+}
+
+fn emit_grouped_body(
+    group: &crate::report::grouping::ResultGroup,
+    root: &Path,
+    rules: &RulesConfig,
+    seen_footers: &mut FxHashSet<String>,
+    explain: bool,
+    layout: ArchitectureLayout,
+) {
+    if let Some(ref owners) = group.owners
+        && !owners.is_empty()
+    {
+        outln!("  {} {}", "owners:".dimmed(), owners.join(" ").dimmed());
+    }
+
+    let lines = grouped_lines(&group.results, root, rules, explain, layout);
+    for line in &lines {
+        if line.contains("fallow.tools/docs/") && !seen_footers.insert(line.clone()) {
+            continue;
+        }
+        outln!("{line}");
+    }
+
+    if group.key == crate::codeowners::UNOWNED_LABEL {
+        eprintln!(
+            "  {}",
+            "Files with no CODEOWNERS entry, add ownership or verify before removing".dimmed()
+        );
+        eprintln!();
+    }
+}
+
+/// The lines of one `--group-by` group, in the same layout as the ungrouped
+/// report.
+fn grouped_lines(
+    results: &AnalysisResults,
+    root: &Path,
+    rules: &RulesConfig,
+    explain: bool,
+    layout: ArchitectureLayout,
+) -> Vec<String> {
+    build_layout_lines(&LayoutLinesInput {
+        results,
+        root,
+        rules,
+        top: None,
+        explain,
+        layout,
+    })
+}
+
+fn emit_grouped_final_status(
+    groups: &[crate::report::grouping::ResultGroup],
+    grand_total: usize,
+    elapsed: Duration,
+    run_fails: bool,
+    failed_parse_files: usize,
+) {
+    if grand_total == 0 {
+        eprintln!("{}", clean_status_line(elapsed, failed_parse_files));
+    } else {
+        let non_empty_groups = groups
+            .iter()
+            .filter(|g| g.results.total_issues() > 0)
+            .count();
+        eprintln!(
+            "{}",
+            super::findings_status_line(
+                &format!(
+                    "{grand_total} issue{} across {non_empty_groups} group{} ({:.2}s)",
+                    plural(grand_total),
+                    plural(non_empty_groups),
+                    elapsed.as_secs_f64()
+                ),
+                run_fails,
+            )
+        );
+    }
+}
+
+pub(in crate::report) fn print_grouped_human(input: &PrintGroupedHumanInput<'_>) {
+    let groups = input.groups;
+    let root = input.root;
+    let rules = input.rules;
+    let elapsed = input.elapsed;
+    let quiet = input.quiet;
+    let resolver = input.resolver;
+    let explain = input.explain;
+    if !quiet {
+        eprintln!();
+    }
+
+    emit_grouped_summary(&grouped_issue_counts(groups));
+
+    let mut grand_total: usize = 0;
+    let mut seen_footers: FxHashSet<String> = FxHashSet::default();
+
+    for group in groups {
+        let total = group.results.total_issues();
+        if total == 0 && !has_component_health_signals(&group.results) {
+            continue;
+        }
+        grand_total += total;
+
+        let header_text = grouped_header_text(group, root, resolver, total);
+        outln!("{}", header_text.cyan().bold());
+        emit_grouped_body(
+            group,
+            root,
+            rules,
+            &mut seen_footers,
+            explain,
+            input.architecture_layout,
+        );
+    }
+
+    if !quiet {
+        emit_grouped_final_status(
+            groups,
+            grand_total,
+            elapsed,
+            input.run_fails,
+            input.failed_parse_files,
+        );
+    }
+}
+
+/// The layout of a `--summary` table.
+#[derive(Clone, Copy)]
+pub(in crate::report) struct SummaryStyle<'a> {
+    /// The bold heading above the rows, or `None` for no heading.
+    pub(in crate::report) heading: Option<&'a str>,
+    /// `Split` puts the architecture rows under their own label.
+    pub(in crate::report) layout: ArchitectureLayout,
+}
+
+/// The gate result that picks the final status line of a run.
+#[derive(Clone, Copy)]
+pub(in crate::report) struct RunStatus {
+    /// Whether a gate of this run fails it.
+    pub(in crate::report) run_fails: bool,
+    /// Files an armed `parse-error` gate failed on; see [`clean_status_line`].
+    pub(in crate::report) failed_parse_files: usize,
+}
+
+/// Print a concise summary showing only category counts, no individual items.
+pub(in crate::report) fn print_check_summary(
+    results: &AnalysisResults,
+    rules: &RulesConfig,
+    elapsed: Duration,
+    quiet: bool,
+    style: SummaryStyle<'_>,
+    status: RunStatus,
+) {
+    let SummaryStyle { heading, layout } = style;
+    let RunStatus {
+        run_fails,
+        failed_parse_files,
+    } = status;
+    let total = results.total_issues();
+    if total == 0 {
+        if !quiet {
+            eprintln!("{}", clean_status_line(elapsed, failed_parse_files));
+        }
+        return;
+    }
+
+    if let Some(heading) = heading {
+        print_check_summary_heading(heading);
+    }
+
+    if layout == ArchitectureLayout::Split {
+        let (dead_code, architecture) = split_summary_categories(results, rules);
+        print_check_summary_rows(&dead_code);
+        let has_dead_code_rows = dead_code.iter().any(|(_, count, _)| *count > 0);
+        print_architecture_summary_rows(&architecture, has_dead_code_rows);
+    } else {
+        print_check_summary_rows(&check_summary_categories(results, rules));
+    }
+    print_check_summary_total(total);
+    print_check_summary_caveat_note(results);
+
+    if !quiet {
+        print_check_summary_status(total, elapsed, run_fails);
+    }
+}
+
+/// Count the caveated findings across every array the analysis pass stamps,
+/// and collect which caveats occur, for the `--summary` footnote.
+///
+/// `--summary` prints category counts with no per-finding lines to hang a
+/// suffix on, so the run-level fact is stated once instead. Everything else is
+/// counted per finding, so this is too: "3 of these" is checkable against the
+/// full report, where "some" would not be.
+fn summary_caveat_rollup(results: &AnalysisResults) -> (usize, Vec<ReachabilityCaveat>) {
+    let per_finding: Vec<&[ReachabilityCaveat]> = results
+        .unused_files
+        .iter()
+        .map(|f| f.reachability_caveats.as_slice())
+        .chain(
+            results
+                .unused_exports
+                .iter()
+                .map(|e| e.reachability_caveats.as_slice()),
+        )
+        .chain(
+            results
+                .unused_types
+                .iter()
+                .map(|e| e.reachability_caveats.as_slice()),
+        )
+        .chain(
+            results
+                .unused_enum_members
+                .iter()
+                .map(|m| m.reachability_caveats.as_slice()),
+        )
+        .chain(
+            results
+                .unused_class_members
+                .iter()
+                .map(|m| m.reachability_caveats.as_slice()),
+        )
+        .chain(
+            results
+                .unused_store_members
+                .iter()
+                .map(|m| m.reachability_caveats.as_slice()),
+        )
+        .chain(
+            results
+                .unused_namespace_members
+                .iter()
+                .map(|m| m.reachability_caveats.as_slice()),
+        )
+        .chain(
+            results
+                .unused_dependencies
+                .iter()
+                .map(|d| d.reachability_caveats.as_slice()),
+        )
+        .chain(
+            results
+                .unused_dev_dependencies
+                .iter()
+                .map(|d| d.reachability_caveats.as_slice()),
+        )
+        .chain(
+            results
+                .unused_optional_dependencies
+                .iter()
+                .map(|d| d.reachability_caveats.as_slice()),
+        )
+        .filter(|caveats| !caveats.is_empty())
+        .collect();
+    let mut present: Vec<ReachabilityCaveat> =
+        per_finding.iter().flat_map(|c| c.iter().copied()).collect();
+    present.sort_unstable();
+    present.dedup();
+    (per_finding.len(), present)
+}
+
+/// State the caveat once under the `--summary` totals.
+///
+/// A CI job that captures `--summary` stdout is a surface that reports a
+/// finding without ever printing the finding, so without this the caveat the
+/// full report carries is dropped on the floor. Silent when nothing degraded,
+/// which keeps a clean run's summary byte-identical.
+fn print_check_summary_caveat_note(results: &AnalysisResults) {
+    let Some(note) = check_summary_caveat_note(results) else {
+        return;
+    };
+    outln!();
+    outln!("  {}", note.dimmed());
+}
+
+/// The note's text, split out so it can be asserted without capturing the
+/// process-global report sink.
+fn check_summary_caveat_note(results: &AnalysisResults) -> Option<String> {
+    let (caveated, present) = summary_caveat_rollup(results);
+    if caveated == 0 {
+        return None;
+    }
+    let labels = caveat_labels(&present)?;
+    Some(format!("({caveated} of these carry a caveat: {labels})"))
+}
+
+fn print_check_summary_heading(heading: &str) {
+    outln!("{}", heading.bold());
+    outln!();
+}
+
+fn check_summary_categories(
+    results: &AnalysisResults,
+    rules: &RulesConfig,
+) -> Vec<(&'static str, usize, Level)> {
+    let mut categories = check_summary_core_categories(results, rules);
+    categories.extend(check_summary_dependency_categories(results, rules));
+    categories.extend(check_summary_framework_categories(results, rules));
+    categories
+}
+
+fn check_summary_core_categories(
+    results: &AnalysisResults,
+    rules: &RulesConfig,
+) -> Vec<(&'static str, usize, Level)> {
+    let mut categories = check_summary_unused_export_categories(results, rules);
+    categories.extend(check_summary_member_categories(results, rules));
+    categories
+}
+
+fn check_summary_unused_export_categories(
+    results: &AnalysisResults,
+    rules: &RulesConfig,
+) -> Vec<(&'static str, usize, Level)> {
+    vec![
+        (
+            "Unused files",
+            results.unused_files.len(),
+            severity_to_level(rules.unused_files),
+        ),
+        (
+            "Unused exports",
+            results.unused_exports.len(),
+            severity_to_level(rules.unused_exports),
+        ),
+        (
+            "Unused types",
+            results.unused_types.len(),
+            severity_to_level(rules.unused_types),
+        ),
+        (
+            "Private type leaks",
+            results.private_type_leaks.len(),
+            severity_to_level(rules.private_type_leaks),
+        ),
+        (
+            "Deprecated exports in use",
+            results.deprecated_exports_in_use.len(),
+            severity_to_level(rules.deprecated_exports_in_use),
+        ),
+        (
+            "Unused dependencies",
+            results.unused_dependencies.len(),
+            severity_to_level(rules.unused_dependencies),
+        ),
+        (
+            "Unused dev dependencies",
+            results.unused_dev_dependencies.len(),
+            severity_to_level(rules.unused_dev_dependencies),
+        ),
+        (
+            "Unused optional dependencies",
+            results.unused_optional_dependencies.len(),
+            severity_to_level(rules.unused_optional_dependencies),
+        ),
+    ]
+}
+
+fn check_summary_member_categories(
+    results: &AnalysisResults,
+    rules: &RulesConfig,
+) -> Vec<(&'static str, usize, Level)> {
+    vec![
+        (
+            "Unused enum members",
+            results.unused_enum_members.len(),
+            severity_to_level(rules.unused_enum_members),
+        ),
+        (
+            "Unused class members",
+            results.unused_class_members.len(),
+            severity_to_level(rules.unused_class_members),
+        ),
+        (
+            "Unused store members",
+            results.unused_store_members.len(),
+            severity_to_level(rules.unused_store_members),
+        ),
+        (
+            "Unused namespace members",
+            results.unused_namespace_members.len(),
+            severity_to_level(rules.unused_namespace_members),
+        ),
+        (
+            "Unresolved imports",
+            results.unresolved_imports.len(),
+            severity_to_level(rules.unresolved_imports),
+        ),
+    ]
+}
+
+fn check_summary_dependency_categories(
+    results: &AnalysisResults,
+    rules: &RulesConfig,
+) -> Vec<(&'static str, usize, Level)> {
+    vec![
+        (
+            "Unlisted dependencies",
+            results.unlisted_dependencies.len(),
+            severity_to_level(rules.unlisted_dependencies),
+        ),
+        (
+            "Unlisted binaries",
+            results.unlisted_binaries.len(),
+            severity_to_level(rules.unlisted_binaries),
+        ),
+        (
+            "Duplicate exports",
+            results.duplicate_exports.len(),
+            severity_to_level(rules.duplicate_exports),
+        ),
+        (
+            "Duplicate export aliases",
+            results.duplicate_export_aliases.len(),
+            severity_to_level(rules.duplicate_export_aliases),
+        ),
+        (
+            "Type-only dependencies",
+            results.type_only_dependencies.len(),
+            severity_to_level(rules.type_only_dependencies),
+        ),
+        (
+            "Test-only dependencies",
+            results.test_only_dependencies.len(),
+            severity_to_level(rules.test_only_dependencies),
+        ),
+        (
+            "Dev dependencies in production",
+            results.dev_dependencies_in_production.len(),
+            severity_to_level(rules.dev_dependencies_in_production),
+        ),
+        (
+            "Circular dependencies",
+            results.circular_dependencies.len(),
+            severity_to_level(rules.circular_dependencies),
+        ),
+        (
+            "Re-export cycles",
+            results.re_export_cycles.len(),
+            severity_to_level(rules.re_export_cycle),
+        ),
+        (
+            "Package cycles",
+            results.package_cycles.len(),
+            severity_to_level(rules.package_cycle),
+        ),
+        (
+            "Boundary violations",
+            results.boundary_violations.len(),
+            severity_to_level(rules.boundary_violation),
+        ),
+        (
+            "Policy violations",
+            results.policy_violations.len(),
+            policy_violations_level(&results.policy_violations),
+        ),
+    ]
+}
+
+/// The level of the rule-pack policy findings: error when any finding is an
+/// error, because a rule-level `severity` overrides the `policy-violation` rule.
+fn policy_violations_level(
+    items: &[fallow_types::output_dead_code::PolicyViolationFinding],
+) -> Level {
+    use fallow_types::results::PolicyViolationSeverity;
+
+    if items
+        .iter()
+        .any(|f| f.violation.severity == PolicyViolationSeverity::Error)
+    {
+        Level::Error
+    } else {
+        Level::Warn
+    }
+}
+
+fn check_summary_framework_categories(
+    results: &AnalysisResults,
+    rules: &RulesConfig,
+) -> Vec<(&'static str, usize, Level)> {
+    vec![
+        (
+            "Unprovided injects",
+            results.unprovided_injects.len(),
+            severity_to_level(rules.unprovided_injects),
+        ),
+        (
+            "Unrendered components",
+            results.unrendered_components.len(),
+            severity_to_level(rules.unrendered_components),
+        ),
+        (
+            "Unused component props",
+            results.unused_component_props.len(),
+            severity_to_level(rules.unused_component_props),
+        ),
+        (
+            "Absent optional component props",
+            results.absent_component_props.len(),
+            severity_to_level(rules.absent_component_props),
+        ),
+        (
+            "Unused component emits",
+            results.unused_component_emits.len(),
+            severity_to_level(rules.unused_component_emits),
+        ),
+        (
+            "Unused component inputs",
+            results.unused_component_inputs.len(),
+            severity_to_level(rules.unused_component_inputs),
+        ),
+        (
+            "Unused component outputs",
+            results.unused_component_outputs.len(),
+            severity_to_level(rules.unused_component_outputs),
+        ),
+        (
+            "Unused Svelte events",
+            results.unused_svelte_events.len(),
+            severity_to_level(rules.unused_svelte_events),
+        ),
+        (
+            "Unused Effect layers",
+            results.unused_effect_layers.len(),
+            severity_to_level(rules.unused_effect_layers),
+        ),
+        (
+            "Unused tagged errors",
+            results.unused_tagged_errors.len(),
+            severity_to_level(rules.unused_tagged_errors),
+        ),
+        (
+            "Unproduced catch tags",
+            results.unproduced_catch_tags.len(),
+            severity_to_level(rules.unproduced_catch_tags),
+        ),
+        (
+            "Unused server actions",
+            results.unused_server_actions.len(),
+            severity_to_level(rules.unused_server_actions),
+        ),
+        (
+            "Unused load data keys",
+            results.unused_load_data_keys.len(),
+            severity_to_level(rules.unused_load_data_keys),
+        ),
+        (
+            "Stale suppressions",
+            results.stale_suppressions.len(),
+            severity_to_level(rules.stale_suppressions),
+        ),
+    ]
+}
+
+fn print_check_summary_rows(categories: &[(&str, usize, Level)]) {
+    for (name, count, level) in categories {
+        if *count > 0 {
+            outln!("  {}  {name}", colored_summary_count(*count, *level));
+        }
+    }
+}
+
+/// The rows of the architecture findings in a `--summary` table.
+const ARCHITECTURE_SUMMARY_ROWS: [&str; 5] = [
+    "Circular dependencies",
+    "Re-export cycles",
+    "Package cycles",
+    "Boundary violations",
+    "Policy violations",
+];
+
+/// One `--summary` row: the label, the count and the level of the count.
+type SummaryRow = (&'static str, usize, Level);
+
+/// Split the summary rows into the dead-code rows and the architecture rows,
+/// each in the order of [`check_summary_categories`].
+fn split_summary_categories(
+    results: &AnalysisResults,
+    rules: &RulesConfig,
+) -> (Vec<SummaryRow>, Vec<SummaryRow>) {
+    check_summary_categories(results, rules)
+        .into_iter()
+        .partition(|(name, _, _)| !ARCHITECTURE_SUMMARY_ROWS.contains(name))
+}
+
+/// Print the architecture rows under their own "Architecture" label, like the
+/// "Architecture" category of the bare `fallow` report. Prints nothing without
+/// a row. A blank line separates the label from dead-code rows above it.
+fn print_architecture_summary_rows(categories: &[(&str, usize, Level)], after_rows: bool) {
+    if categories.iter().all(|(_, count, _)| *count == 0) {
+        return;
+    }
+    if after_rows {
+        outln!();
+    }
+    outln!("  {}", "Architecture".bold());
+    print_check_summary_rows(categories);
+}
+
+fn colored_summary_count(count: usize, level: Level) -> String {
+    let count_str = format!("{count:>6}");
+    match level {
+        Level::Error => count_str.red().bold().to_string(),
+        Level::Warn => count_str.yellow().to_string(),
+        Level::Info => count_str.dimmed().to_string(),
+    }
+}
+
+fn print_check_summary_total(total: usize) {
+    outln!();
+    let total_str = format!("{total:>6}");
+    outln!("  {}  {}", total_str.bold(), "Total".bold());
+}
+
+fn print_check_summary_status(total: usize, elapsed: Duration, run_fails: bool) {
+    eprintln!(
+        "{}",
+        super::findings_status_line(
+            &format!(
+                "{total} issue{} ({:.2}s)",
+                plural(total),
+                elapsed.as_secs_f64()
+            ),
+            run_fails,
+        )
+    );
+}
+
+#[cfg(test)]
+#[path = "check_tests.rs"]
+mod tests;

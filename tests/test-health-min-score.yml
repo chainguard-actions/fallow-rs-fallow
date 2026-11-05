@@ -1,0 +1,35 @@
+name: Test health min-score gate passes with a low threshold
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: 3.40.0
+          format: json
+          artifacts-dir: fallow-artifacts-min-score
+          type-aware: 'false'
+          min-score: '0'
+      - name: Assert results include a health score
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$f" ] || ! jq empty "$f"; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          head -c 3000 "$f"; echo
+          if ! grep -qi 'score' "$f"; then
+            echo "FAIL: results do not contain a score"
+            exit 1
+          fi
+          echo "PASS"

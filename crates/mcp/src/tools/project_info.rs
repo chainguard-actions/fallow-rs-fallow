@@ -1,0 +1,162 @@
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+use crate::params::ProjectInfoParams;
+
+use fallow_api::{
+    ProjectInfoOptions, run_project_info as run_api_project_info,
+    serialize_project_info_programmatic_json,
+};
+use rmcp::ErrorData as McpError;
+use rmcp::model::{CallToolResult, ContentBlock};
+
+use super::{
+    api_runtime::{
+        EnvScope, call_cancellation, json_success, programmatic_error_body, run_api_blocking,
+        shared_analysis_options, shared_params,
+    },
+    push_global, push_remote_extends,
+};
+
+/// Run `project_info` through the typed API.
+pub async fn run_project_info(
+    _binary: &str,
+    params: ProjectInfoParams,
+) -> Result<CallToolResult, McpError> {
+    let cancellation = call_cancellation();
+    let options = project_info_options_from_params(&params, Some(Arc::clone(&cancellation)));
+    let result = run_api_blocking("project_info", cancellation, move || {
+        run_api_project_info(&options).and_then(serialize_project_info_programmatic_json)
+    })
+    .await?
+    .map_or_else(
+        |err| CallToolResult::error(vec![ContentBlock::text(programmatic_error_body(&err))]),
+        |value| json_success(&value),
+    );
+    Ok(result)
+}
+
+pub fn run_project_info_api_value(
+    params: &ProjectInfoParams,
+    cancellation: Option<Arc<AtomicBool>>,
+) -> Result<Option<serde_json::Value>, String> {
+    let options = project_info_options_from_params(params, cancellation);
+    let value = run_api_project_info(&options)
+        .and_then(serialize_project_info_programmatic_json)
+        .map_err(|err| programmatic_error_body(&err))?;
+
+    Ok(Some(value))
+}
+
+/// Build CLI arguments for the `project_info` tool.
+pub fn build_project_info_args(params: &ProjectInfoParams) -> Vec<String> {
+    let mut args = vec![
+        "list".to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+        "--quiet".to_string(),
+    ];
+
+    push_global(
+        &mut args,
+        params.root.as_deref(),
+        params.config.as_deref(),
+        params.no_cache,
+        params.threads,
+    );
+    push_remote_extends(&mut args, params.allow_remote_extends);
+    if params.entry_points == Some(true) {
+        args.push("--entry-points".to_string());
+    }
+    if params.files == Some(true) {
+        args.push("--files".to_string());
+    }
+    if params.plugins == Some(true) {
+        args.push("--plugins".to_string());
+    }
+    if params.boundaries == Some(true) {
+        args.push("--boundaries".to_string());
+    }
+
+    args
+}
+
+fn project_info_options_from_params(
+    params: &ProjectInfoParams,
+    cancellation: Option<Arc<AtomicBool>>,
+) -> ProjectInfoOptions {
+    ProjectInfoOptions {
+        // This envelope carries no `request_outcomes`, so a ref that stood
+        // down would widen the result with nothing to say so: keep the hard
+        // error of an explicit ref.
+        analysis: shared_analysis_options(shared_params!(params), EnvScope::HardRef, cancellation),
+        entry_points: params.entry_points == Some(true),
+        files: params.files == Some(true),
+        plugins: params.plugins == Some(true),
+        boundaries: params.boundaries == Some(true),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rmcp::model::ContentBlock;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn run_project_info_api_path_returns_files_without_cli_binary() {
+        let project = tempfile::tempdir().expect("project");
+        std::fs::write(
+            project.path().join("package.json"),
+            r#"{"name":"project-info-api","main":"src/index.ts"}"#,
+        )
+        .expect("write package");
+        std::fs::create_dir_all(project.path().join("src")).expect("create src");
+        std::fs::write(
+            project.path().join("src/index.ts"),
+            "export const value = 1;\n",
+        )
+        .expect("write source");
+
+        let result = run_project_info(
+            "unused-binary-on-api-path",
+            ProjectInfoParams {
+                root: Some(project.path().display().to_string()),
+                no_cache: Some(true),
+                ..ProjectInfoParams::default()
+            },
+        )
+        .await
+        .expect("mcp result");
+
+        assert!(!result.is_error.unwrap_or(false));
+        let [content] = result.content.as_slice() else {
+            panic!("expected one content item");
+        };
+        let ContentBlock::Text(text) = content else {
+            panic!("expected text content");
+        };
+        let json: serde_json::Value = serde_json::from_str(&text.text).expect("json");
+        assert_eq!(json["file_count"], 1);
+        assert_eq!(json["files"][0], "src/index.ts");
+        assert_eq!(json["entry_point_count"], 1);
+        assert_eq!(json["workspace_count"], 0);
+        assert!(json.get("kind").is_none());
+    }
+}
+
+#[cfg(test)]
+mod route_parity_tests {
+    use super::*;
+
+    /// Both routes of `project_info` express the same shared settings.
+    #[test]
+    fn typed_and_cli_routes_agree_on_shared_settings() {
+        super::super::route_parity::assert_routes_agree(
+            "project_info",
+            &serde_json::json!({}),
+            |params: ProjectInfoParams| build_project_info_args(&params),
+            |params: ProjectInfoParams| project_info_options_from_params(&params, None).analysis,
+        );
+    }
+}

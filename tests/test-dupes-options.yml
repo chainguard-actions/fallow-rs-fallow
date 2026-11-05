@@ -1,0 +1,40 @@
+name: Test dupes command with tuning options
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/clean-project
+          version: 3.40.0
+          format: json
+          artifacts-dir: fallow-artifacts-dupes
+          type-aware: 'false'
+          dupes-mode: strict
+          min-tokens: '30'
+          min-lines: '3'
+          threshold: '0'
+          top: '5'
+      - name: Assert no clone groups on clean project
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 clone groups"
+            exit 1
+          fi
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$f" ] || ! jq empty "$f"; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          echo "PASS"

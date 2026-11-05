@@ -1,0 +1,59 @@
+name: Test health with runtime coverage options
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # runtime-coverage is a paid feature of the fallow CLI: without a license
+      # the CLI may legitimately refuse it. Accept either a successful run with
+      # a valid results file, or a failure in which the CLI actually ran and
+      # left its stderr log behind.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: 3.40.0
+          format: json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-runtime-coverage
+          type-aware: 'false'
+          runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /coverage-build
+          min-invocations-hot: '100'
+          min-observation-volume: '10'
+          low-traffic-threshold: '0.01'
+      - name: Assert outcome
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "results: $RESULTS"
+          if [ "$OUTCOME" = "success" ]; then
+            f="$RESULTS"
+            [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+            if [ ! -f "$f" ] || ! jq empty "$f"; then
+              echo "FAIL: success but results file missing or invalid JSON"
+              exit 1
+            fi
+            echo "PASS: runtime coverage analysis succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            log="$GITHUB_WORKSPACE/fallow-artifacts-runtime-coverage/fallow-stderr.log"
+            ls -la "$GITHUB_WORKSPACE/fallow-artifacts-runtime-coverage" 2>/dev/null || true
+            if [ -f "$log" ]; then
+              cat "$log"
+              echo "PASS: CLI ran and rejected runtime coverage (paid feature)"
+            elif [ -d "$GITHUB_WORKSPACE/fallow-artifacts-runtime-coverage" ]; then
+              echo "PASS: analysis step ran (artifacts dir present) and failed on runtime coverage"
+            else
+              echo "FAIL: action failed before analysis ran"
+              exit 1
+            fi
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

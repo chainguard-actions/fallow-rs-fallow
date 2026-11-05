@@ -1,0 +1,1498 @@
+//! Function inventory walker for `fallow coverage upload-inventory`.
+//!
+//! Emits one [`InventoryEntry`] per function (declaration, expression, arrow,
+//! method) whose name matches what `oxc-coverage-instrument` produces at
+//! instrument time. This is the **static side** of the three-state production
+//! coverage story: uploaded inventory minus runtime-seen functions equals
+//! `untracked`.
+//!
+//! # Naming contract
+//!
+//! The cloud stores function identity as
+//! `(filePath, functionName, lineNumber)`. This walker is responsible for the
+//! `functionName` and `lineNumber` parts of that contract. Anonymous functions
+//! are named `(anonymous_N)` where `N` is a file-scoped monotonic counter that
+//! starts at 0 and increments in pre-order AST traversal each time a function
+//! is entered without a resolvable explicit name. Name resolution precedence:
+//!
+//! 1. The function's own `id` (named `function foo() {}`, named function
+//!    expression `const x = function named() {}` -> "named",
+//!    `{ k: function own() {} }` -> "own"). This matches the instrumenter and
+//!    `Function.prototype.name`.
+//! 2. A parent name: from a `MethodDefinition` (accessors carry the
+//!    instrumenter's `get ` / `set ` label), an `ObjectProperty` key
+//!    (shorthand methods, accessors, and function-valued data properties), a
+//!    `VariableDeclarator` binding, a plain `=` assignment target
+//!    (`o.foo = () => {}` -> "foo", `x = () => {}` -> "x"), the binding of a
+//!    default value (`function f(cb = () => {})` -> "cb",
+//!    `const { a = () => {} } = o` -> "a"), or an anonymous `export default`
+//!    (-> "default").
+//!    A binding, key or assignment name is given only to a function or arrow
+//!    value, through parentheses; a class value takes none.
+//! 3. The callee of the call / `new` expression that the function is a direct
+//!    argument of (`arr.map(cb)` -> "map", `foo(cb)` -> "foo",
+//!    `new Promise(cb)` -> "Promise"). This matches `oxc-coverage-instrument`'s
+//!    opt-in `name_callback_arguments` (which `@fallow-cli/beacon` enables).
+//!    Only parentheses may be between the call and the function: an array
+//!    element, an object property or a `??` operand inside an argument takes
+//!    no callee name. An optional call on a callee that is not a member access
+//!    (`foo?.(cb)`) gives no callee name, because the instrumenter wraps that
+//!    callee in its optional-chain helper. `a.b?.(cb)` still gives "b".
+//!
+//! 4. `(anonymous_N)` with the current counter value; counter then increments.
+//!    Only genuinely unnamed functions reach this: an immediately-invoked
+//!    function expression, an arrow returned from another function, or a
+//!    computed non-string-key call.
+//!
+//! Each parent and callee name is keyed on the start of the function node, as
+//! in the instrumenter's `inferred_names`, so a name never reaches a nested
+//! function.
+//!
+//! Counter scope is per-file. Reference implementation:
+//! `oxc-coverage-instrument` `src/transform/names.rs` (`resolve_function_name`,
+//! `infer_name_for_value` and `callback_argument_name`).
+
+use std::path::Path;
+
+use oxc_allocator::Allocator;
+#[allow(clippy::wildcard_imports, reason = "many AST types used")]
+use oxc_ast::ast::*;
+use oxc_ast_visit::{Visit, walk};
+use oxc_parser::Parser;
+use oxc_semantic::ScopeFlags;
+use oxc_span::{SourceType, Span};
+use rustc_hash::FxHashMap;
+
+use crate::js_text::JsText;
+
+/// A single static-inventory entry for one function.
+///
+/// `name` is beacon-compatible (see the module docs for the naming rule).
+/// `line` is 1-based, matching the AST span start. The `start_column` /
+/// `end_line` / `end_column` fields carry the function-node span in the
+/// 1-indexed UTF-16 convention the cross-surface `FunctionIdentity` join key
+/// expects (see `fallow_cov_protocol::FunctionIdentity::start_column`). They
+/// are descriptive metadata: the join hash is `(file, name, line)` only, so
+/// column fidelity never affects the join, only display / same-line
+/// disambiguation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InventoryEntry {
+    /// Beacon-compatible function name.
+    pub name: String,
+    /// 1-based source line of the function declaration (node `span.start`).
+    pub line: u32,
+    /// 1-indexed UTF-16 column of the function node start.
+    pub start_column: u32,
+    /// 1-based source line where the function node ends.
+    pub end_line: u32,
+    /// 1-indexed UTF-16 column of the function node end.
+    pub end_column: u32,
+    /// Content digest of the function's full-span source slice
+    /// (`&source[span.start..span.end]`): first 8 bytes of SHA-256 as 16
+    /// lowercase hex characters, via `fallow_cov_protocol::source_hash_for`.
+    /// The slice is the canonical body bytes (signature line + body + closing
+    /// brace, no whitespace normalization), identical for `Function` and
+    /// `ArrowFunctionExpression`. Stable across line moves, so a
+    /// moved-but-unedited function keeps the same hash. `None` for a function
+    /// with more nested functions below it than the cap in `function_hash`,
+    /// the same rule that the complexity walk applies.
+    pub source_hash: Option<String>,
+    /// Whether the name was taken from the callee of the call this function is
+    /// passed to (`arr.map(cb)` -> `map`) instead of from a declaration, a
+    /// binding, or a property key. Lets a consumer describe the function as a
+    /// callback passed to that callee rather than as a declaration.
+    pub is_callback: bool,
+}
+
+/// Rolling state for [`InventoryVisitor::line_col_utf16`]: the last resolved
+/// offset's line index, clamped byte position, and 0-based UTF-16 column.
+/// `line_idx` starts at `usize::MAX` so the first query never matches.
+#[derive(Clone, Copy)]
+struct ColCache {
+    line_idx: usize,
+    byte_end: usize,
+    utf16_units: usize,
+}
+
+impl ColCache {
+    const EMPTY: Self = Self {
+        line_idx: usize::MAX,
+        byte_end: 0,
+        utf16_units: 0,
+    };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Source bytes that the column lookups encoded on this thread.
+    static UTF16_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Return the bytes that the column lookups encoded on this thread since the
+/// last call.
+#[cfg(test)]
+fn take_utf16_bytes() -> usize {
+    UTF16_BYTES.with(|encoded| encoded.replace(0))
+}
+
+/// A function that the inventory walk is inside.
+struct OpenFunction {
+    /// Index of its entry in [`InventoryVisitor::entries`].
+    entry: usize,
+    span: Span,
+    /// Levels of nested functions below it so far.
+    height: u32,
+}
+
+/// A resolved function name plus how it was resolved.
+struct ResolvedName {
+    name: String,
+    /// `true` only when the name came from a call / `new` callee.
+    is_callback: bool,
+}
+
+impl ResolvedName {
+    const fn named(name: String) -> Self {
+        Self {
+            name,
+            is_callback: false,
+        }
+    }
+}
+
+/// Visitor that collects [`InventoryEntry`] values in file traversal order.
+struct InventoryVisitor<'a> {
+    source: &'a str,
+    line_offsets: &'a [u32],
+    entries: Vec<InventoryEntry>,
+    /// Column cursors for span starts and span ends. One shared cursor jumps
+    /// across the whole span for each nested function on one line.
+    start_cols: ColCache,
+    end_cols: ColCache,
+    /// Open functions. The hash is computed on leave, when the height is known.
+    open: Vec<OpenFunction>,
+    /// Names that a parent gives to a function or arrow (method key, variable
+    /// binding, property key, assignment target, default value binding),
+    /// keyed on the start of the function node, as in the instrumenter's
+    /// `inferred_names`. Only the function that starts at the key can take
+    /// the name, so a name never reaches a nested function.
+    inferred_names: FxHashMap<u32, String>,
+    /// Callee names for a function or arrow that is a direct call / `new`
+    /// argument, keyed on the start of the function node. Ranks below the own
+    /// name and the parent name.
+    callback_names: FxHashMap<u32, String>,
+    /// File-scoped monotonic counter for unnamed functions.
+    anonymous_counter: u32,
+}
+
+impl<'a> InventoryVisitor<'a> {
+    fn new(source: &'a str, line_offsets: &'a [u32]) -> Self {
+        Self {
+            source,
+            line_offsets,
+            entries: Vec::new(),
+            start_cols: ColCache::EMPTY,
+            end_cols: ColCache::EMPTY,
+            open: Vec::new(),
+            inferred_names: FxHashMap::default(),
+            callback_names: FxHashMap::default(),
+            anonymous_counter: 0,
+        }
+    }
+
+    /// Resolve a function's name and advance the counter.
+    ///
+    /// Mirrors `oxc-coverage-instrument`'s two-step flow: `resolve_function_name`
+    /// reads the current counter value for the anonymous-case name, and
+    /// `add_function` advances the counter unconditionally on every
+    /// instrumented function (named or not). We collapse both into one call.
+    ///
+    /// Name precedence, matching the instrumenter's `resolve_function_name`:
+    /// function's own `id` → parent name (method key, variable binding,
+    /// property key, assignment target, default value binding) → call/`new`
+    /// callee → counter. The own name comes first, as for
+    /// `Function.prototype.name`: `const f = function g() {}` gives `g`. Both
+    /// keyed names of the function are removed in all cases.
+    fn resolve_name(&mut self, start: u32, explicit: Option<&str>) -> ResolvedName {
+        let n = self.anonymous_counter;
+        self.anonymous_counter += 1;
+        let inferred = self.inferred_names.remove(&start);
+        let callee = self.callback_names.remove(&start);
+        if let Some(name) = explicit {
+            return ResolvedName::named(name.to_owned());
+        }
+        if let Some(inferred) = inferred {
+            return ResolvedName::named(inferred);
+        }
+        if let Some(callee) = callee {
+            return ResolvedName {
+                name: callee,
+                is_callback: true,
+            };
+        }
+        ResolvedName::named(format!("(anonymous_{n})"))
+    }
+
+    /// Give `name` to `value` when it is a function or arrow, through
+    /// parentheses, as the instrumenter's `infer_name_for_value` does. Any
+    /// other value (a class among them) takes no name.
+    fn infer_name_for_value(&mut self, value: &Expression<'_>, name: Option<String>) {
+        let Some(name) = name else { return };
+        if let Some(start) = function_value_start(value) {
+            self.inferred_names.insert(start, name);
+        }
+    }
+
+    /// Give the callee name to each argument that is a function or arrow,
+    /// through parentheses, as the instrumenter's `callback_argument_name`
+    /// does. A function deeper in an argument (an array element, an object
+    /// property, a JSX attribute, a `??` operand) takes no callee name.
+    fn name_callback_arguments(&mut self, callee: &Expression<'_>, arguments: &[Argument<'_>]) {
+        let Some(name) = callee_name(callee) else {
+            return;
+        };
+        for argument in arguments {
+            if let Some(start) = argument.as_expression().and_then(function_value_start) {
+                self.callback_names.insert(start, name.clone());
+            }
+        }
+    }
+
+    fn record(&mut self, resolved: ResolvedName, span: Span) {
+        let mut start_cols = self.start_cols;
+        let (line, start_column) = self.line_col_utf16(&mut start_cols, span.start);
+        self.start_cols = start_cols;
+        let mut end_cols = self.end_cols;
+        let (end_line, end_column) = self.line_col_utf16(&mut end_cols, span.end);
+        self.end_cols = end_cols;
+        self.open.push(OpenFunction {
+            entry: self.entries.len(),
+            span,
+            height: 0,
+        });
+        self.entries.push(InventoryEntry {
+            name: resolved.name,
+            line,
+            start_column,
+            end_line,
+            end_column,
+            source_hash: None,
+            is_callback: resolved.is_callback,
+        });
+    }
+
+    /// Close the function that [`Self::record`] opened last and hash it.
+    fn leave_function(&mut self) {
+        let Some(open) = self.open.pop() else {
+            return;
+        };
+        self.entries[open.entry].source_hash =
+            crate::function_hash::function_source_hash(self.source, open.span, open.height);
+        if let Some(parent) = self.open.last_mut() {
+            parent.height = parent.height.max(open.height + 1);
+        }
+    }
+
+    /// Map a UTF-8 byte offset to `(1-based line, 1-indexed UTF-16 column)`.
+    ///
+    /// The line comes from the precomputed offset table; the column counts
+    /// UTF-16 code units from the line start to `byte_offset`, matching the
+    /// `FunctionIdentity` column convention (Istanbul / V8 / oxc all normalize
+    /// to 1-indexed UTF-16). A byte offset that does not fall on a char
+    /// boundary (it always should for an AST span) clamps to the nearest
+    /// boundary at or before it rather than panicking.
+    ///
+    /// Successive queries on the same line are answered incrementally from
+    /// [`ColCache`]: pre-order traversal emits nearby offsets, so counting
+    /// only the gap to the previous offset keeps the walk linear on
+    /// single-line (minified / generated) files instead of re-encoding the
+    /// full line prefix for every function.
+    fn line_col_utf16(&self, cache: &mut ColCache, byte_offset: u32) -> (u32, u32) {
+        let line_idx = match self.line_offsets.binary_search(&byte_offset) {
+            Ok(idx) => idx,
+            Err(idx) => idx.saturating_sub(1),
+        };
+        let line = line_idx as u32 + 1;
+        let line_start = self.line_offsets[line_idx] as usize;
+        let mut end = byte_offset as usize;
+        while end > line_start && !self.source.is_char_boundary(end) {
+            end -= 1;
+        }
+        // Both `end` and the cached position are char boundaries at or after
+        // `line_start` on the same line, so the gap slice is always valid and
+        // a backward gap never exceeds the cached column.
+        let from_cache = if cache.line_idx == line_idx {
+            if end >= cache.byte_end {
+                self.utf16_len(cache.byte_end, end)
+                    .map(|gap| cache.utf16_units + gap)
+            } else {
+                self.utf16_len(end, cache.byte_end)
+                    .map(|gap| cache.utf16_units - gap)
+            }
+        } else {
+            None
+        };
+        let col_utf16 = from_cache.unwrap_or_else(|| self.utf16_len(line_start, end).unwrap_or(0));
+        *cache = ColCache {
+            line_idx,
+            byte_end: end,
+            utf16_units: col_utf16,
+        };
+        (line, col_utf16 as u32 + 1)
+    }
+
+    /// UTF-16 code-unit count of `source[start..end]`, `None` when the range
+    /// is not sliceable.
+    fn utf16_len(&self, start: usize, end: usize) -> Option<usize> {
+        let slice = self.source.get(start..end)?;
+        #[cfg(test)]
+        UTF16_BYTES.with(|encoded| encoded.set(encoded.get() + slice.len()));
+        Some(slice.encode_utf16().count())
+    }
+}
+
+impl<'ast> Visit<'ast> for InventoryVisitor<'_> {
+    fn visit_function(&mut self, func: &Function<'ast>, flags: ScopeFlags) {
+        if func.body.is_none() {
+            walk::walk_function(self, func, flags);
+            return;
+        }
+        let resolved =
+            self.resolve_name(func.span.start, func.id.as_ref().map(|id| id.name.as_str()));
+        self.record(resolved, func.span);
+        walk::walk_function(self, func, flags);
+        self.leave_function();
+    }
+
+    fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'ast>) {
+        let resolved = self.resolve_name(arrow.span.start, None);
+        self.record(resolved, arrow.span);
+        walk::walk_arrow_function_expression(self, arrow);
+        self.leave_function();
+    }
+
+    fn visit_method_definition(&mut self, method: &MethodDefinition<'ast>) {
+        if let Some(name) = method.key.static_name() {
+            self.inferred_names.insert(
+                method.value.span.start,
+                accessor_label(
+                    matches!(method.kind, MethodDefinitionKind::Get),
+                    matches!(method.kind, MethodDefinitionKind::Set),
+                    &name.text(),
+                ),
+            );
+        }
+        walk::walk_method_definition(self, method);
+    }
+
+    fn visit_variable_declarator(&mut self, decl: &VariableDeclarator<'ast>) {
+        if let Some(init) = &decl.init {
+            let name = decl
+                .id
+                .get_binding_identifier()
+                .map(|id| id.name.to_string());
+            self.infer_name_for_value(init, name);
+        }
+        walk::walk_variable_declarator(self, decl);
+    }
+
+    /// Carry an object-literal key into the function it holds, matching the
+    /// instrumenter's `register_object_property`: shorthand methods, accessors
+    /// (prefixed `get ` / `set `), and function-valued data properties inherit
+    /// the key name. A data property holding anything else (a call whose
+    /// argument is a callback, most of all) inherits nothing, so the callback
+    /// still takes its own callee's name.
+    fn visit_object_property(&mut self, prop: &ObjectProperty<'ast>) {
+        let name = prop.key.static_name().map(|name| {
+            accessor_label(
+                matches!(prop.kind, PropertyKind::Get),
+                matches!(prop.kind, PropertyKind::Set),
+                &name.text(),
+            )
+        });
+        self.infer_name_for_value(&prop.value, name);
+        walk::walk_object_property(self, prop);
+    }
+
+    /// Carry an assignment target into the function assigned to it
+    /// (`client.execute = () => {}` -> "execute", `startLoad = () => {}` ->
+    /// "startLoad"), matching the instrumenter's `assignment_target_name` and
+    /// `infer_name_for_value`. Only a plain `=` gives a name. A compound or
+    /// logical operator (`+=`, `||=`, `??=`) gives none. The value can have
+    /// parentheses around it. Only a function or arrow takes the name: a class
+    /// value does not, and a function with its own name keeps that name.
+    ///
+    /// The name is keyed on the start of the value, so a function inside the
+    /// target (`f(() => 1).x = ...`) does not take it.
+    fn visit_assignment_expression(&mut self, expr: &AssignmentExpression<'ast>) {
+        if matches!(expr.operator, AssignmentOperator::Assign) {
+            self.infer_name_for_value(&expr.right, assignment_target_name(&expr.left));
+        }
+        walk::walk_assignment_expression(self, expr);
+    }
+
+    /// Name a function-valued parameter default after the parameter binding
+    /// (`function f(cb = () => 1)` -> "cb"), matching the instrumenter's
+    /// `instrument_parameter_default`.
+    fn visit_formal_parameter(&mut self, param: &FormalParameter<'ast>) {
+        if let Some(init) = &param.initializer {
+            let name = param
+                .pattern
+                .get_binding_identifier()
+                .map(|id| id.name.to_string());
+            self.infer_name_for_value(init, name);
+        }
+        walk::walk_formal_parameter(self, param);
+    }
+
+    /// Name a function-valued default in a binding pattern after its binding
+    /// (`const { a = () => 1 } = o` -> "a", `{ k: v = () => 1 }` -> "v"),
+    /// matching the instrumenter's `instrument_destructuring_default`.
+    fn visit_assignment_pattern(&mut self, pattern: &AssignmentPattern<'ast>) {
+        let name = pattern
+            .left
+            .get_binding_identifier()
+            .map(|id| id.name.to_string());
+        self.infer_name_for_value(&pattern.right, name);
+        walk::walk_assignment_pattern(self, pattern);
+    }
+
+    /// Name a function-valued default in an assignment target after an
+    /// identifier target (`[a = () => 1] = []` -> "a"), matching the
+    /// instrumenter's `simple_target_name`. A member target gives no name.
+    fn visit_assignment_target_with_default(&mut self, target: &AssignmentTargetWithDefault<'ast>) {
+        if let AssignmentTarget::AssignmentTargetIdentifier(id) = &target.binding {
+            self.infer_name_for_value(&target.init, Some(id.name.to_string()));
+        }
+        walk::walk_assignment_target_with_default(self, target);
+    }
+
+    /// Name a function-valued shorthand default in an assignment target
+    /// (`({ a = () => 1 } = o)` -> "a").
+    fn visit_assignment_target_property_identifier(
+        &mut self,
+        target: &AssignmentTargetPropertyIdentifier<'ast>,
+    ) {
+        if let Some(init) = &target.init {
+            self.infer_name_for_value(init, Some(target.binding.name.to_string()));
+        }
+        walk::walk_assignment_target_property_identifier(self, target);
+    }
+
+    /// Name an anonymous default export "default", matching the instrumenter's
+    /// `name_anonymous_default_export`. A named one keeps its own identifier.
+    fn visit_export_default_declaration(&mut self, decl: &ExportDefaultDeclaration<'ast>) {
+        let name = "default".to_owned();
+        match &decl.declaration {
+            ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
+                self.inferred_names.insert(func.span.start, name);
+            }
+            kind => {
+                // `export default (() => 1)` also gives "default": the value
+                // can have parentheses around it.
+                if let Some(value) = kind.as_expression() {
+                    self.infer_name_for_value(value, Some(name));
+                }
+            }
+        }
+        walk::walk_export_default_declaration(self, decl);
+    }
+
+    /// Name each function-valued argument from the callee (`arr.map(cb)` ->
+    /// "map", `foo(cb)` -> "foo"), matching `oxc-coverage-instrument`'s
+    /// `name_callback_arguments`. The name is keyed on the start of the
+    /// argument function, so a chained call (`a.b().c(cb)`) never gives `b`
+    /// to the callback of `c`.
+    ///
+    /// An optional call on a callee that is not a member access (`foo?.(cb)`)
+    /// gives no name. The instrumenter wraps that callee in its optional-chain
+    /// helper (`enter_call_expression`), so its `callee_name` then sees a call.
+    /// A member callee (`a.b?.(cb)`, `a?.b?.(cb)`) stays native to keep `this`,
+    /// so it keeps its property name.
+    fn visit_call_expression(&mut self, call: &CallExpression<'ast>) {
+        if !(call.optional && call.callee.get_member_expr().is_none()) {
+            self.name_callback_arguments(&call.callee, &call.arguments);
+        }
+        walk::walk_call_expression(self, call);
+    }
+
+    fn visit_new_expression(&mut self, new_expr: &NewExpression<'ast>) {
+        self.name_callback_arguments(&new_expr.callee, &new_expr.arguments);
+        walk::walk_new_expression(self, new_expr);
+    }
+}
+
+/// Prefix an accessor's name the way `oxc-coverage-instrument` labels one, so
+/// a getter reads `get closed` on both sides of the join. A plain method or
+/// data property keeps its bare key.
+fn accessor_label(is_getter: bool, is_setter: bool, name: &str) -> String {
+    if is_getter {
+        return format!("get {name}");
+    }
+    if is_setter {
+        return format!("set {name}");
+    }
+    name.to_owned()
+}
+
+/// The start of a value that is a function or arrow, with the parentheses
+/// around it removed. Only such a value takes the name of a binding, a property
+/// key, an assignment target or a callee, as in the instrumenter's
+/// `infer_name_for_value`. A class value takes no name. A function with its own
+/// name keeps it, because `resolve_name` ranks the own name first.
+fn function_value_start(value: &Expression<'_>) -> Option<u32> {
+    match value.without_parentheses() {
+        Expression::FunctionExpression(func) => Some(func.span.start),
+        Expression::ArrowFunctionExpression(arrow) => Some(arrow.span.start),
+        _ => None,
+    }
+}
+
+/// Extract a name from an assignment target, matching the instrumenter's
+/// `assignment_target_name`: an identifier uses its name, a static member uses
+/// the property, a computed member uses a string-literal key, and anything else
+/// yields no name.
+fn assignment_target_name(target: &AssignmentTarget<'_>) -> Option<String> {
+    match target {
+        AssignmentTarget::AssignmentTargetIdentifier(ident) => Some(ident.name.to_string()),
+        AssignmentTarget::StaticMemberExpression(member) => Some(member.property.name.to_string()),
+        AssignmentTarget::ComputedMemberExpression(member) => match &member.expression {
+            Expression::StringLiteral(lit) => Some(lit.value.text().into_owned()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Extract a display name from a call / `new` callee, matching
+/// `oxc-coverage-instrument`'s `callee_name`: a bare identifier keeps its name,
+/// a member access uses the (last) property, and a computed access uses a
+/// string-literal key. Anything else (a computed non-string index, a call
+/// result, a parenthesized expression) yields no name.
+fn callee_name(callee: &Expression<'_>) -> Option<String> {
+    match callee {
+        Expression::Identifier(ident) => Some(ident.name.to_string()),
+        Expression::StaticMemberExpression(member) => Some(member.property.name.to_string()),
+        Expression::ComputedMemberExpression(member) => match &member.expression {
+            Expression::StringLiteral(lit) => Some(lit.value.text().into_owned()),
+            _ => None,
+        },
+        // A parenthesized callee (`(foo)(cb)`, `(a.b)(cb)`) unwraps to its inner
+        // callee, matching the instrumenter. oxc keeps paren nodes by default
+        // (`preserve_parens`), so both sides see this node.
+        Expression::ParenthesizedExpression(paren) => callee_name(&paren.expression),
+        _ => None,
+    }
+}
+
+/// Per-function static complexity collected alongside the inventory walk.
+///
+/// Keyed to an [`InventoryEntry`] by its `source_hash`, which both this and the
+/// inventory walk derive from the identical full-span byte slice over the same
+/// parsed program (see [`InventoryEntry::source_hash`]). The hash is stable
+/// across line moves, so the pairing survives reformatting that shifts line
+/// numbers. `cyclomatic` and `cognitive` are descriptive context for downstream
+/// importance weighting, never thresholds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InventoryComplexity {
+    /// `McCabe` cyclomatic complexity (1 + decision points).
+    pub cyclomatic: u16,
+    /// `SonarSource` cognitive complexity (structural + nesting penalty).
+    pub cognitive: u16,
+}
+
+/// Parse `source` at `path` and return every function as an [`InventoryEntry`].
+///
+/// Only plain JS/TS/JSX/TSX sources are supported. Callers should skip SFC,
+/// Astro, MDX, CSS, HTML, and other non-JS inputs; those use different
+/// instrumentation paths and are out of scope for the first inventory release.
+///
+/// Errors are swallowed: the returned vector covers whatever could be parsed.
+/// This mirrors how the rest of the extract pipeline handles partial parse
+/// results.
+#[must_use]
+pub fn walk_source(path: &Path, source: &str) -> Vec<InventoryEntry> {
+    walk_source_with_complexity(path, source).0
+}
+
+/// Parse `source` at `path` once and return every function as an
+/// [`InventoryEntry`] together with a `source_hash -> InventoryComplexity` map.
+///
+/// Both the inventory entries and the complexity map come from the SAME parse
+/// (including the JSX fallback retry), so the per-function `source_hash` values
+/// line up exactly and a caller can enrich each entry's metrics by a hash
+/// lookup. Functions whose span slice could not be sliced share the empty-input
+/// hash and simply don't pair; that degrades to "no metrics", never a panic.
+///
+/// Errors are swallowed, matching [`walk_source`]: the returned data covers
+/// whatever could be parsed.
+#[must_use]
+pub fn walk_source_with_complexity(
+    path: &Path,
+    source: &str,
+) -> (Vec<InventoryEntry>, FxHashMap<String, InventoryComplexity>) {
+    let source_type = SourceType::from_path(path).unwrap_or_default();
+    let line_offsets = fallow_types::extract::compute_line_offsets(source);
+
+    let primary = walk_one_parse(source, source_type, &line_offsets);
+    if primary.0.is_empty() && !source_type.is_jsx() {
+        let jsx_type = if source_type.is_typescript() {
+            SourceType::tsx()
+        } else {
+            SourceType::jsx()
+        };
+        let retry = walk_one_parse(source, jsx_type, &line_offsets);
+        if !retry.0.is_empty() {
+            return retry;
+        }
+    }
+
+    primary
+}
+
+/// Run both the inventory and complexity visitors over a single parse of
+/// `source` under `source_type`, pairing them by `source_hash`.
+fn walk_one_parse(
+    source: &str,
+    source_type: SourceType,
+    line_offsets: &[u32],
+) -> (Vec<InventoryEntry>, FxHashMap<String, InventoryComplexity>) {
+    crate::parse_bounded(source, || {
+        walk_one_parse_unbounded(source, source_type, line_offsets)
+    })
+    .unwrap_or_default()
+}
+
+fn walk_one_parse_unbounded(
+    source: &str,
+    source_type: SourceType,
+    line_offsets: &[u32],
+) -> (Vec<InventoryEntry>, FxHashMap<String, InventoryComplexity>) {
+    let allocator = Allocator::default();
+    let parser_return = Parser::new(&allocator, source, source_type).parse();
+
+    let mut visitor = InventoryVisitor::new(source, line_offsets);
+    visitor.visit_program(&parser_return.program);
+
+    let complexity =
+        crate::complexity::compute_complexity(&parser_return.program, source, line_offsets);
+    let metrics: FxHashMap<String, InventoryComplexity> = complexity
+        .into_iter()
+        .filter_map(|fc| {
+            fc.source_hash.map(|hash| {
+                (
+                    hash,
+                    InventoryComplexity {
+                        cyclomatic: fc.cyclomatic,
+                        cognitive: fc.cognitive,
+                    },
+                )
+            })
+        })
+        .collect();
+
+    (visitor.entries, metrics)
+}
+
+#[cfg(all(test, not(miri)))]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn walk(source: &str) -> Vec<InventoryEntry> {
+        walk_source(&PathBuf::from("test.ts"), source)
+    }
+
+    #[test]
+    fn named_function_declaration_uses_its_own_name() {
+        let entries = walk("function foo() { return 1; }");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "foo");
+        assert_eq!(entries[0].line, 1);
+    }
+
+    #[test]
+    fn const_arrow_captures_binding_name() {
+        let entries = walk("const bar = () => 42;");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "bar");
+    }
+
+    #[test]
+    fn const_function_expression_keeps_its_own_name() {
+        // An own name comes first, as in the instrumenter's
+        // `resolve_function_name` and `Function.prototype.name`.
+        let entries = walk("const outer = function inner() { return 1; };");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "inner");
+    }
+
+    #[test]
+    fn object_property_function_keeps_its_own_name() {
+        let entries = walk(
+            r"
+            const o = {
+              k: function own() {},
+              j: function () {},
+              m() {},
+              get g() { return 1; },
+            };
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["own", "j", "m", "get g"]);
+    }
+
+    #[test]
+    fn own_name_beats_binding_and_does_not_leak_inward() {
+        // The binding name is dropped when the function has its own name, so a
+        // function inside the body does not take it.
+        let entries = walk("const f = function g() { return [1].map(() => 2); };");
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["g", "map"]);
+    }
+
+    #[test]
+    fn parenthesized_declarator_and_property_values_take_the_binding_name() {
+        // The instrumenter removes the parentheses around the value before it
+        // names the function.
+        let entries = walk(
+            r"
+            const a = (() => 1);
+            const b = (function () {});
+            const c = (function own() {});
+            const o = { k: (() => 2) };
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "b", "own", "k"]);
+    }
+
+    #[test]
+    fn declared_class_gives_no_name_to_its_members() {
+        // A class value takes no binding name, with or without an own name. Its
+        // constructor and methods keep their keys and a field arrow stays
+        // anonymous.
+        let entries = walk(
+            r"
+            const C = class D { constructor() {} m() {} p = () => 1; };
+            const E = class { q = () => 2; };
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["constructor", "m", "(anonymous_2)", "(anonymous_3)"]
+        );
+    }
+
+    #[test]
+    fn class_methods_use_method_names() {
+        let entries = walk(
+            r"
+            class Foo {
+              bar() { return 1; }
+              baz() { return 2; }
+            }",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["bar", "baz"]);
+    }
+
+    #[test]
+    fn callback_argument_takes_the_callee_name() {
+        // An arrow passed as a call argument now takes the callee name (matches
+        // the instrumenter's name_callback_arguments), not the anonymous counter.
+        let entries = walk("setTimeout(() => { console.log('hi'); }, 10);");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "setTimeout");
+    }
+
+    #[test]
+    fn member_callee_names_each_callback_in_source_order() {
+        let entries = walk(
+            r"
+            [1, 2, 3].map(() => 1);
+            [4, 5, 6].filter(() => true);
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["map", "filter"]);
+    }
+
+    #[test]
+    fn named_function_still_advances_counter_matching_instrumenter() {
+        // The counter still advances on every function (named or callee-named),
+        // matching the instrumenter, so a later genuinely-anonymous function
+        // gets the right N. Here the callback is callee-named "map".
+        let entries = walk(
+            r"
+            function named() { return 1; }
+            [1].map(() => 2);
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["named", "map"]);
+    }
+
+    #[test]
+    fn plain_identifier_callee_names_the_callback() {
+        let entries = walk("useMemo(() => compute());");
+        assert_eq!(entries[0].name, "useMemo");
+    }
+
+    #[test]
+    fn new_expression_callee_names_the_callback() {
+        let entries = walk("new Promise((resolve) => resolve(1));");
+        assert_eq!(entries[0].name, "Promise");
+    }
+
+    #[test]
+    fn callback_after_a_string_argument_is_named_from_the_callee() {
+        // The event/route-handler shape: the function is a later argument, after
+        // a string. It is named from the callee, not the string.
+        let entries = walk(r#"el.addEventListener("click", () => handle());"#);
+        assert_eq!(entries[0].name, "addEventListener");
+    }
+
+    #[test]
+    fn computed_string_key_callee_is_named() {
+        let entries = walk(r#"obj["handler"](() => run());"#);
+        assert_eq!(entries[0].name, "handler");
+    }
+
+    #[test]
+    fn chained_call_does_not_leak_the_earlier_callee_onto_the_later_callback() {
+        // `.then`'s callback must be "then" and `.catch`'s must be "catch": the
+        // callee subtree (`p.then(cb).catch`) is visited before the outer
+        // arguments, so the earlier callee never leaks onto the later callback.
+        let entries = walk("p.then(() => a).catch(() => b);");
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["then", "catch"]);
+    }
+
+    #[test]
+    fn nested_callbacks_each_take_their_own_callee() {
+        let entries = walk("outer(() => inner(() => 1));");
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["outer", "inner"]);
+    }
+
+    #[test]
+    fn binding_name_wins_over_callee() {
+        // A declarator binding is consumed on function entry, before the body's
+        // calls, so a bound arrow keeps its name even when its body is a call.
+        let entries = walk("const handler = () => run();");
+        assert_eq!(entries[0].name, "handler");
+    }
+
+    #[test]
+    fn named_function_expression_argument_keeps_its_own_id() {
+        let entries = walk("run(function inner() { return 1; });");
+        assert_eq!(entries[0].name, "inner");
+    }
+
+    #[test]
+    fn iife_callee_stays_anonymous() {
+        // The function is the callee, not an argument, so it is not a callback.
+        let entries = walk("(function () { return 1; })();");
+        assert_eq!(entries[0].name, "(anonymous_0)");
+    }
+
+    #[test]
+    fn computed_non_string_callee_stays_anonymous() {
+        let entries = walk("handlers[index](() => run());");
+        assert_eq!(entries[0].name, "(anonymous_0)");
+    }
+
+    #[test]
+    fn parenthesized_callee_unwraps_to_the_inner_name() {
+        assert_eq!(walk("(foo)(() => run());")[0].name, "foo");
+        assert_eq!(walk("(a.b)(() => run());")[0].name, "b");
+    }
+
+    #[test]
+    fn optional_call_on_a_non_member_callee_gives_no_callee_name() {
+        // The instrumenter wraps a non-member callee of an optional call in its
+        // optional-chain helper, so the callback sees a call as its callee.
+        assert_eq!(walk("foo?.(() => 1);")[0].name, "(anonymous_0)");
+        assert_eq!(walk("(foo)?.(() => 1);")[0].name, "(anonymous_0)");
+        assert_eq!(walk("(foo as any)?.(() => 1);")[0].name, "(anonymous_0)");
+        assert_eq!(walk("foo!?.(() => 1);")[0].name, "(anonymous_0)");
+        assert_eq!(walk("a?.b?.c?.(() => 1);")[0].name, "c");
+    }
+
+    #[test]
+    fn optional_call_on_a_member_callee_keeps_the_callee_name() {
+        // A receiver-bound optional call stays native in the instrumenter, so
+        // the callee keeps its property name.
+        assert_eq!(walk("a.b?.(() => 1);")[0].name, "b");
+        assert_eq!(walk("a?.b?.(() => 1);")[0].name, "b");
+        assert_eq!(walk("a['k']?.(() => 1);")[0].name, "k");
+        assert_eq!(walk("(a.b)?.(() => 1);")[0].name, "b");
+        assert_eq!(walk("a?.b(() => 1);")[0].name, "b");
+        assert_eq!(walk("a?.b?.c(() => 1);")[0].name, "c");
+    }
+
+    #[test]
+    fn optional_call_without_callee_name_still_names_a_nested_call_argument() {
+        // Only the direct arguments of the optional call lose the callee name.
+        let entries = walk("foo?.(() => 1, bar(() => 2));");
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["(anonymous_0)", "bar"]);
+    }
+
+    #[test]
+    fn anonymous_after_named_chain_uses_next_counter_value() {
+        let entries = walk(
+            r"
+            function a() {}
+            function b() {}
+            function c() {}
+            const d = () => 4;
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn typescript_overload_signatures_dont_emit_or_advance_counter() {
+        let entries = walk(
+            r"
+            function foo(): number;
+            function foo(s: string): string;
+            function foo(s?: string): number | string { return s ? s : 1; }
+            [1].map(() => 2);
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["foo", "map"]);
+    }
+
+    #[test]
+    fn export_default_named_function_keeps_explicit_name() {
+        let entries = walk("export default function foo() { return 1; }");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "foo");
+    }
+
+    #[test]
+    fn export_default_anonymous_function_is_named_default() {
+        let entries = walk("export default function() { return 1; }");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "default");
+    }
+
+    #[test]
+    fn export_default_anonymous_arrow_is_named_default() {
+        let entries = walk("export default () => 1;");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "default");
+    }
+
+    #[test]
+    fn parenthesized_anonymous_default_export_is_named_default() {
+        assert_eq!(names("export default (() => 1);"), ["default"]);
+        assert_eq!(names("export default (function () {});"), ["default"]);
+        assert_eq!(
+            names("export default (function () { return () => 1; });"),
+            ["default", "(anonymous_1)"]
+        );
+        assert_eq!(names("export default (function own() {});"), ["own"]);
+    }
+
+    #[test]
+    fn nested_function_numbered_after_parent_in_traversal_order() {
+        let entries = walk(
+            r"
+            function outer() {
+              return function() { return 1; };
+            }",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["outer", "(anonymous_1)"]);
+    }
+
+    #[test]
+    fn line_number_is_one_based_from_source_start() {
+        let entries = walk("\n\nfunction atLineThree() {}");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].line, 3);
+    }
+
+    #[test]
+    fn short_jsx_in_js_file_retries_with_jsx_parser() {
+        let entries = walk_source(&PathBuf::from("component.js"), "const A = () => <div />;");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "A");
+        assert_eq!(entries[0].line, 1);
+    }
+
+    #[test]
+    fn object_method_shorthand_uses_the_key_name() {
+        let entries = walk("const obj = { run() { return 1; } };");
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["run"]);
+    }
+
+    #[test]
+    fn object_accessors_carry_the_get_and_set_label() {
+        let entries = walk(
+            r"
+            const obj = {
+              get closed() { return true; },
+              set closed(value) { this.value = value; },
+            };",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["get closed", "set closed"]);
+    }
+
+    #[test]
+    fn function_valued_object_property_uses_the_key_name() {
+        let entries = walk("const client = { execute: async (sql) => sql.length };");
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["execute"]);
+    }
+
+    #[test]
+    fn object_property_holding_a_call_leaves_the_callback_to_its_callee() {
+        // The key names only a function-valued property. A property whose value
+        // is a call must not steal the name from that call's callback.
+        let entries = walk("const column = { references: memo(() => other.id) };");
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["memo"]);
+    }
+
+    #[test]
+    fn class_accessors_carry_the_get_and_set_label() {
+        let entries = walk(
+            r"
+            class Client {
+              get closed() { return true; }
+              set closed(value) { this.value = value; }
+            }",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["get closed", "set closed"]);
+    }
+
+    #[test]
+    fn member_assignment_target_names_the_assigned_function() {
+        let entries = walk(
+            r#"
+            client.execute = async (sql) => sql;
+            client["rollback"] = function () { return 1; };
+            "#,
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["execute", "rollback"]);
+    }
+
+    #[test]
+    fn identifier_assignment_target_names_the_assigned_function() {
+        // An assignment to a variable declared earlier names the function after
+        // the variable, as the instrumenter and `Function.prototype.name` do.
+        let entries = walk(
+            r"
+            let startLoad;
+            startLoad = () => {};
+            let handler;
+            handler = function () { return 1; };
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["startLoad", "handler"]);
+    }
+
+    #[test]
+    fn parenthesized_assigned_function_takes_the_target_name() {
+        // The instrumenter removes the parentheses around the assigned value.
+        let entries = walk(
+            r"
+            let x;
+            x = (() => 1);
+            o.m = (function () { return 2; });
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["x", "m"]);
+    }
+
+    #[test]
+    fn assigned_function_keeps_its_own_name() {
+        // An own name comes first, as in the instrumenter and
+        // `Function.prototype.name`.
+        let entries = walk(
+            r"
+            let n;
+            n = function own() {};
+            o.z = function inner() {};
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["own", "inner"]);
+    }
+
+    #[test]
+    fn assigned_class_gives_no_name_to_its_members() {
+        // The instrumenter names only an assigned function or arrow. A class
+        // value must not pass the target name to its first field arrow.
+        let entries = walk(
+            r"
+            let X;
+            X = class { p = () => 1; };
+            o.Y = class { r = () => 2; };
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["(anonymous_0)", "(anonymous_1)"]);
+    }
+
+    #[test]
+    fn assignment_target_name_does_not_reach_the_left_side() {
+        // A function inside the target expression is not the assigned value.
+        let entries = walk("f(() => 1).x = () => 2;");
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["f", "x"]);
+    }
+
+    #[test]
+    fn compound_and_logical_assignments_give_no_name() {
+        // The instrumenter names a function only for a plain `=`. V8 also names
+        // `||=`, `&&=` and `??=`, but the instrumenter is the join partner.
+        let entries = walk(
+            r"
+            let a;
+            a ||= () => 1;
+            let b;
+            b &&= () => 2;
+            let c;
+            c ??= () => 3;
+            let d = '';
+            d += function () { return 4; };
+            ",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "(anonymous_0)",
+                "(anonymous_1)",
+                "(anonymous_2)",
+                "(anonymous_3)"
+            ]
+        );
+    }
+
+    #[test]
+    fn only_callee_named_functions_are_flagged_as_callbacks() {
+        let entries = walk(
+            r"
+            function declared() { return 1; }
+            const bound = () => 2;
+            const obj = { run() { return 3; } };
+            [1].map(() => 4);
+            (function () { return 5; })();
+            ",
+        );
+        let flags: Vec<_> = entries
+            .iter()
+            .map(|e| (e.name.as_str(), e.is_callback))
+            .collect();
+        assert_eq!(
+            flags,
+            vec![
+                ("declared", false),
+                ("bound", false),
+                ("run", false),
+                ("map", true),
+                ("(anonymous_4)", false),
+            ]
+        );
+    }
+
+    #[test]
+    fn drizzle_style_schema_names_every_callback_after_its_callee() {
+        // The shape a Drizzle schema module has: a table callback, a column
+        // reference callback, and an index callback, all anonymous arrows that
+        // the instrumenter names after the function they are passed to.
+        let entries = walk(
+            r#"
+            export const users = sqliteTable("users", {
+              id: text("id").primaryKey(),
+              orgId: text("org_id").references(() => orgs.id),
+            }, (table) => [index("users_org_idx").on(table.orgId)]);
+            "#,
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["references", "sqliteTable"]);
+        assert!(entries.iter().all(|entry| entry.is_callback));
+    }
+
+    fn names(source: &str) -> Vec<String> {
+        walk_source(&PathBuf::from("test.tsx"), source)
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect()
+    }
+
+    #[test]
+    fn callee_name_does_not_reach_a_function_inside_a_named_argument() {
+        // The argument function takes its own or its parent name, so the
+        // callee name does not reach the next unnamed function inside it.
+        assert_eq!(
+            names("let x; foo(x = () => () => 2);"),
+            ["x", "(anonymous_1)"]
+        );
+        assert_eq!(names("foo(o.x = () => () => 2);"), ["x", "(anonymous_1)"]);
+        assert_eq!(
+            names("foo({ k: (() => () => 1) });"),
+            ["k", "(anonymous_1)"]
+        );
+        assert_eq!(
+            names("foo({ k: function own() { return () => 1; } });"),
+            ["own", "(anonymous_1)"]
+        );
+        assert_eq!(
+            names("foo(function g() { return () => 1; });"),
+            ["g", "(anonymous_1)"]
+        );
+    }
+
+    #[test]
+    fn callee_name_applies_only_to_a_direct_argument() {
+        // The instrumenter names a function after the callee only when the
+        // function is an argument itself, through parentheses only.
+        assert_eq!(names("foo((() => 1));"), ["foo"]);
+        assert_eq!(names("foo([() => 1]);"), ["(anonymous_0)"]);
+        assert_eq!(names("foo(...[() => 1]);"), ["(anonymous_0)"]);
+        assert_eq!(names("foo((() => 1) as any);"), ["(anonymous_0)"]);
+        assert_eq!(names("foo(a ?? (() => 1));"), ["(anonymous_0)"]);
+        assert_eq!(
+            names("foo(c ? () => 1 : () => 2);"),
+            ["(anonymous_0)", "(anonymous_1)"]
+        );
+        assert_eq!(names("render(<B onClick={() => 1} />);"), ["(anonymous_0)"]);
+        assert_eq!(
+            names("extendTailwindMerge({ extend: { classGroups: [() => 1] } });"),
+            ["(anonymous_0)"]
+        );
+        assert_eq!(names("push({ k: a ?? (() => 1) });"), ["(anonymous_0)"]);
+    }
+
+    #[test]
+    fn function_default_value_takes_the_binding_name() {
+        // The instrumenter names a function-valued default after the binding
+        // that it is the default of. A renamed property takes the binding
+        // name (`v`), not the key (`k`).
+        assert_eq!(names("function f(cb = () => 1) {}"), ["f", "cb"]);
+        assert_eq!(names("function h(cb = (() => 1)) {}"), ["h", "cb"]);
+        assert_eq!(names("function h(cb = function own() {}) {}"), ["h", "own"]);
+        assert_eq!(names("const fn = (cb = () => 1) => cb;"), ["fn", "cb"]);
+        assert_eq!(names("class P { m(cb = () => 1) {} }"), ["m", "cb"]);
+        assert_eq!(
+            names("function Button({ onClick = () => {} }) {}"),
+            ["Button", "onClick"]
+        );
+        assert_eq!(names("function g({ k: v = () => 1 }) {}"), ["g", "v"]);
+        assert_eq!(names("const { a = () => 1 } = o;"), ["a"]);
+        assert_eq!(names("const { k: v = () => 1 } = o;"), ["v"]);
+        assert_eq!(names("const [b = () => 1] = o;"), ["b"]);
+        assert_eq!(names("[a = () => 1] = [];"), ["a"]);
+        assert_eq!(names("({ a = () => 1 } = o);"), ["a"]);
+        assert_eq!(names("({ k: v = () => 1 } = o);"), ["v"]);
+    }
+
+    #[test]
+    fn default_value_of_a_member_target_stays_anonymous() {
+        // Only an identifier target gives its name to a default value.
+        assert_eq!(names("({ k: o.v = () => 1 } = x);"), ["(anonymous_0)"]);
+        assert_eq!(names("[o.v = () => 1] = x;"), ["(anonymous_0)"]);
+    }
+
+    #[test]
+    fn class_property_arrow_uses_anonymous_counter() {
+        let entries = walk(
+            r"
+            class Foo {
+              bar = () => 1;
+            }",
+        );
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["(anonymous_0)"]);
+    }
+
+    #[test]
+    fn records_one_indexed_utf16_columns() {
+        let entries = walk("function foo() { return 1; }");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].start_column, 1);
+        assert_eq!(entries[0].end_line, 1);
+        assert!(entries[0].end_column > entries[0].start_column);
+    }
+
+    #[test]
+    fn utf16_column_counts_code_units_not_bytes() {
+        let entries = walk("const e = \"\u{1F600}\"; const f = () => 1;");
+        let f = entries.iter().find(|e| e.name == "f").expect("f present");
+        let byte_prefix_len = "const e = \"\u{1F600}\"; const f = ".len() as u32;
+        assert!(f.start_column < byte_prefix_len + 1);
+    }
+
+    #[test]
+    fn utf16_columns_stay_exact_across_a_long_single_line() {
+        // Minified shape: many functions with non-ASCII content on one line.
+        // Columns must match a naive full-prefix UTF-16 count even though the
+        // walker resolves them incrementally, including the backward offset
+        // jump from `outer`'s end to `inner`'s start and the reset to line 2.
+        use std::fmt::Write as _;
+        let mut src = String::new();
+        for i in 0..40 {
+            let _ = write!(src, "function f{i}() {{ return \"\u{1F600}\"; }} ");
+        }
+        src.push_str("function outer() { const inner = () => \"\u{1F600}\"; return inner; }");
+        src.push_str("\nconst tail = () => 1;");
+        let entries = walk(&src);
+        let col = |byte: usize| src[..byte].encode_utf16().count() as u32 + 1;
+
+        for i in [0_usize, 17, 39] {
+            let body = format!("function f{i}() {{ return \"\u{1F600}\"; }}");
+            let start = src.find(&body).expect("function text present");
+            let entry = entries
+                .iter()
+                .find(|e| e.name == format!("f{i}"))
+                .expect("entry present");
+            assert_eq!(entry.line, 1);
+            assert_eq!(entry.start_column, col(start));
+            assert_eq!(entry.end_line, 1);
+            assert_eq!(entry.end_column, col(start + body.len()));
+        }
+
+        let inner_start = src
+            .find("() => \"\u{1F600}\"")
+            .expect("inner arrow present");
+        let inner = entries
+            .iter()
+            .find(|e| e.name == "inner")
+            .expect("inner present");
+        assert_eq!(inner.line, 1);
+        assert_eq!(inner.start_column, col(inner_start));
+
+        let tail = entries
+            .iter()
+            .find(|e| e.name == "tail")
+            .expect("tail present");
+        let line2_start = src.find('\n').expect("newline present") + 1;
+        let tail_start = src.rfind("() => 1").expect("tail arrow present");
+        assert_eq!(tail.line, 2);
+        assert_eq!(
+            tail.start_column,
+            src[line2_start..tail_start].encode_utf16().count() as u32 + 1
+        );
+    }
+
+    #[test]
+    fn same_line_distinct_named_functions_have_distinct_positions() {
+        let entries = walk("function a() {} function b() {}");
+        let a = entries.iter().find(|e| e.name == "a").expect("a present");
+        let b = entries.iter().find(|e| e.name == "b").expect("b present");
+        assert_eq!(a.line, b.line, "both on line 1");
+        assert_ne!(
+            a.start_column, b.start_column,
+            "same-line functions are column-disambiguated"
+        );
+    }
+
+    #[test]
+    fn same_line_anonymous_functions_stay_distinct_via_counter() {
+        let entries = walk("const xs = [() => 1, () => 2];");
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["(anonymous_0)", "(anonymous_1)"]);
+        assert_eq!(entries[0].line, entries[1].line, "both on line 1");
+        assert_ne!(
+            entries[0].name, entries[1].name,
+            "counter keeps them distinct"
+        );
+    }
+
+    /// A chain of `levels` nested arrows on one line.
+    fn nested_arrow_source(levels: usize) -> String {
+        format!("export const f = {}1;\n", "()=>".repeat(levels))
+    }
+
+    #[test]
+    fn deep_nesting_keeps_the_hash_join_with_complexity() {
+        let levels = crate::function_hash::MAX_HASHED_FUNCTION_HEIGHT as usize + 3;
+        let source = nested_arrow_source(levels);
+        let (entries, complexity) = walk_source_with_complexity(&PathBuf::from("a.js"), &source);
+        assert_eq!(entries.len(), levels);
+        // Pre-order: the outermost arrow comes first and has the most levels
+        // of nested functions below it.
+        for (index, entry) in entries.iter().enumerate() {
+            let height = levels - 1 - index;
+            let kept = height <= crate::function_hash::MAX_HASHED_FUNCTION_HEIGHT as usize;
+            assert_eq!(entry.source_hash.is_some(), kept, "height {height}");
+            if let Some(hash) = &entry.source_hash {
+                assert!(
+                    complexity.contains_key(hash),
+                    "height {height} has no metrics"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn column_lookups_stay_linear_on_nested_functions_in_one_line() {
+        // The counter is per thread, so the walk must stay on this thread:
+        // a thread with a registered stack keeps the bounded parse on it.
+        const STACK: usize = 64 << 20;
+        let (encoded, entries, source_len) = std::thread::Builder::new()
+            .stack_size(STACK)
+            .spawn(|| {
+                crate::register_thread_stack(STACK);
+                take_utf16_bytes();
+                let source = nested_arrow_source(4_000);
+                let entries = walk_source(&PathBuf::from("a.js"), &source);
+                (take_utf16_bytes(), entries.len(), source.len())
+            })
+            .expect("probe thread should start")
+            .join()
+            .expect("probe thread should finish");
+        assert_eq!(entries, 4_000);
+        assert!(
+            encoded <= 4 * source_len,
+            "encoded {encoded} bytes for {source_len}"
+        );
+    }
+
+    #[test]
+    fn source_hash_is_the_content_digest_of_the_function_span() {
+        let src = "function foo() { return 1; }";
+        let entries = walk(src);
+        assert_eq!(entries.len(), 1);
+        let hash = entries[0]
+            .source_hash
+            .as_deref()
+            .expect("a shallow function keeps its hash");
+        assert_eq!(hash, fallow_cov_protocol::source_hash_for(src.as_bytes()));
+        assert_eq!(hash.len(), 16);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn source_hash_survives_line_moves_and_tracks_body_edits() {
+        let original = walk("function foo() { return 1; }");
+        let moved = walk("\n\nfunction foo() { return 1; }");
+        assert_eq!(
+            original[0].source_hash, moved[0].source_hash,
+            "a moved-but-unedited function must keep its source_hash"
+        );
+        let edited = walk("function foo() { return 2; }");
+        assert_ne!(
+            original[0].source_hash, edited[0].source_hash,
+            "an edited body must change the source_hash"
+        );
+    }
+}

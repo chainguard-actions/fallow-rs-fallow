@@ -1,0 +1,52 @@
+name: Test health command with complexity thresholds
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: 3.40.0
+          format: json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-health-thresholds
+          type-aware: 'false'
+          max-cyclomatic: '20'
+          max-cognitive: '15'
+          max-crap: '30'
+          max-file-lines: '500'
+          top: '5'
+          sort: cyclomatic
+          threads: '2'
+          min-severity: critical
+      - name: Assert issues is an integer
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a non-negative integer"
+            exit 1
+          fi
+          echo "PASS"
+      - name: Assert results file is valid JSON
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: results file not found"
+            exit 1
+          fi
+          if ! jq empty "$f"; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
+          echo "PASS"

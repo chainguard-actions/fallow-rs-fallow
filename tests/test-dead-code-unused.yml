@@ -1,0 +1,49 @@
+name: Test dead-code detects unused code
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-unused
+          type-aware: 'false'
+      - name: Assert issues found
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not an integer"
+            exit 1
+          fi
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least 1 issue"
+            exit 1
+          fi
+          echo "PASS"
+      - name: Assert results mention the unused code
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: results file not found"
+            exit 1
+          fi
+          head -c 3000 "$f"; echo
+          if ! grep -qE 'orphan|unusedSubtract' "$f"; then
+            echo "FAIL: results do not mention orphan.ts or unusedSubtract"
+            exit 1
+          fi
+          echo "PASS"

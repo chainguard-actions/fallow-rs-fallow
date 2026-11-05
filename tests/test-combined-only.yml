@@ -1,0 +1,35 @@
+name: Test combined run restricted with only
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-only
+          type-aware: 'false'
+          only: dead-code
+      - name: Assert dead-code findings are reported
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES results: $RESULTS"
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$f" ] || ! jq empty "$f"; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          if ! grep -qE 'orphan|unusedSubtract' "$f"; then
+            echo "FAIL: dead-code findings missing from combined results"
+            exit 1
+          fi
+          echo "PASS"
