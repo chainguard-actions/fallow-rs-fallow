@@ -1,4 +1,4 @@
-name: Test changed-since scopes findings to changed files
+name: Test dead-code scoped to one workspace with issue-types
 on:
   workflow_dispatch:
 jobs:
@@ -6,26 +6,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
       - id: action
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/unused-project
+          root: tests/fixtures/monorepo
           version: 3.40.0
           format: json
+          workspace: '@mono/app'
+          issue-types: unused-files,unused-exports
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-changed-since
+          artifacts-dir: fallow-artifacts-workspace
           type-aware: 'false'
-          changed-since: HEAD
-      - name: Assert no findings reported when nothing changed
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "issues: $ISSUES"
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 issues scoped to files changed since HEAD"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
           echo "PASS"

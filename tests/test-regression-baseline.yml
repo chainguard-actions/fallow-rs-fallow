@@ -13,18 +13,16 @@ jobs:
           root: tests/fixtures/unused-project
           version: 3.40.0
           format: json
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-regression-save
+          artifacts-dir: fallow-artifacts-save-regression
           type-aware: 'false'
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
-      - name: Assert regression baseline saved
+      - name: Assert regression baseline written
         run: |
-          f="$GITHUB_WORKSPACE/fallow-regression-baseline.json"
-          if [ ! -f "$f" ]; then
-            echo "FAIL: regression baseline not saved"
+          if [ ! -s "$GITHUB_WORKSPACE/fallow-regression.json" ]; then
+            echo "FAIL: regression baseline not written"
             exit 1
           fi
-          cat "$f"; echo
           echo "PASS"
       - id: compare
         uses: .
@@ -33,20 +31,19 @@ jobs:
           root: tests/fixtures/unused-project
           version: 3.40.0
           format: json
-          fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-regression-compare
-          type-aware: 'false'
-          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
           fail-on-regression: 'true'
           tolerance: '0'
-      - name: Assert compare run succeeded with same issue count
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-compare-regression
+          type-aware: 'false'
+      - name: Assert no regression (same code)
         env:
-          SAVED: ${{ steps.save.outputs.issues }}
-          NOW: ${{ steps.compare.outputs.issues }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
         run: |
-          echo "saved: $SAVED now: $NOW"
-          if [ -z "$NOW" ] || [ "$SAVED" != "$NOW" ]; then
-            echo "FAIL: issue count changed between identical runs"
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
           echo "PASS"

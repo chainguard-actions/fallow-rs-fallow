@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,28 +6,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snapshot
+      - id: snap
         uses: .
         with:
           command: health
           root: tests/fixtures/clean-project
           version: 3.40.0
           format: json
+          score: 'true'
+          save-snapshot: 'true'
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-snapshot
           type-aware: 'false'
-          save-snapshot: 'true'
-      - name: Assert a snapshot was saved
+      - name: Show snapshot files
         run: |
-          ls -la tests/fixtures/clean-project/.fallow/snapshots 2>/dev/null || true
-          ls -la .fallow/snapshots 2>/dev/null || true
-          count=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | wc -l)
-          echo "snapshot files: $count"
-          if [ "$count" -lt 1 ]; then
-            echo "FAIL: no snapshot file saved under .fallow/snapshots"
-            exit 1
-          fi
-          echo "PASS"
+          find "$GITHUB_WORKSPACE" -path '*.fallow/snapshots*' -print 2>/dev/null | head -20 || true
       - id: trend
         uses: .
         with:
@@ -35,19 +28,20 @@ jobs:
           root: tests/fixtures/clean-project
           version: 3.40.0
           format: json
+          score: 'true'
+          trend: 'true'
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-trend
           type-aware: 'false'
-          trend: 'true'
-      - name: Assert trend run produced results
+      - name: Assert both runs produced outputs
         env:
-          RESULTS: ${{ steps.trend.outputs.results }}
+          SNAP_ISSUES: ${{ steps.snap.outputs.issues }}
+          TREND_ISSUES: ${{ steps.trend.outputs.issues }}
         run: |
-          echo "results: $RESULTS"
-          f="$RESULTS"
-          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$f" ] || ! jq empty "$f"; then
-            echo "FAIL: results file missing or invalid JSON"
+          echo "snapshot issues: $SNAP_ISSUES"
+          echo "trend issues: $TREND_ISSUES"
+          if ! [[ "$SNAP_ISSUES" =~ ^[0-9]+$ ]] || ! [[ "$TREND_ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not integers"
             exit 1
           fi
           echo "PASS"

@@ -11,42 +11,33 @@ jobs:
         with:
           command: health
           root: tests/fixtures/clean-project
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
           version: 3.40.0
           format: json
-          fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-health-thresholds
-          type-aware: 'false'
           max-cyclomatic: '20'
           max-cognitive: '15'
           max-crap: '30'
           max-file-lines: '500'
-          top: '5'
-          sort: cyclomatic
-          threads: '2'
+          sort: cognitive
+          top: '10'
           min-severity: critical
-      - name: Assert issues is an integer
+          threads: '2'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-health
+          type-aware: 'false'
+      - name: Assert issues output is an integer
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not a non-negative integer"
             exit 1
           fi
-          echo "PASS"
-      - name: Assert results file is valid JSON
-        env:
-          RESULTS: ${{ steps.action.outputs.results }}
-        run: |
-          echo "results: $RESULTS"
-          f="$RESULTS"
-          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$f" ]; then
-            echo "FAIL: results file not found"
-            exit 1
-          fi
-          if ! jq empty "$f"; then
-            echo "FAIL: results file is not valid JSON"
+          if [ -z "$RESULTS" ]; then
+            echo "FAIL: results output empty"
             exit 1
           fi
           echo "PASS"

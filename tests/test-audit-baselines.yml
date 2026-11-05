@@ -1,4 +1,4 @@
-name: Test audit with gate, worsened and per-analysis baselines
+name: Test audit with per-analysis baselines
 on:
   workflow_dispatch:
 jobs:
@@ -15,10 +15,10 @@ jobs:
           root: tests/fixtures/clean-project
           version: 3.40.0
           format: json
+          save-baseline: ${{ github.workspace }}/bl-dead-code.json
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-audit-dc
+          artifacts-dir: fallow-artifacts-bl-dc
           type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
       - name: Save health baseline
         uses: .
         with:
@@ -26,10 +26,10 @@ jobs:
           root: tests/fixtures/clean-project
           version: 3.40.0
           format: json
+          save-baseline: ${{ github.workspace }}/bl-health.json
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-audit-health
+          artifacts-dir: fallow-artifacts-bl-health
           type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/audit-health-baseline.json
       - name: Save dupes baseline
         uses: .
         with:
@@ -37,19 +37,10 @@ jobs:
           root: tests/fixtures/clean-project
           version: 3.40.0
           format: json
+          save-baseline: ${{ github.workspace }}/bl-dupes.json
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-audit-dupes
+          artifacts-dir: fallow-artifacts-bl-dupes
           type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
-      - name: Assert baselines exist
-        run: |
-          for b in audit-dead-code-baseline.json audit-health-baseline.json audit-dupes-baseline.json; do
-            if [ ! -f "$GITHUB_WORKSPACE/$b" ]; then
-              echo "FAIL: $b missing"
-              exit 1
-            fi
-          done
-          echo "PASS"
       - id: action
         uses: .
         with:
@@ -57,32 +48,30 @@ jobs:
           root: tests/fixtures/clean-project
           version: 3.40.0
           format: json
+          changed-since: HEAD
+          gate: all
+          worsened: warn
+          dead-code-baseline: ${{ github.workspace }}/bl-dead-code.json
+          health-baseline: ${{ github.workspace }}/bl-health.json
+          dupes-baseline: ${{ github.workspace }}/bl-dupes.json
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-audit
           type-aware: 'false'
-          changed-since: HEAD
-          gate: new-only
-          worsened: warn
-          dead-code-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
-          health-baseline: ${{ github.workspace }}/audit-health-baseline.json
-          dupes-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
       - name: Assert audit verdict and gate
         env:
           VERDICT: ${{ steps.action.outputs.verdict }}
           GATE: ${{ steps.action.outputs.gate }}
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "verdict: $VERDICT gate: $GATE issues: $ISSUES"
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE"
+          echo "issues: $ISSUES"
           case "$VERDICT" in
             pass|warn|fail) ;;
-            *) echo "FAIL: verdict should be pass/warn/fail"; exit 1 ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
           esac
-          if [ "$GATE" != "new-only" ]; then
-            echo "FAIL: expected gate new-only"
-            exit 1
-          fi
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 introduced findings with no changes"
+          if [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all'"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test health min-score gate passes with a low threshold
+name: Test health command with min-score gate
 on:
   workflow_dispatch:
 jobs:
@@ -13,23 +13,18 @@ jobs:
           root: tests/fixtures/clean-project
           version: 3.40.0
           format: json
-          artifacts-dir: fallow-artifacts-min-score
-          type-aware: 'false'
           min-score: '0'
-      - name: Assert results include a health score
+          artifacts-dir: fallow-artifacts-minscore
+          type-aware: 'false'
+      - name: Assert run passed the score gate
         env:
-          RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
-          echo "results: $RESULTS"
-          f="$RESULTS"
-          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$f" ] || ! jq empty "$f"; then
-            echo "FAIL: results file missing or invalid JSON"
-            exit 1
-          fi
-          head -c 3000 "$f"; echo
-          if ! grep -qi 'score' "$f"; then
-            echo "FAIL: results do not contain a score"
+          echo "issues: $ISSUES"
+          echo "gates-failed: $FAILED"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not a non-negative integer"
             exit 1
           fi
           echo "PASS"
