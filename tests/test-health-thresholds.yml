@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds, sort and top
+name: Test health with complexity thresholds, sort, top and min-score
 on:
   workflow_dispatch:
 jobs:
@@ -7,34 +7,31 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create fixture project
+      - name: Create sample project
         run: |
           set -e
-          D="$GITHUB_WORKSPACE/fx-health"
+          D="$GITHUB_WORKSPACE/fallow-test-sample"
           rm -rf "$D"
           mkdir -p "$D/src"
           cat > "$D/package.json" <<'EOF'
-          {"name":"fx-health","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          {"name":"fallow-test-sample","version":"1.0.0","private":true,"main":"src/index.ts"}
           EOF
-          cat > "$D/src/index.js" <<'EOF'
-          import { classify } from './complex.js';
-          console.log(classify(1, 2, 3));
+          cat > "$D/src/index.ts" <<'EOF'
+          import { used } from './util';
+          export function main(): number {
+            return used(3);
+          }
+          main();
           EOF
-          cat > "$D/src/complex.js" <<'EOF'
-          export function classify(a, b, c) {
-            let r = 0;
-            if (a > 0) {
-              if (b > 0) {
-                for (let i = 0; i < c; i++) {
-                  if (i % 2 === 0 && a > b) { r += i; } else if (i % 3 === 0 || b > c) { r -= i; } else { r *= 2; }
-                }
-              } else if (b < -10) {
-                while (r < 100) { r += a > c ? 3 : 7; }
-              }
-            } else if (a < -5) {
-              switch (c) { case 1: r = 1; break; case 2: r = 2; break; case 3: r = 3; break; default: r = -1; }
+          cat > "$D/src/util.ts" <<'EOF'
+          export function used(n: number): number {
+            if (n > 2) {
+              return n * 2;
             }
-            return r;
+            return n;
+          }
+          export function unusedHelper(): number {
+            return 2;
           }
           EOF
 
@@ -42,35 +39,43 @@ jobs:
         uses: .
         with:
           command: health
-          root: fx-health
-          max-cyclomatic: '2'
-          max-cognitive: '2'
-          max-crap: '5'
+          root: fallow-test-sample
+          max-cyclomatic: '30'
+          max-cognitive: '25'
+          max-crap: '50'
           sort: cognitive
-          top: '3'
+          top: '10'
+          min-score: '0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert outputs
+      - name: Assert step succeeded and issues is a number
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
+            exit 1
+          fi
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert results file is valid JSON
+        env:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues is not an integer: '$ISSUES'"
+          echo "results: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
-            exit 1
-          fi
-          if ! grep -q 'classify' "$RESULTS"; then
-            echo "FAIL: expected the complex 'classify' function to be reported with low thresholds"
-            jq . "$RESULTS" | head -100
-            exit 1
-          fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

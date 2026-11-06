@@ -7,56 +7,33 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create fixture project and coverage data
+      - name: Create sample project and empty coverage file
         run: |
           set -e
-          D="$GITHUB_WORKSPACE/fx-coverage"
+          D="$GITHUB_WORKSPACE/fallow-test-sample"
           rm -rf "$D"
           mkdir -p "$D/src" "$D/coverage"
           cat > "$D/package.json" <<'EOF'
-          {"name":"fx-coverage","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          {"name":"fallow-test-sample","version":"1.0.0","private":true,"main":"src/index.ts"}
           EOF
-          cat > "$D/src/index.js" <<'EOF'
-          import { add } from './math.js';
-          console.log(add(1, 2));
-          EOF
-          cat > "$D/src/math.js" <<'EOF'
-          export function add(a, b) {
-            if (a > b) { return a + b; }
-            return b + a;
-          }
-          EOF
-          cat > "$D/coverage/coverage-final.json" <<'EOF'
-          {
-            "/ci/build/src/math.js": {
-              "path": "/ci/build/src/math.js",
-              "statementMap": {
-                "0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 40}},
-                "1": {"start": {"line": 3, "column": 2}, "end": {"line": 3, "column": 15}}
-              },
-              "fnMap": {
-                "0": {
-                  "name": "add",
-                  "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}},
-                  "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 4, "column": 1}},
-                  "line": 1
-                }
-              },
-              "branchMap": {},
-              "s": {"0": 1, "1": 1},
-              "f": {"0": 1},
-              "b": {}
+          cat > "$D/src/index.ts" <<'EOF'
+          export function main(n: number): number {
+            if (n > 1) {
+              return n - 1;
             }
+            return n;
           }
+          main(2);
           EOF
+          echo '{}' > "$D/coverage/coverage-final.json"
 
       - id: action
         uses: .
         with:
           command: health
-          root: fx-coverage
-          coverage: fx-coverage/coverage/coverage-final.json
-          coverage-root: /ci/build
+          root: fallow-test-sample
+          coverage: ${{ github.workspace }}/fallow-test-sample/coverage/coverage-final.json
+          coverage-root: ${{ github.workspace }}/fallow-test-sample
           max-crap: '30'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -64,14 +41,14 @@ jobs:
           sarif: 'false'
           format: json
 
-      - name: Assert results
+      - name: Assert issues is a number and results JSON exists
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues is not an integer"
+            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then

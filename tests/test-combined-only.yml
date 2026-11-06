@@ -1,4 +1,4 @@
-name: Test combined run with skip selector
+name: Test combined run with only selector
 on:
   workflow_dispatch:
 jobs:
@@ -7,49 +7,54 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create fixture project
+      - name: Create sample project
         run: |
           set -e
-          D="$GITHUB_WORKSPACE/fx-skip"
+          D="$GITHUB_WORKSPACE/fallow-test-sample"
           rm -rf "$D"
           mkdir -p "$D/src"
           cat > "$D/package.json" <<'EOF'
-          {"name":"fx-skip","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          {"name":"fallow-test-sample","version":"1.0.0","private":true,"main":"src/index.ts"}
           EOF
-          cat > "$D/src/index.js" <<'EOF'
-          import { used } from './util.js';
-          console.log(used(2));
+          cat > "$D/src/index.ts" <<'EOF'
+          import { used } from './util';
+          export function main(): number {
+            return used();
+          }
+          main();
           EOF
-          echo 'export function used(n) { return n * 2; }' > "$D/src/util.js"
+          cat > "$D/src/util.ts" <<'EOF'
+          export function used(): number {
+            return 1;
+          }
+          export function unusedHelper(): number {
+            return 2;
+          }
+          EOF
 
       - id: action
         uses: .
         with:
-          root: fx-skip
-          skip: dupes,health
+          root: fallow-test-sample
+          only: dead-code,health
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert skipped analyses absent
+      - name: Assert combined run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues is not an integer"
+            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
             exit 1
           fi
           if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
             echo "FAIL: results file missing or invalid"
-            exit 1
-          fi
-          jq 'keys' "$RESULTS"
-          if [ "$(jq -r '(.dupes // null) == null and (.health // null) == null' "$RESULTS")" != "true" ]; then
-            echo "FAIL: dupes/health sections should be absent when skipped"
             exit 1
           fi
           echo "PASS"

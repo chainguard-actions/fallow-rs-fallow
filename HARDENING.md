@@ -10,13 +10,13 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.34.0** was hardened automatically. 8 finding(s) were identified and resolved across 1 iteration(s).
+Action **fallow-rs--fallow/v3.34.0** was hardened automatically. 8 finding(s) were identified and resolved across 2 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Rule (a) broken in the 'Install fallow' step: the expression is placed directly in the run: command: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Move it into env: (for example ACTION_PATH: ${{ github.action_path }}) and use `bash "$ACTION_PATH/action/scripts/install.sh"`, or use the runner-set "$GITHUB_ACTION_PATH".
+Rule (a): the 'Install fallow' step puts a GitHub expression directly into its run: command: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Pass the path through env (for example ACTION_PATH: ${{ github.action_path }}) and use "$ACTION_PATH", or use the built-in $GITHUB_ACTION_PATH, quoted.
 
 Locations:
 
@@ -24,7 +24,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a) broken in the 'Fallow branded token' step: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh` puts an expression directly in run:.
+Rule (a): the 'Fallow branded token' step puts a GitHub expression directly into its run: command: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`.
 
 Locations:
 
@@ -32,7 +32,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a) broken in the 'Run analysis' step: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh` puts an expression directly in run:.
+Rule (a): the 'Run analysis' step puts a GitHub expression directly into its run: command: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`.
 
 Locations:
 
@@ -40,23 +40,23 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a) broken in the 'Check Code Scanning availability' step: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh` puts an expression directly in run:.
+Rule (a): the 'Check Code Scanning availability' step puts a GitHub expression directly into its run: command: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`.
 
 Locations:
 
-- `action.yml:546`
+- `action.yml:545`
 
 ### script-injection (severity: high)
 
-Rule (a) broken in the 'Post PR comment' step: `run: bash ${{ github.action_path }}/action/scripts/comment.sh` puts an expression directly in run:.
+Rule (a): the 'Post PR comment' step puts a GitHub expression directly into its run: command: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`.
 
 Locations:
 
-- `action.yml:591`
+- `action.yml:592`
 
 ### script-injection (severity: high)
 
-Rule (a) broken in the 'Emit inline annotations' step: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh` puts an expression directly in run:.
+Rule (a): the 'Emit inline annotations' step puts a GitHub expression directly into its run: command: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`.
 
 Locations:
 
@@ -64,7 +64,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a) broken in the 'Job summary' step: `run: bash ${{ github.action_path }}/action/scripts/summary.sh` puts an expression directly in run:.
+Rule (a): the 'Job summary' step puts a GitHub expression directly into its run: command: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`.
 
 Locations:
 
@@ -72,7 +72,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Rule (a) broken in the 'Post review comments' step: `run: bash ${{ github.action_path }}/action/scripts/review.sh` puts an expression directly in run:.
+Rule (a): the 'Post review comments' step puts a GitHub expression directly into its run: command: `run: bash ${{ github.action_path }}/action/scripts/review.sh`.
 
 Locations:
 
@@ -86,5 +86,13 @@ Locations:
 
 **Notes:**
 
-In action.yml, changed all 8 `run: bash ${{ github.action_path }}/action/scripts/<x>.sh` lines (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review) to `run: bash "$GITHUB_ACTION_PATH"/action/scripts/<x>.sh`. All steps use shell: bash, so the env var expands correctly. The ACTION_JQ_DIR values in the env: blocks were left alone, since putting an expression in env: is already safe.
+In action.yml, the 8 composite steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review) used to run `bash ${{ github.action_path }}/action/scripts/X.sh`. They now run `bash "$GITHUB_ACTION_PATH/action/scripts/X.sh"`, quoted. Every one of these steps uses shell: bash, so the $VAR syntax is correct. Expressions in env: values (ACTION_JQ_DIR) were left as they are, since they are not part of the shell text.
+
+### Iteration 2
+
+**Fixes applied:** invalid-yaml
+
+**Notes:**
+
+action.yml had three places where a step's text was corrupted, with neighbouring steps or a comment run together on the same line. That broke YAML parsing at line 419. Fixes: (1) The `run:` line of the 'Fallow branded token' step was indented too far and had the next comment stuck to it. I set it back to normal step indentation and moved the comment onto its own lines. (2) 'Emit inline annotations' had a stray `ru` before its `run:`, and the 'Job summary' step started on that same line without a `- `. I removed the stray text and put 'Job summary' back as its own step. (3) The `run:` line of 'Job summary' was indented too far and ran into '- name: Post review comments'. I fixed the indentation and split the two steps apart. No commands, env vars or pinned SHAs were changed. I haven't run a YAML parser on the file. I re-read each edited section, but I only searched for leftovers of this kind of corruption, and that search wasn't conclusive.
 
