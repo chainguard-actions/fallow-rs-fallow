@@ -16,7 +16,7 @@ Action **fallow-rs--fallow/v3.35.0** was hardened automatically. 1 finding(s) we
 
 ### script-injection (severity: high)
 
-Rule (a): a GitHub Actions expression is placed directly inside run: shell commands. 8 composite steps use `run: bash ${{ github.action_path }}/action/scripts/<script>.sh` (install.sh, broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh, review.sh). The check fails any ${{ }} in a run: script, whatever its context. Fix: use the env var instead, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
+Rule (a) direct expression interpolation: several composite steps in action.yml put a ${{ }} expression straight into the run: shell command, e.g. `run: bash ${{ github.action_path }}/action/scripts/install.sh`. This happens in 8 steps: Install fallow (install.sh), Fallow branded token (broker-token.sh), Run analysis (analyze.sh), Check Code Scanning availability (check-code-scanning.sh), Post PR comment (comment.sh), Emit inline annotations (annotate.sh), Job summary (summary.sh) and Post review comments (review.sh). The template is substituted before the shell parses the line, and the path is not quoted. Fix: use the runner-provided env var, quoted, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
@@ -37,5 +37,5 @@ Locations:
 
 **Notes:**
 
-Replaced `run: bash ${{ github.action_path }}/action/scripts/<script>.sh` with `run: bash "$GITHUB_ACTION_PATH"/action/scripts/<script>.sh` in all 8 composite steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review). All steps are shell: bash, so the env var syntax is correct. The env: values such as ACTION_JQ_DIR still use github.action_path, which is allowed because they are not inside run: scripts.
+In action.yml, I changed 8 steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review) from `run: bash ${{ github.action_path }}/action/scripts/X.sh` to `run: bash "$GITHUB_ACTION_PATH/action/scripts/X.sh"`. All of them use shell: bash, so the $VAR syntax is correct. I left the ACTION_JQ_DIR env entries that use github.action_path as they were, because env: values are not run by a shell. A few edits reported success but had not saved, so I re-applied them and checked the file again with a search.
 

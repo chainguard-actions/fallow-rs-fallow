@@ -1,4 +1,4 @@
-name: Test health rejects non-integer min-invocations-hot
+name: Test invalid low-traffic-threshold is rejected
 on:
   workflow_dispatch:
 jobs:
@@ -13,12 +13,13 @@ jobs:
           command: health
           root: tests/fixtures/sample-project
           version: 3.35.0
+          fail-on-issues: 'false'
           auto-changed-since: 'false'
-          artifacts-dir: fallow-out-invalid-runtime
-          runtime-coverage: coverage/v8
-          min-invocations-hot: many
+          artifacts-dir: fallow-out-invalid-ltt
+          runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          min-invocations-hot: '100'
           min-observation-volume: '10'
-          low-traffic-threshold: '0.1'
+          low-traffic-threshold: not-a-number
       - name: Assert action failed validation
         env:
           OUTCOME: ${{ steps.action.outcome }}
@@ -27,11 +28,11 @@ jobs:
           echo "outcome: $OUTCOME"
           echo "issues: '$ISSUES'"
           if [ "$OUTCOME" != "failure" ]; then
-            echo "FAIL: expected failure for non-integer min-invocations-hot"
+            echo "FAIL: expected failure for invalid low-traffic-threshold"
             exit 1
           fi
           if [ -n "$ISSUES" ]; then
-            echo "FAIL: analysis should not have run"
+            echo "FAIL: analysis should not have produced an issue count"
             exit 1
           fi
           echo "PASS"

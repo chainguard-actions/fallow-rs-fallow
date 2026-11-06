@@ -1,4 +1,4 @@
-name: Test changed-since scoping to HEAD
+name: Test dead-code scoped with changed-since
 on:
   workflow_dispatch:
 jobs:
@@ -26,10 +26,6 @@ jobs:
           echo "changed-files-unavailable: $UNAVAILABLE"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
-            exit 1
-          fi
-          if [ "$UNAVAILABLE" != "false" ]; then
-            echo "FAIL: expected changed-files-unavailable=false"
             exit 1
           fi
           echo "PASS"

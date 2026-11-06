@@ -1,4 +1,4 @@
-name: Test health with min-score gate (always satisfiable)
+name: Test health min-score and min-severity gates
 on:
   workflow_dispatch:
 jobs:
@@ -16,13 +16,16 @@ jobs:
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-health-min-score
           min-score: '0'
+          min-severity: critical
       - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          echo "gates-failed: '$GATES_FAILED'"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1

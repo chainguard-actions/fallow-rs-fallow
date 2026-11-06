@@ -1,4 +1,0 @@
-{
-  "ignorePatterns": ["**/orphan.ts"],
-  "ignoreDependencies": ["left-pad"]
-}

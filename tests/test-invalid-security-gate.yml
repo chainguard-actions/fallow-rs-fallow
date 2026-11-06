@@ -1,4 +1,4 @@
-name: Test security rejects an invalid security-gate value
+name: Test security rejects invalid security-gate
 on:
   workflow_dispatch:
 jobs:
@@ -15,7 +15,7 @@ jobs:
           version: 3.35.0
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-invalid-security-gate
-          security-gate: always
+          security-gate: sometimes
       - name: Assert action failed validation
         env:
           OUTCOME: ${{ steps.action.outcome }}
@@ -28,7 +28,7 @@ jobs:
             exit 1
           fi
           if [ -n "$ISSUES" ]; then
-            echo "FAIL: analysis should not have run"
+            echo "FAIL: analysis should not have produced an issue count"
             exit 1
           fi
           echo "PASS"
