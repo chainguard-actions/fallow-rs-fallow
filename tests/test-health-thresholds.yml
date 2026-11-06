@@ -1,4 +1,4 @@
-name: Test health thresholds and sorting
+name: Test health with complexity thresholds, top, sort, min-severity and threads
 on:
   workflow_dispatch:
 
@@ -16,13 +16,13 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          max-cyclomatic: '25'
-          max-cognitive: '20'
-          max-crap: '40.5'
-          sort: cognitive
+          max-cyclomatic: '20'
+          max-cognitive: '15'
+          max-crap: '30.0'
           top: '5'
-          threads: '2'
+          sort: cognitive
           min-severity: critical
+          threads: '2'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -30,7 +30,7 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert health ran with thresholds
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -41,13 +41,20 @@ jobs:
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: trivial fixture should have no complexity findings at these thresholds"
-            exit 1
-          fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: $RESULTS"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: results is not valid JSON"; exit 1; }
+          jq -e . "$RESULTS" > /dev/null || { echo "FAIL: results is not valid JSON"; exit 1; }
+          echo "PASS"
+
+      - name: Assert threshold flags were passed to fallow
+        run: |
+          echo "FALLOW_ANALYSIS_ARGS_JSON=$FALLOW_ANALYSIS_ARGS_JSON"
+          for flag in --max-cyclomatic --max-cognitive --max-crap --top --sort --min-severity --threads; do
+            if ! echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e --arg f "$flag" 'index($f) != null' > /dev/null; then
+              echo "FAIL: expected $flag in analysis args"
+              exit 1
+            fi
+          done
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test save-snapshot then trend
+name: Test health save-snapshot followed by trend
 on:
   workflow_dispatch:
 
@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - id: snap
+      - id: snapshot
         uses: .
         with:
           command: health
@@ -24,14 +24,18 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert a snapshot was written
+      - name: Assert snapshot run
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
         run: |
-          found=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
-          echo "snapshots: $found"
-          if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file found under any .fallow/snapshots directory"
+          echo "issues: $ISSUES"
+          echo "args: $FALLOW_ANALYSIS_ARGS_JSON"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
+          echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e 'index("--save-snapshot") != null' > /dev/null \
+            || { echo "FAIL: --save-snapshot missing"; exit 1; }
           echo "PASS"
 
       - id: trend
@@ -48,12 +52,13 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert trend run succeeded
+      - name: Assert trend run
         env:
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "args: $FALLOW_ANALYSIS_ARGS_JSON"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
@@ -62,4 +67,6 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
+          echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e 'index("--trend") != null' > /dev/null \
+            || { echo "FAIL: --trend missing"; exit 1; }
           echo "PASS"

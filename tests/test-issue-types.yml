@@ -1,0 +1,39 @@
+name: Test dead-code issue-types filter
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FALLOW_SKIP_BINARY_VERIFY: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/simple-js
+          format: json
+          issue-types: 'unused-exports, unused-files'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+
+      - name: Assert outputs and flags
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "args: $FALLOW_ANALYSIS_ARGS_JSON"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e 'index("--unused-exports") != null and index("--unused-files") != null' > /dev/null \
+            || { echo "FAIL: issue-type flags missing"; exit 1; }
+          echo "PASS"

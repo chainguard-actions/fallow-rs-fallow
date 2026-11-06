@@ -1,4 +1,4 @@
-name: Test health hotspots with since and min-commits
+name: Test health with Istanbul coverage and coverage-root
 on:
   workflow_dispatch:
 
@@ -9,8 +9,6 @@ jobs:
       FALLOW_SKIP_BINARY_VERIFY: '1'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
 
       - id: action
         uses: .
@@ -18,9 +16,9 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          hotspots: 'true'
-          since: 1y
-          min-commits: '1'
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /ci/project
+          max-crap: '30'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -28,12 +26,13 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert hotspot analysis ran
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "args: $FALLOW_ANALYSIS_ARGS_JSON"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
@@ -42,4 +41,6 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
+          echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e 'index("--coverage") != null and index("--coverage-root") != null' > /dev/null \
+            || { echo "FAIL: coverage flags missing"; exit 1; }
           echo "PASS"

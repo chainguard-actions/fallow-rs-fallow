@@ -1,4 +1,4 @@
-name: Test changed-since scoping with issue-types
+name: Test changed-since scoping
 on:
   workflow_dispatch:
 
@@ -19,23 +19,19 @@ jobs:
           root: tests/fixtures/simple-js
           format: json
           changed-since: HEAD
-          issue-types: unused-files,unused-exports
           fail-on-issues: 'false'
-          auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert scoped analysis ran
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          echo "changed-files-unavailable: $UNAVAILABLE"
+          echo "args: $FALLOW_ANALYSIS_ARGS_JSON"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
@@ -44,4 +40,6 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
+          echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e 'index("--changed-since") != null' > /dev/null \
+            || { echo "FAIL: --changed-since missing"; exit 1; }
           echo "PASS"

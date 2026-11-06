@@ -1,4 +1,4 @@
-name: Test dupes tuning options
+name: Test dupes with min-tokens, min-lines, threshold and top
 on:
   workflow_dispatch:
 
@@ -16,7 +16,7 @@ jobs:
           command: dupes
           root: tests/fixtures/simple-js
           format: json
-          min-tokens: '20'
+          min-tokens: '30'
           min-lines: '3'
           threshold: '100'
           top: '5'
@@ -27,19 +27,23 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert dupes ran
+      - name: Assert outputs and flags
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "args: $FALLOW_ANALYSIS_ARGS_JSON"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: $RESULTS"
+            echo "FAIL: results file missing"
             exit 1
           fi
+          for flag in --min-tokens --min-lines --threshold --top; do
+            echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e --arg f "$flag" 'index($f) != null' > /dev/null \
+              || { echo "FAIL: $flag missing"; exit 1; }
+          done
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test health min-score gate (passing)
+name: Test health min-score gate (score 0 always passes)
 on:
   workflow_dispatch:
 
@@ -24,19 +24,21 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert health ran and min-score 0 did not fail
+      - name: Assert outputs and implied flags
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "args: $FALLOW_ANALYSIS_ARGS_JSON"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: $RESULTS"
+            echo "FAIL: results file missing"
             exit 1
           fi
+          echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e 'index("--min-score") != null and index("--complexity") != null' > /dev/null \
+            || { echo "FAIL: expected --min-score and implied --complexity"; exit 1; }
           echo "PASS"
