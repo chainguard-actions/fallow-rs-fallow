@@ -1,4 +1,4 @@
-name: Test git-derived changed-workspaces scoping
+name: Test dead-code scoped with changed-workspaces
 on:
   workflow_dispatch:
 jobs:
@@ -20,10 +20,20 @@ jobs:
       - name: Assert changed-workspaces run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          case "$RESULTS" in
+            /*) FILE="$RESULTS" ;;
+            *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
+          esac
+          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
           echo "PASS"

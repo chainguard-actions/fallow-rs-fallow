@@ -18,7 +18,7 @@ jobs:
           changed-since: HEAD
           security-gate: new
           artifacts-dir: fallow-artifacts-security
-      - name: Assert security run results
+      - name: Assert security run produced a count
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
@@ -30,7 +30,7 @@ jobs:
             exit 1
           fi
           if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new', got '$GATE'"
+            echo "FAIL: expected gate 'new'"
             exit 1
           fi
           echo "PASS"
