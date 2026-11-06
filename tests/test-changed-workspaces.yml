@@ -1,4 +1,4 @@
-name: Test git-derived changed-workspaces scoping
+name: Test changed-workspaces scoping
 on:
   workflow_dispatch:
 jobs:

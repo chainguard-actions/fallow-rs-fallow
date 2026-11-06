@@ -1,4 +1,4 @@
-name: Test scoping output to a single workspace
+name: Test workspace scoping in a monorepo
 on:
   workflow_dispatch:
 jobs:
@@ -15,7 +15,7 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          workspace: web
+          workspace: app
       - name: Assert workspace-scoped results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
@@ -31,8 +31,8 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
-          if grep -q 'ADMIN_UNUSED' "$RESULTS"; then
-            echo "FAIL: admin workspace findings leaked into web-scoped results"
+          if grep -q 'libUnused' "$RESULTS"; then
+            echo "FAIL: findings from the lib workspace leaked into app-scoped output"
             exit 1
           fi
           echo "PASS"

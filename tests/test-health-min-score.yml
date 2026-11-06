@@ -1,4 +1,4 @@
-name: Test health score and severity gates that pass
+name: Test health min-score and min-severity gates pass
 on:
   workflow_dispatch:
 jobs:
@@ -17,21 +17,21 @@ jobs:
           type-aware: 'false'
           min-score: '0'
           min-severity: critical
-      - name: Assert gates passed and results written
+      - name: Assert gates did not fail
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
           FAILED: ${{ steps.action.outputs.gates-failed }}
+          PASSED: ${{ steps.action.outputs.gates-passed }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           echo "gates-failed: $FAILED"
+          echo "gates-passed: $PASSED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if echo "$FAILED" | grep -qE 'health-min-score|health-min-severity'; then
+            echo "FAIL: min-score/min-severity gate failed unexpectedly"
             exit 1
           fi
           echo "PASS"

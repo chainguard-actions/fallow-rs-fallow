@@ -1,4 +1,4 @@
-name: Test saving a vital-signs snapshot and comparing trend
+name: Test health snapshot and trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,23 +6,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snapshot
+      - name: Prepare writable copy of the fixture
+        run: |
+          rm -rf snapshot-project
+          cp -r tests/fixtures/dead-code-project snapshot-project
+          chmod -R u+w snapshot-project
+      - id: save
         uses: .
         with:
           command: health
-          root: tests/fixtures/dead-code-project
+          root: snapshot-project
           version: '3.39.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          score: 'true'
           save-snapshot: 'true'
       - name: Assert snapshot saved
         run: |
-          dir="$GITHUB_WORKSPACE/tests/fixtures/dead-code-project/.fallow/snapshots"
-          ls -la "$dir" || true
-          if [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
-            echo "FAIL: no snapshot written under $dir"
+          ls -laR snapshot-project/.fallow 2>/dev/null || true
+          count=$(find snapshot-project/.fallow/snapshots -type f 2>/dev/null | wc -l)
+          echo "snapshot files: $count"
+          if [ "$count" -lt 1 ]; then
+            echo "FAIL: no snapshot written under snapshot-project/.fallow/snapshots"
             exit 1
           fi
           echo "PASS"
@@ -30,12 +35,11 @@ jobs:
         uses: .
         with:
           command: health
-          root: tests/fixtures/dead-code-project
+          root: snapshot-project
           version: '3.39.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          score: 'true'
           trend: 'true'
       - name: Assert trend run produced results
         env:

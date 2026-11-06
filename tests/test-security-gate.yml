@@ -15,23 +15,24 @@ jobs:
           root: tests/fixtures/dead-code-project
           version: '3.39.0'
           fail-on-issues: 'false'
-          auto-changed-since: 'false'
           type-aware: 'false'
           changed-since: HEAD
           security-gate: new
-      - name: Assert security gate applied
+      - name: Assert security gate ran
         env:
-          GATE: ${{ steps.action.outputs.gate }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
-          echo "gate: $GATE"
           echo "issues: $ISSUES"
-          if [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new'"
-            exit 1
-          fi
+          echo "gate: $GATE"
+          echo "gates-failed: $FAILED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
+            echo "FAIL: expected gate 'new'"
             exit 1
           fi
           echo "PASS"

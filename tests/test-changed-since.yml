@@ -1,4 +1,4 @@
-name: Test dupes with token, line and percentage thresholds
+name: Test changed-since scoping
 on:
   workflow_dispatch:
 jobs:
@@ -6,26 +6,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: action
         uses: .
         with:
-          command: dupes
+          command: dead-code
           root: tests/fixtures/dead-code-project
           version: '3.39.0'
           fail-on-issues: 'false'
-          auto-changed-since: 'false'
           type-aware: 'false'
-          min-tokens: '30'
-          min-lines: '3'
-          threshold: '100'
-          top: '5'
-      - name: Assert dupes ran
+          changed-since: HEAD
+      - name: Assert scoped run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          UNAPPLIED: ${{ steps.action.outputs.requests-unapplied }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          echo "requests-unapplied: $UNAPPLIED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
