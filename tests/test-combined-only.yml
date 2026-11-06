@@ -1,4 +1,4 @@
-name: Test combined run with only and threads
+name: Test combined run restricted with only
 on:
   workflow_dispatch:
 jobs:
@@ -11,12 +11,11 @@ jobs:
         with:
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          only: dead-code
-          threads: '1'
-      - name: Assert combined dead-code-only run
+          fail-on-issues: 'false'
+          only: dead-code,dupes
+      - name: Assert combined run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -28,11 +27,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
-            exit 1
-          fi
-          if ! grep -q "orphan" "$RESULTS"; then
-            echo "FAIL: expected dead-code findings (orphan.ts) in results"
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

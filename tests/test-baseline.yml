@@ -1,4 +1,4 @@
-name: Test save-baseline then baseline
+name: Test save-baseline then compare against baseline
 on:
   workflow_dispatch:
 jobs:
@@ -6,51 +6,51 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Prepare baseline dir
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
       - id: save
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-baseline.json
       - name: Assert baseline saved
+        env:
+          ISSUES: ${{ steps.save.outputs.issues }}
         run: |
-          F="$GITHUB_WORKSPACE/fallow-baselines/dead-code.json"
-          if [ ! -s "$F" ]; then
+          echo "issues (first run): $ISSUES"
+          ls -la "$GITHUB_WORKSPACE/fallow-baseline.json" || true
+          if [ ! -s "$GITHUB_WORKSPACE/fallow-baseline.json" ]; then
             echo "FAIL: baseline file not written"
             exit 1
           fi
-          cat "$F"
-          jq empty "$F" || { echo "FAIL: baseline is not valid JSON"; exit 1; }
-          echo "PASS: baseline saved"
-      - id: load
+          jq empty "$GITHUB_WORKSPACE/fallow-baseline.json" || { echo "FAIL: baseline not JSON"; exit 1; }
+          echo "PASS"
+      - id: compare
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          fail-on-issues: 'true'
           type-aware: 'false'
           format: json
-          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-      - name: Assert baseline suppressed existing issues
+          fail-on-issues: 'true'
+          baseline: ${{ github.workspace }}/fallow-baseline.json
+      - name: Assert baseline suppressed known issues
         env:
-          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
-          ISSUES: ${{ steps.load.outputs.issues }}
-          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
-          BPATH: ${{ steps.load.outputs.baseline-path }}
+          FIRST: ${{ steps.save.outputs.issues }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          ENTRIES: ${{ steps.compare.outputs.baseline-entries }}
         run: |
-          echo "issues before baseline: $SAVED_ISSUES"
-          echo "issues with baseline: $ISSUES"
-          echo "baseline-entries: $ENTRIES"
-          echo "baseline-path: $BPATH"
+          echo "first: $FIRST second: $ISSUES baseline-entries: $ENTRIES"
+          if [ "$FIRST" -lt 1 ]; then
+            echo "FAIL: first run should have found issues"
+            exit 1
+          fi
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 new issues when comparing against a fresh baseline"
+            echo "FAIL: expected baseline to suppress all known issues"
             exit 1
           fi
           echo "PASS"

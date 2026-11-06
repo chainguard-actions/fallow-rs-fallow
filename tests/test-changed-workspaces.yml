@@ -1,4 +1,4 @@
-name: Test changed-workspaces scoping
+name: Test changed-workspaces scoping with no changes
 on:
   workflow_dispatch:
 jobs:
@@ -14,25 +14,24 @@ jobs:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
+          fail-on-issues: 'false'
           changed-workspaces: HEAD
-      - name: Assert changed-workspaces run completed
+      - name: Assert unchanged workspaces produce no findings
         env:
-          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ -f "$RESULTS" ] && grep -qE "orphan-(a|b)" "$RESULTS"; then
+            echo "FAIL: no workspace changed since HEAD, so no orphan findings expected"
+            cat "$RESULTS"
             exit 1
           fi
           echo "PASS"

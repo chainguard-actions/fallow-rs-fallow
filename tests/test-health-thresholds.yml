@@ -12,14 +12,14 @@ jobs:
           command: health
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          max-cyclomatic: '1'
-          max-cognitive: '1'
-          max-file-lines: '2'
+          fail-on-issues: 'false'
+          max-cyclomatic: '10'
+          max-cognitive: '10'
+          max-crap: '30'
+          max-file-lines: '500'
           sort: cognitive
-          top: '5'
       - name: Assert health ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
@@ -31,12 +31,8 @@ jobs:
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ]; then
-            echo "FAIL: results file missing or empty"
-            exit 1
-          fi
-          if ! jq empty "$RESULTS"; then
-            echo "FAIL: results is not valid JSON"
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

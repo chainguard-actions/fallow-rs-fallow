@@ -1,0 +1,40 @@
+name: Test explicit config and issue-types filter
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
+          issue-types: unused-files
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+      - name: Assert orphan ignored by config and only unused-files reported
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          [ -f "$RESULTS" ] && cat "$RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues (orphan.ts ignored via config, exports filtered by issue-types)"
+            exit 1
+          fi
+          if grep -q "orphan.ts" "$RESULTS"; then
+            echo "FAIL: orphan.ts should be ignored by the config's ignorePatterns"
+            exit 1
+          fi
+          echo "PASS"

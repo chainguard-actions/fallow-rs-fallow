@@ -1,0 +1,73 @@
+name: Test audit with dead-code, health and dupes baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - id: save-dead-code
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/bl-dead-code.json
+      - id: save-health
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/bl-health.json
+      - id: save-dupes
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/bl-dupes.json
+      - name: Assert baselines saved
+        run: |
+          for f in bl-dead-code.json bl-health.json bl-dupes.json; do
+            if [ ! -s "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f not written"
+              exit 1
+            fi
+          done
+          echo "PASS"
+      - id: action
+        uses: .
+        with:
+          command: audit
+          root: tests/fixtures/dirty-project
+          version: '3.38.0'
+          type-aware: 'false'
+          format: json
+          fail-on-issues: 'false'
+          changed-since: HEAD
+          dead-code-baseline: ${{ github.workspace }}/bl-dead-code.json
+          health-baseline: ${{ github.workspace }}/bl-health.json
+          dupes-baseline: ${{ github.workspace }}/bl-dupes.json
+      - name: Assert audit verdict
+        env:
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "verdict: $VERDICT issues: $ISSUES"
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+          esac
+          echo "PASS"

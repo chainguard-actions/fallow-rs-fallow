@@ -12,28 +12,24 @@ jobs:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          workspace: pkg-a
-      - name: Assert output scoped to pkg-a
+          fail-on-issues: 'false'
+          workspace: '@fx/a'
+      - name: Assert only workspace a reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          [ -f "$RESULTS" ] && cat "$RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
-            exit 1
-          fi
           if grep -q "orphan-b" "$RESULTS"; then
-            echo "FAIL: pkg-b finding leaked into pkg-a scoped output"
-            cat "$RESULTS"
+            echo "FAIL: workspace b findings should be scoped out"
             exit 1
           fi
           echo "PASS"

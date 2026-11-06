@@ -1,4 +1,4 @@
-name: Test dupes with min-tokens, min-lines and threshold
+name: Test dupes with tuning options
 on:
   workflow_dispatch:
 jobs:
@@ -12,28 +12,26 @@ jobs:
           command: dupes
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          dupes-mode: strict
-          min-tokens: '5'
-          min-lines: '1'
+          fail-on-issues: 'false'
+          min-tokens: '20'
+          min-lines: '3'
           threshold: '100'
+          top: '5'
       - name: Assert dupes ran
         env:
-          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues (clone groups) output is not a number"
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"
