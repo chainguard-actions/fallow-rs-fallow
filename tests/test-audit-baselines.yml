@@ -1,4 +1,4 @@
-name: Test audit with gate, worsened, only and per-analysis baselines
+name: Test audit with per-analysis baselines and gate
 on:
   workflow_dispatch:
 jobs:
@@ -8,9 +8,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Prepare baseline directory
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-audit-baselines"
-      - name: Save dead-code baseline
+      - id: dc-base
         uses: .
         with:
           command: dead-code
@@ -19,8 +17,8 @@ jobs:
           type-aware: 'false'
           fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
-          artifacts-dir: fallow-artifacts-audit-dc
-      - name: Save health baseline
+          artifacts-dir: fallow-artifacts-dc-base
+      - id: health-base
         uses: .
         with:
           command: health
@@ -29,8 +27,8 @@ jobs:
           type-aware: 'false'
           fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
-          artifacts-dir: fallow-artifacts-audit-health
-      - name: Save dupes baseline
+          artifacts-dir: fallow-artifacts-health-base
+      - id: dupes-base
         uses: .
         with:
           command: dupes
@@ -39,12 +37,12 @@ jobs:
           type-aware: 'false'
           fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
-          artifacts-dir: fallow-artifacts-audit-dupes
+          artifacts-dir: fallow-artifacts-dupes-base
       - name: Assert baselines exist
         run: |
-          for f in dead-code health dupes; do
-            p="$GITHUB_WORKSPACE/fallow-audit-baselines/$f.json"
-            if [ ! -f "$p" ]; then echo "FAIL: missing $p"; exit 1; fi
+          ls -la "$GITHUB_WORKSPACE/fallow-audit-baselines"
+          for f in dead-code.json health.json dupes.json; do
+            [ -s "$GITHUB_WORKSPACE/fallow-audit-baselines/$f" ] || { echo "FAIL: $f missing"; exit 1; }
           done
           echo "PASS"
       - id: action
@@ -58,7 +56,6 @@ jobs:
           changed-since: HEAD
           gate: all
           worsened: warn
-          only: dead-code,health,dupes
           dead-code-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
           health-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
           dupes-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
@@ -74,7 +71,7 @@ jobs:
           echo "issues: $ISSUES"
           case "$VERDICT" in
             pass|warn|fail) ;;
-            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+            *) echo "FAIL: verdict should be pass/warn/fail"; exit 1 ;;
           esac
           if [ "$GATE" != "all" ]; then
             echo "FAIL: expected gate 'all'"

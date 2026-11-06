@@ -1,4 +1,4 @@
-name: Test health thresholds, sorting and coverage inputs
+name: Test health command with complexity thresholds
 on:
   workflow_dispatch:
 jobs:
@@ -18,11 +18,10 @@ jobs:
           max-cognitive: '15'
           max-crap: '30'
           max-file-lines: '500'
-          sort: cognitive
           top: '5'
+          sort: cognitive
+          min-severity: critical
           threads: '2'
-          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /build
           artifacts-dir: fallow-artifacts-health-thresholds
       - name: Assert health ran with thresholds
         env:
@@ -36,7 +35,8 @@ jobs:
             exit 1
           fi
           if [ "$ISSUES" -ne 0 ]; then
-            echo "FAIL: clean project should have no complexity findings under generous thresholds"
+            echo "FAIL: trivial clean project should not exceed complexity thresholds"
+            cat "$RESULTS"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then

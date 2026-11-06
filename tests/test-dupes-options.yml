@@ -14,19 +14,20 @@ jobs:
           version: '3.38.1'
           type-aware: 'false'
           fail-on-issues: 'false'
-          min-tokens: '20'
+          min-tokens: '30'
           min-lines: '3'
-          threshold: '0'
+          threshold: '100'
+          top: '10'
           artifacts-dir: fallow-artifacts-dupes
-      - name: Assert dupes ran
+      - name: Assert dupes ran with no clones
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 clone groups in tiny clean project"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then

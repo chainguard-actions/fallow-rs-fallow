@@ -1,4 +1,4 @@
-name: Test workspace scoping in a monorepo
+name: Test dead-code scoped to a single workspace
 on:
   workflow_dispatch:
 jobs:
@@ -11,10 +11,10 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          workspace: pkg-a
           version: '3.38.1'
           type-aware: 'false'
           fail-on-issues: 'false'
+          workspace: pkg-a
           artifacts-dir: fallow-artifacts-workspace
       - name: Assert workspace-scoped results
         env:
@@ -33,7 +33,7 @@ jobs:
           fi
           jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           if grep -q 'pkg-b/src' "$RESULTS"; then
-            echo "FAIL: results contain findings from pkg-b outside the scoped workspace"
+            echo "FAIL: results include files from pkg-b despite workspace scoping"
             exit 1
           fi
           echo "PASS"

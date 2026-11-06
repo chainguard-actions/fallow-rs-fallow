@@ -1,5 +1,3 @@
-import { double } from './util.js';
-
-export function run(x) {
-  return double(x);
+export function greetA(name) {
+  return `hello ${name} from a`;
 }
