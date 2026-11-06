@@ -1,4 +1,4 @@
-name: Test dupes with min-tokens, min-lines, threshold and top
+name: Test health min-severity gate passes when nothing reaches severity
 on:
   workflow_dispatch:
 jobs:
@@ -18,36 +18,30 @@ jobs:
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
         with:
-          command: dupes
+          command: health
           root: tests/fixtures/simple-js
           format: json
-          min-tokens: '30'
-          min-lines: '3'
-          threshold: '100'
-          top: '5'
+          max-cyclomatic: '200'
+          max-cognitive: '200'
+          max-crap: '10000'
+          min-severity: critical
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
 
-      - name: Assert issues output is a number
+      - name: Assert run succeeded and results file exists
         env:
+          OUTCOME: ${{ steps.action.outcome }}
+          RESULTS: ${{ steps.action.outputs.results }}
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "clone groups: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+          echo "outcome: $OUTCOME issues: $ISSUES results: $RESULTS"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
             exit 1
           fi
-          echo "PASS"
-
-      - name: Assert results file is valid JSON
-        env:
-          RESULTS: ${{ steps.action.outputs.results }}
-        run: |
-          echo "results path: $RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

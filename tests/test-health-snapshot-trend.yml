@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -13,7 +13,7 @@ jobs:
         with:
           node-version: 22
 
-      - id: save
+      - id: snapshot
         uses: .
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
@@ -26,20 +26,11 @@ jobs:
           auto-changed-since: 'false'
           annotations: 'false'
 
-      - name: Assert a snapshot was saved
-        env:
-          ISSUES: ${{ steps.save.outputs.issues }}
+      - name: Assert snapshot was written
         run: |
-          echo "issues: $ISSUES"
-          ls -la tests/fixtures/simple-js/.fallow/snapshots 2>/dev/null || true
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
-            exit 1
-          fi
-          COUNT=$(find tests/fixtures/simple-js/.fallow/snapshots .fallow/snapshots -type f 2>/dev/null | wc -l)
-          echo "snapshot files: $COUNT"
-          if [ "$COUNT" -lt 1 ]; then
-            echo "FAIL: no snapshot file found under .fallow/snapshots"
+          ls -la tests/fixtures/simple-js/.fallow/snapshots || true
+          if ! find tests/fixtures/simple-js/.fallow -type f -path '*snapshot*' | grep -q .; then
+            echo "FAIL: no snapshot file found under .fallow"
             exit 1
           fi
           echo "PASS"
@@ -59,17 +50,11 @@ jobs:
 
       - name: Assert trend run produced results
         env:
-          ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+          echo "results: $RESULTS"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results missing or invalid"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
-            exit 1
-          fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

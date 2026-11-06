@@ -1,3 +1,4 @@
-export function greetB(name) {
-  return `Hello from B, ${name}`;
+// pkg-b entry point
+export function greetB() {
+  return 'hello from b';
 }

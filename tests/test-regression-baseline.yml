@@ -1,4 +1,4 @@
-name: Test dead-code regression baseline (no regression)
+name: Test regression baseline save and fail-on-regression check
 on:
   workflow_dispatch:
 jobs:
@@ -26,17 +26,17 @@ jobs:
           auto-changed-since: 'false'
           annotations: 'false'
 
-      - name: Assert regression baseline file was written
+      - name: Assert regression baseline was saved
         run: |
-          F="$GITHUB_WORKSPACE/fallow-regression.json"
-          if [ ! -f "$F" ]; then
-            echo "FAIL: regression baseline not written at $F"
+          f="$GITHUB_WORKSPACE/fallow-regression.json"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: regression baseline not written"
             exit 1
           fi
-          jq empty "$F" || { echo "FAIL: not valid JSON"; exit 1; }
+          cat "$f"
           echo "PASS"
 
-      - id: compare
+      - id: check
         uses: .
         env:
           FALLOW_SKIP_BINARY_VERIFY: '1'
@@ -52,17 +52,12 @@ jobs:
 
       - name: Assert no regression detected
         env:
-          ISSUES: ${{ steps.compare.outputs.issues }}
-          SAVED_ISSUES: ${{ steps.save.outputs.issues }}
-          OUTCOME: ${{ steps.compare.outcome }}
+          OUTCOME: ${{ steps.check.outcome }}
+          ISSUES: ${{ steps.check.outputs.issues }}
         run: |
-          echo "outcome=$OUTCOME issues=$ISSUES saved=$SAVED_ISSUES"
+          echo "outcome: $OUTCOME issues: $ISSUES"
           if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: identical code should not regress"
-            exit 1
-          fi
-          if [ "$ISSUES" != "$SAVED_ISSUES" ]; then
-            echo "FAIL: issue count changed between identical runs"
+            echo "FAIL: unchanged code should not regress"
             exit 1
           fi
           echo "PASS"

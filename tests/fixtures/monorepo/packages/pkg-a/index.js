@@ -1,7 +1,8 @@
-export function greetA(name) {
-  return `Hello from A, ${name}`;
+// pkg-a entry point
+export function greetA() {
+  return 'hello from a';
 }
 
 export function unusedA() {
-  return 'unused';
+  return 'never used';
 }

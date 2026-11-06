@@ -1,5 +1,5 @@
 {
-  "name": "@fixture/pkg-a",
+  "name": "pkg-a",
   "version": "1.0.0",
   "type": "module",
   "main": "index.js"
