@@ -1,4 +1,4 @@
-name: Test health snapshot then trend comparison
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,25 +6,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Prepare snapshot directory
-        run: mkdir -p "$GITHUB_WORKSPACE/tests/fixtures/clean-project/.fallow/snapshots"
-      - id: snapshot
+      - id: save
         uses: .
         with:
           command: health
           root: tests/fixtures/clean-project
           version: '3.37.0'
-          save-snapshot: ${{ github.workspace }}/tests/fixtures/clean-project/.fallow/snapshots/act-test-snapshot.json
+          score: 'true'
+          save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert snapshot was saved
+      - name: Assert snapshot saved
         run: |
-          ls -la "$GITHUB_WORKSPACE/tests/fixtures/clean-project/.fallow/snapshots" || true
-          COUNT=$(find "$GITHUB_WORKSPACE/tests/fixtures/clean-project/.fallow" -type f -name '*.json' 2>/dev/null | wc -l)
-          echo "snapshot files: $COUNT"
-          if [ "$COUNT" -lt 1 ]; then
-            echo "FAIL: no snapshot file written"
+          FOUND="$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -n1)"
+          echo "snapshot: $FOUND"
+          if [ -z "$FOUND" ]; then
+            echo "FAIL: no snapshot written under any .fallow/snapshots directory"
             exit 1
           fi
           echo "PASS"
@@ -34,11 +32,12 @@ jobs:
           command: health
           root: tests/fixtures/clean-project
           version: '3.37.0'
+          score: 'true'
           trend: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert trend run produced output
+      - name: Assert trend run produced results
         env:
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}

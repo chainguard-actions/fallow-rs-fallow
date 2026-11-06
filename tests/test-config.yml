@@ -1,0 +1,36 @@
+name: Test explicit config file
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean-project
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
+          version: '3.37.0'
+          fail-on-issues: 'true'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+      - name: Assert clean run with explicit config
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues for clean project with empty config"
+            exit 1
+          fi
+          F="$RESULTS"
+          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,3 +1,5 @@
-export function farewell(name) {
-  return `bye ${name}`;
+export function greetB(name) {
+  return `hi ${name} from b`;
 }
+
+console.log(greetB('world'));

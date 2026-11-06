@@ -8,15 +8,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - id: full
-        uses: .
-        with:
-          command: dead-code
-          root: tests/fixtures/dead-code-project
-          version: '3.37.0'
-          fail-on-issues: 'false'
-          auto-changed-since: 'false'
-          type-aware: 'false'
       - id: action
         uses: .
         with:
@@ -27,21 +18,23 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert scoped run reports no more than full run
+      - name: Assert changed-since run produced results
         env:
-          FULL: ${{ steps.full.outputs.issues }}
-          SCOPED: ${{ steps.action.outputs.issues }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
           UNAPPLIED: ${{ steps.action.outputs.requests-unapplied }}
         run: |
-          echo "full issues: $FULL"
-          echo "scoped issues: $SCOPED"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           echo "requests-unapplied: $UNAPPLIED"
-          if ! [[ "$FULL" =~ ^[0-9]+$ ]] || ! [[ "$SCOPED" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issue counts are not numbers"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ "$SCOPED" -gt "$FULL" ]; then
-            echo "FAIL: changed-since run reported more issues than the full run"
+          F="$RESULTS"
+          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

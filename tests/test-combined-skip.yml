@@ -1,4 +1,4 @@
-name: Test health with Istanbul coverage for CRAP scoring
+name: Test combined run with skip
 on:
   workflow_dispatch:
 jobs:
@@ -9,16 +9,13 @@ jobs:
       - id: action
         uses: .
         with:
-          command: health
           root: tests/fixtures/clean-project
           version: '3.37.0'
-          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /ci-build
-          max-crap: '30'
+          skip: dupes,health
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert coverage run produced output
+      - name: Assert combined run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

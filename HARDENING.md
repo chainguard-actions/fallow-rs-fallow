@@ -16,67 +16,67 @@ Action **fallow-rs--fallow/v3.37.0** was hardened automatically. 8 finding(s) we
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Install fallow' step puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/install.sh`. Use "$GITHUB_ACTION_PATH" instead.
+Rule (a): 'Install fallow' step runs `run: bash ${{ github.action_path }}/action/scripts/install.sh`. The expression is substituted straight into the shell command. Pass it through env (e.g. GITHUB_ACTION_PATH) and quote it: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh".
 
 Locations:
 
-- `action.yml:414`
+- `action.yml`
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Fallow branded token' step puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`. Use "$GITHUB_ACTION_PATH" instead.
+Rule (a): 'Fallow branded token' step runs `run: bash ${{ github.action_path }}/action/scripts/broker-token.sh`. The expression is substituted straight into the run: command.
 
 Locations:
 
-- `action.yml:427`
+- `action.yml`
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Run analysis' step puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`. Use "$GITHUB_ACTION_PATH" instead.
+Rule (a): 'Run analysis' step (id: analyze) runs `run: bash ${{ github.action_path }}/action/scripts/analyze.sh`. The expression is substituted straight into the run: command.
 
 Locations:
 
-- `action.yml:541`
+- `action.yml`
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Check Code Scanning availability' step puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`. Use "$GITHUB_ACTION_PATH" instead.
+Rule (a): 'Check Code Scanning availability' step runs `run: bash ${{ github.action_path }}/action/scripts/check-code-scanning.sh`. The expression is substituted straight into the run: command.
 
 Locations:
 
-- `action.yml:554`
+- `action.yml`
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Post PR comment' step puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/comment.sh`. Use "$GITHUB_ACTION_PATH" instead.
+Rule (a): 'Post PR comment' step runs `run: bash ${{ github.action_path }}/action/scripts/comment.sh`. The expression is substituted straight into the run: command.
 
 Locations:
 
-- `action.yml:601`
+- `action.yml`
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Emit inline annotations' step puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`. Use "$GITHUB_ACTION_PATH" instead.
+Rule (a): 'Emit inline annotations' step runs `run: bash ${{ github.action_path }}/action/scripts/annotate.sh`. The expression is substituted straight into the run: command.
 
 Locations:
 
-- `action.yml:623`
+- `action.yml`
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Job summary' step puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/summary.sh`. Use "$GITHUB_ACTION_PATH" instead.
+Rule (a): 'Job summary' step runs `run: bash ${{ github.action_path }}/action/scripts/summary.sh`. The expression is substituted straight into the run: command.
 
 Locations:
 
-- `action.yml:649`
+- `action.yml`
 
 ### script-injection (severity: high)
 
-Rule (a): the 'Post review comments' step puts an expression directly in run: `run: bash ${{ github.action_path }}/action/scripts/review.sh`. Use "$GITHUB_ACTION_PATH" instead.
+Rule (a): 'Post review comments' step runs `run: bash ${{ github.action_path }}/action/scripts/review.sh`. The expression is substituted straight into the run: command.
 
 Locations:
 
-- `action.yml:682`
+- `action.yml`
 
 ## Iteration Notes
 
@@ -86,13 +86,13 @@ Locations:
 
 **Notes:**
 
-In action.yml, I changed 8 run lines (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review) from `bash ${{ github.action_path }}/action/scripts/X.sh` to `bash "$GITHUB_ACTION_PATH/action/scripts/X.sh"`. All of these steps use shell: bash. I left the ACTION_JQ_DIR env entries alone because they sit in env: blocks, which is the safe place for an expression.
+Changed all 8 composite steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review) in action.yml from `run: bash ${{ github.action_path }}/action/scripts/X.sh` to `run: bash "$GITHUB_ACTION_PATH/action/scripts/X.sh"`. All steps use shell: bash. The runner sets GITHUB_ACTION_PATH itself for composite steps, so no env entry was needed. The ACTION_JQ_DIR env values still contain ${{ github.action_path }}, but they sit in env: blocks, which is safe.
 
 ### Iteration 2
 
-**Fixes applied:** script-injection, invalid-yaml
+**Fixes applied:** invalid-yaml, github-env-injection
 
 **Notes:**
 
-action.yml: invalid-yaml: in the 'Post PR comment', 'Emit inline annotations' and 'Job summary' steps, the run: line was indented too far and ran into the next step's '- name:' on the same line. Each run: is back at step indentation and each following step has its own line. The annotations edit did not save the first time and was applied again. script-injection: 'Install fallow' and 'Fallow branded token' now run bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh" instead of the inline ${{ github.action_path }} expression; both steps use bash. Checked by reading the file back and searching it; no YAML parser or tests were run.
+invalid-yaml: action.yml had 4 places where steps were merged onto one line ('run:run: bash ...  - name: ...' and 'run: basrun: ...name: Post review comments'). I put each 'run:' line back on its own and restored the '- name:' step entries (Check Code Scanning availability, Upload SARIF, Emit inline annotations, Post review comments). github-env-injection: in analyze.sh, both writes to $GITHUB_ENV (FALLOW_DIFF_FILE=${FALLOW_DIFF_FILE} and FALLOW_DIFF_FILE=${_DIFF_PATH}) now pass the value through $(printf '%s' ... | tr -d '\n\r') first, so a newline can no longer inject extra variables. analyze.sh is too large to read directly, so I located the lines with searches. My first edit was lost when two edits ran at the same time; I applied it again and confirmed both edits are now in the file.
 
