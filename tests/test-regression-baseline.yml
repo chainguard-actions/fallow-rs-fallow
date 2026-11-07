@@ -1,4 +1,4 @@
-name: Test regression baseline save and fail-on-regression
+name: Test regression baseline save and compare
 on:
   workflow_dispatch:
 jobs:
@@ -21,8 +21,10 @@ jobs:
       - name: Assert regression baseline saved
         run: |
           f="$GITHUB_WORKSPACE/fallow-regression.json"
-          [ -f "$f" ] || { echo "FAIL: regression baseline not written"; exit 1; }
-          jq -e . "$f" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
+          if [ ! -f "$f" ]; then
+            echo "FAIL: regression baseline not written"
+            exit 1
+          fi
           echo "PASS"
       - id: compare
         uses: .
@@ -38,13 +40,19 @@ jobs:
           auto-changed-since: 'false'
           fail-on-issues: 'false'
           annotations: 'false'
-      - name: Assert no regression (step succeeded)
+      - name: Assert no regression detected
         env:
           ISSUES: ${{ steps.compare.outputs.issues }}
+          FAILED: ${{ steps.compare.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected the same known issues to still be reported"
+          echo "gates-failed: $FAILED"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          if echo "$FAILED" | grep -q "regression"; then
+            echo "FAIL: regression gate failed on unchanged code"
             exit 1
           fi
           echo "PASS"

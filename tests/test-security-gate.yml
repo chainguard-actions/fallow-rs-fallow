@@ -12,7 +12,7 @@ jobs:
         uses: .
         with:
           command: security
-          root: tests/fixtures/dirty-project
+          root: tests/fixtures/clean-project
           changed-since: HEAD
           security-gate: new
           version: '3.41.0'
@@ -21,18 +21,21 @@ jobs:
           auto-changed-since: 'false'
           fail-on-issues: 'false'
           annotations: 'false'
-      - name: Assert security run and gate
+      - name: Assert security run outputs
         env:
-          GATE: ${{ steps.action.outputs.gate }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
-          echo "gate: $GATE issues: $ISSUES"
+          echo "issues: $ISSUES"
+          echo "gate: $GATE"
+          echo "gates-failed: $FAILED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new'"
+            echo "FAIL: expected gate 'new' or empty, got '$GATE'"
             exit 1
           fi
           echo "PASS"

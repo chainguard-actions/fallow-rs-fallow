@@ -1,4 +1,4 @@
-name: Test explicit config, issue-types filter and threads
+name: Test dead-code with config, issue-types and threads
 on:
   workflow_dispatch:
 jobs:
@@ -11,7 +11,7 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
-          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
           issue-types: unused-files
           threads: '2'
           version: '3.41.0'
@@ -26,13 +26,18 @@ jobs:
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected at least one unused-files issue"
+            echo "FAIL: expected a numeric issue count >= 1"
             exit 1
           fi
           f="$RESULTS"; [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          [ -f "$f" ] || { echo "FAIL: results file missing"; exit 1; }
-          jq -e . "$f" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
-          grep -q "orphan" "$f" || { echo "FAIL: orphan.ts not reported"; head -c 4000 "$f"; exit 1; }
+          if [ ! -f "$f" ] || ! jq -e . "$f" > /dev/null; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          if ! grep -q "orphan" "$f"; then
+            echo "FAIL: expected orphan.ts as unused file"
+            head -c 4000 "$f"
+            exit 1
+          fi
           echo "PASS"

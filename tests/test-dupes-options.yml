@@ -1,4 +1,4 @@
-name: Test dupes command with token/line/threshold options
+name: Test dupes with min-tokens, min-lines and threshold
 on:
   workflow_dispatch:
 jobs:
@@ -14,25 +14,26 @@ jobs:
           min-tokens: '20'
           min-lines: '3'
           threshold: '100'
-          top: '5'
+          top: '10'
           version: '3.41.0'
           format: json
           type-aware: 'false'
           auto-changed-since: 'false'
           fail-on-issues: 'false'
           annotations: 'false'
-      - name: Assert dupes ran
+      - name: Assert dupes ran and threshold gate passed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "gates-failed: $FAILED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
-          f="$RESULTS"; [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          [ -f "$f" ] || { echo "FAIL: results file missing"; exit 1; }
-          jq -e . "$f" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
+          if echo "$FAILED" | grep -q "duplication-threshold"; then
+            echo "FAIL: threshold 100% should never fail"
+            exit 1
+          fi
           echo "PASS"

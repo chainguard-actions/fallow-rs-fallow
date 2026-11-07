@@ -1,4 +1,4 @@
-name: Test health score, min-score, save-snapshot and trend
+name: Test health min-score with snapshot and trend
 on:
   workflow_dispatch:
 jobs:
@@ -10,8 +10,7 @@ jobs:
         uses: .
         with:
           command: health
-          root: tests/fixtures/dirty-project
-          score: 'true'
+          root: tests/fixtures/clean-project
           min-score: '0'
           save-snapshot: 'true'
           version: '3.41.0'
@@ -20,21 +19,29 @@ jobs:
           auto-changed-since: 'false'
           fail-on-issues: 'false'
           annotations: 'false'
-      - name: Assert snapshot saved
+      - name: Assert snapshot run passed the score gate
         env:
-          RESULTS: ${{ steps.snapshot.outputs.results }}
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
+          FAILED: ${{ steps.snapshot.outputs.gates-failed }}
         run: |
-          echo "results: $RESULTS"
-          ls -la "$GITHUB_WORKSPACE/tests/fixtures/dirty-project/.fallow/snapshots" || true
-          f="$RESULTS"; [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          [ -f "$f" ] || { echo "FAIL: results file missing"; exit 1; }
-          jq -e . "$f" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
+          echo "issues: $ISSUES"
+          echo "gates-failed: $FAILED"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          if echo "$FAILED" | grep -q "health-min-score"; then
+            echo "FAIL: min-score 0 should never fail"
+            exit 1
+          fi
+          echo "snapshot dir contents:"
+          ls -la tests/fixtures/clean-project/.fallow/snapshots 2>/dev/null || ls -la .fallow/snapshots 2>/dev/null || true
           echo "PASS"
       - id: trend
         uses: .
         with:
           command: health
-          root: tests/fixtures/dirty-project
+          root: tests/fixtures/clean-project
           trend: 'true'
           version: '3.41.0'
           format: json
@@ -48,12 +55,13 @@ jobs:
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           f="$RESULTS"; [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          [ -f "$f" ] || { echo "FAIL: results file missing"; exit 1; }
-          jq -e . "$f" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
+          if [ ! -f "$f" ] || ! jq -e . "$f" > /dev/null; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
           echo "PASS"

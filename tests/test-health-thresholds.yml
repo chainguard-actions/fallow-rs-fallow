@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds
+name: Test health with complexity thresholds
 on:
   workflow_dispatch:
 jobs:
@@ -15,27 +15,34 @@ jobs:
           max-cognitive: '10'
           max-crap: '30'
           max-file-lines: '500'
+          min-severity: critical
           top: '5'
           sort: cognitive
-          min-severity: critical
           version: '3.41.0'
           format: json
           type-aware: 'false'
           auto-changed-since: 'false'
           fail-on-issues: 'false'
           annotations: 'false'
-      - name: Assert health ran
+      - name: Assert health ran and gate did not fail
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "gates-failed: $FAILED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           f="$RESULTS"; [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          [ -f "$f" ] || { echo "FAIL: results file missing"; exit 1; }
-          jq -e . "$f" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
+          if [ ! -f "$f" ] || ! jq -e . "$f" > /dev/null; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if echo "$FAILED" | grep -q "health-min-severity"; then
+            echo "FAIL: min-severity gate failed on trivial code"
+            exit 1
+          fi
           echo "PASS"
