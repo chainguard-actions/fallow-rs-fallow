@@ -1,6 +1,6 @@
 {
-  "/build/src/math.ts": {
-    "path": "/build/src/math.ts",
+  "/ci-build/src/math.ts": {
+    "path": "/ci-build/src/math.ts",
     "statementMap": {
       "0": { "start": { "line": 2, "column": 2 }, "end": { "line": 2, "column": 15 } },
       "1": { "start": { "line": 6, "column": 2 }, "end": { "line": 6, "column": 15 } }

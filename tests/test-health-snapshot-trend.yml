@@ -1,4 +1,4 @@
-name: Test health snapshot then trend
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snapshot
+      - id: snap
         uses: .
         with:
           command: health
@@ -16,16 +16,21 @@ jobs:
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-snapshot
           save-snapshot: 'true'
-      - name: Assert snapshot run produced results
+      - name: Assert snapshot saved
         env:
-          ISSUES: ${{ steps.snapshot.outputs.issues }}
+          ISSUES: ${{ steps.snap.outputs.issues }}
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1
           fi
-          ls -laR tests/fixtures/sample-project/.fallow 2>/dev/null || true
+          found=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -n 5)
+          echo "snapshots: $found"
+          if [ -z "$found" ]; then
+            echo "FAIL: no snapshot file under .fallow/snapshots"
+            exit 1
+          fi
           echo "PASS"
       - id: trend
         uses: .
