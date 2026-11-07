@@ -12,7 +12,7 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          only: dead-code
+          only: dead-code,health
           artifacts-dir: fallow-artifacts-only
       - name: Assert combined results produced
         env:

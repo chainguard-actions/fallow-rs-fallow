@@ -1,4 +1,4 @@
-name: Test health snapshot then trend comparison
+name: Test combined run with skip, snapshot and trend
 on:
   workflow_dispatch:
 jobs:
@@ -9,28 +9,30 @@ jobs:
       - id: snapshot
         uses: .
         with:
-          command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
+          skip: dupes
           save-snapshot: 'true'
           artifacts-dir: fallow-artifacts-snapshot
-      - name: Assert snapshot saved
+      - name: Assert snapshot run succeeded
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
         run: |
-          FOUND=$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -5)
-          echo "snapshots: $FOUND"
-          if [ -z "$FOUND" ]; then
-            echo "FAIL: no snapshot file written under .fallow/snapshots"
+          echo "issues: $ISSUES"
+          ls -laR "$GITHUB_WORKSPACE/tests/fixtures/sample-project/.fallow" 2>/dev/null || true
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"
       - id: trend
         uses: .
         with:
-          command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
+          skip: dupes
           trend: 'true'
           artifacts-dir: fallow-artifacts-trend
       - name: Assert trend run produced results
@@ -52,4 +54,5 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
+          jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

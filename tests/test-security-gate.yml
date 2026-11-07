@@ -1,4 +1,4 @@
-name: Test security command with security-gate
+name: Test security command with security gate
 on:
   workflow_dispatch:
 jobs:
@@ -15,10 +15,10 @@ jobs:
           root: tests/fixtures/sample-project
           version: '3.36.0'
           fail-on-issues: 'false'
-          changed-since: HEAD
           security-gate: new
+          changed-since: HEAD
           artifacts-dir: fallow-artifacts-security
-      - name: Assert security run produced a count
+      - name: Assert security run results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           GATE: ${{ steps.action.outputs.gate }}
