@@ -10,12 +10,12 @@ jobs:
         uses: .
         with:
           root: tests/fixtures/dead-code-project
+          only: dead-code,health
           version: '3.37.0'
-          only: dead-code
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert dead-code findings present
+      - name: Assert combined run output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -33,7 +33,7 @@ jobs:
             exit 1
           fi
           if ! grep -qE 'orphan|unusedHelper' "$F"; then
-            echo "FAIL: expected dead-code findings in results"
+            echo "FAIL: dead-code findings missing from combined results"
             head -c 3000 "$F"
             exit 1
           fi

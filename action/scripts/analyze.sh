@@ -817,7 +817,7 @@ fi
 # Propagate the effective changed-since value after config safety logic so
 # downstream steps do not reapply stale PR scope.
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
-  printf '%s\n' "changed_since=${INPUT_CHANGED_SINCE:-}" >> "$GITHUB_OUTPUT"
+  printf '%s\n' "changed_since=$(printf '%s' "${INPUT_CHANGED_SINCE:-}" | tr -d '\n\r')" >> "$GITHUB_OUTPUT"
 fi
 
 # --- Pre-compute unified diff for line-level hot-path scoping ---

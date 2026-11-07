@@ -15,9 +15,10 @@ jobs:
           max-cyclomatic: '20'
           max-cognitive: '15'
           max-crap: '30'
+          top: '5'
           sort: cognitive
-          top: '10'
           min-severity: critical
+          threads: '2'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'

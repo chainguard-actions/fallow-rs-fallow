@@ -10,12 +10,12 @@ jobs:
         uses: .
         with:
           root: tests/fixtures/clean-project
-          version: '3.37.0'
           skip: dupes,health
+          version: '3.37.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert combined run produced results
+      - name: Assert combined run output
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
