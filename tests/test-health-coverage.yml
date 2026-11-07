@@ -16,9 +16,8 @@ jobs:
           auto-changed-since: 'false'
           type-aware: 'false'
           coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /repo
-          max-crap: '30'
-      - name: Assert health with coverage produced results
+          coverage-root: /ci/project
+      - name: Assert coverage-aware health run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

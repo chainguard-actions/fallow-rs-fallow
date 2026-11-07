@@ -2,6 +2,4 @@ export function greet(name) {
   return `hello ${name}`;
 }
 
-export function libUnused() {
-  return 2;
-}
+export const UNUSED_A = 1;

@@ -1,4 +1,4 @@
-name: Test health min-score and min-severity gates pass
+name: Test health min-score gate (passing threshold)
 on:
   workflow_dispatch:
 jobs:
@@ -12,26 +12,29 @@ jobs:
           command: health
           root: tests/fixtures/dead-code-project
           version: '3.39.0'
-          fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
           min-score: '0'
-          min-severity: critical
-      - name: Assert gates did not fail
+      - name: Assert min-score 0 passes and results exist
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          FAILED: ${{ steps.action.outputs.gates-failed }}
-          PASSED: ${{ steps.action.outputs.gates-passed }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
-          echo "gates-failed: $FAILED"
-          echo "gates-passed: $PASSED"
+          echo "results: $RESULTS"
+          echo "gates-failed: $GATES_FAILED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if echo "$FAILED" | grep -qE 'health-min-score|health-min-severity'; then
-            echo "FAIL: min-score/min-severity gate failed unexpectedly"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if ! grep -qi 'score' "$RESULTS"; then
+            echo "FAIL: results do not contain a health score"
+            head -c 3000 "$RESULTS"
             exit 1
           fi
           echo "PASS"

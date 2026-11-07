@@ -18,9 +18,9 @@ jobs:
           auto-changed-since: 'false'
           type-aware: 'false'
           hotspots: 'true'
-          since: 1y
+          since: '1y'
           min-commits: '1'
-      - name: Assert hotspot analysis produced results
+      - name: Assert hotspot run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

@@ -18,7 +18,7 @@ jobs:
           auto-changed-since: 'false'
           type-aware: 'false'
           changed-workspaces: HEAD
-      - name: Assert changed-workspaces run produced results
+      - name: Assert git-scoped run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
