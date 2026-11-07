@@ -1,0 +1,26 @@
+FROM rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6 AS builder
+
+WORKDIR /src
+
+# Keep this base image tag aligned with rust-toolchain.toml.
+COPY . .
+RUN cargo build --release --bin fallow
+
+FROM node:26-bookworm-slim@sha256:1e96b01216cab31612cd1f9480e83413472dee8686d423cb4c1ec62bf8a26e9e AS runtime
+
+# tools/corepack/package-lock.json pins the corepack version and its hash.
+COPY tools/corepack/package.json tools/corepack/package-lock.json /opt/corepack/
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates git \
+  && npm ci --prefix /opt/corepack --ignore-scripts --no-audit --no-fund \
+  && ln -sf /opt/corepack/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack \
+  && corepack enable --install-directory /usr/local/bin \
+  && npm cache clean --force \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /src/target/release/fallow /usr/local/bin/fallow
+
+WORKDIR /workspace
+ENTRYPOINT ["fallow"]
+CMD ["--help"]
