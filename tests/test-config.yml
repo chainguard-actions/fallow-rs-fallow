@@ -1,4 +1,4 @@
-name: Test combined run with only selector
+name: Test dead-code with an explicit config file
 on:
   workflow_dispatch:
 jobs:
@@ -9,19 +9,19 @@ jobs:
       - id: action
         uses: .
         with:
+          command: dead-code
           root: tests/fixtures/clean-project
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
           version: '3.38.1'
           type-aware: 'false'
           fail-on-issues: 'false'
-          only: dead-code,health
-          artifacts-dir: fallow-artifacts-only
-      - name: Assert combined run produced results
+          artifacts-dir: fallow-artifacts-config
+      - name: Assert config-driven run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1

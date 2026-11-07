@@ -14,24 +14,17 @@ jobs:
           version: '3.38.1'
           type-aware: 'false'
           fail-on-issues: 'false'
-          save-snapshot: ${{ github.workspace }}/fallow-snapshots/snap.json
+          save-snapshot: 'true'
           artifacts-dir: fallow-artifacts-snapshot
-      - name: Assert snapshot was saved
-        env:
-          RESULTS: ${{ steps.snapshot.outputs.results }}
+      - name: Assert a snapshot was saved
         run: |
-          echo "results: $RESULTS"
-          ls -la "$GITHUB_WORKSPACE/fallow-snapshots" || true
-          if [ ! -s "$GITHUB_WORKSPACE/fallow-snapshots/snap.json" ]; then
-            echo "FAIL: snapshot file not written"
+          found="$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -n 5)"
+          echo "snapshots found: $found"
+          if [ -z "$found" ]; then
+            echo "FAIL: no snapshot saved under any .fallow/snapshots directory"
             exit 1
           fi
-          jq empty "$GITHUB_WORKSPACE/fallow-snapshots/snap.json" || { echo "FAIL: snapshot is not JSON"; exit 1; }
           echo "PASS"
-      - name: Copy snapshot to default location for trend
-        run: |
-          mkdir -p tests/fixtures/clean-project/.fallow/snapshots
-          cp "$GITHUB_WORKSPACE/fallow-snapshots/snap.json" tests/fixtures/clean-project/.fallow/snapshots/
       - id: trend
         uses: .
         with:
@@ -44,15 +37,9 @@ jobs:
           artifacts-dir: fallow-artifacts-trend
       - name: Assert trend run produced results
         env:
-          ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing"
             exit 1

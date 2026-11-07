@@ -6,32 +6,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Write Istanbul coverage-final.json
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/fallow-coverage"
-          cat > "$GITHUB_WORKSPACE/fallow-coverage/coverage-final.json" <<'EOF'
-          {
-            "/ci-build/src/math.js": {
-              "path": "/ci-build/src/math.js",
-              "statementMap": {"0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 15}}},
-              "fnMap": {"0": {"name": "add", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}}, "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 3, "column": 1}}, "line": 1}},
-              "branchMap": {},
-              "s": {"0": 3},
-              "f": {"0": 3},
-              "b": {}
-            },
-            "/ci-build/src/index.js": {
-              "path": "/ci-build/src/index.js",
-              "statementMap": {"0": {"start": {"line": 4, "column": 2}, "end": {"line": 4, "column": 19}}},
-              "fnMap": {"0": {"name": "main", "decl": {"start": {"line": 3, "column": 16}, "end": {"line": 3, "column": 20}}, "loc": {"start": {"line": 3, "column": 23}, "end": {"line": 5, "column": 1}}, "line": 3}},
-              "branchMap": {},
-              "s": {"0": 1},
-              "f": {"0": 1},
-              "b": {}
-            }
-          }
-          EOF
-          jq empty "$GITHUB_WORKSPACE/fallow-coverage/coverage-final.json"
       - id: action
         uses: .
         with:
@@ -40,8 +14,8 @@ jobs:
           version: '3.38.1'
           type-aware: 'false'
           fail-on-issues: 'false'
-          coverage: ${{ github.workspace }}/fallow-coverage/coverage-final.json
-          coverage-root: /ci-build
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /ci/project
           max-crap: '30'
           artifacts-dir: fallow-artifacts-coverage
       - name: Assert health ran with coverage
