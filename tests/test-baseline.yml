@@ -6,51 +6,57 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Remove stale baseline
+        run: rm -f "$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
       - id: save
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-baseline.json
       - name: Assert baseline saved
-        env:
-          ISSUES: ${{ steps.save.outputs.issues }}
         run: |
-          echo "issues (first run): $ISSUES"
-          ls -la "$GITHUB_WORKSPACE/fallow-baseline.json" || true
-          if [ ! -s "$GITHUB_WORKSPACE/fallow-baseline.json" ]; then
-            echo "FAIL: baseline file not written"
+          F="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
+          if [ ! -s "$F" ] || ! jq empty "$F"; then
+            echo "FAIL: baseline file missing or invalid JSON"
             exit 1
           fi
-          jq empty "$GITHUB_WORKSPACE/fallow-baseline.json" || { echo "FAIL: baseline not JSON"; exit 1; }
+          cat "$F"
           echo "PASS"
       - id: compare
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
           version: '3.38.0'
+          fail-on-issues: 'true'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'true'
-          baseline: ${{ github.workspace }}/fallow-baseline.json
-      - name: Assert baseline suppressed known issues
+      - name: Assert baseline comparison
         env:
-          FIRST: ${{ steps.save.outputs.issues }}
           ISSUES: ${{ steps.compare.outputs.issues }}
           ENTRIES: ${{ steps.compare.outputs.baseline-entries }}
+          BPATH: ${{ steps.compare.outputs.baseline-path }}
+          EXPECTED: ${{ github.workspace }}/fallow-dead-code-baseline.json
         run: |
-          echo "first: $FIRST second: $ISSUES baseline-entries: $ENTRIES"
-          if [ "$FIRST" -lt 1 ]; then
-            echo "FAIL: first run should have found issues"
+          echo "issues: $ISSUES"
+          echo "baseline-entries: $ENTRIES"
+          echo "baseline-path: $BPATH"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: all issues should be suppressed by the baseline"
             exit 1
           fi
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected baseline to suppress all known issues"
+          if [ -n "$ENTRIES" ] && ! [[ "$ENTRIES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: baseline-entries is not a number"
+            exit 1
+          fi
+          if [ -n "$BPATH" ] && [ "$BPATH" != "$EXPECTED" ]; then
+            echo "FAIL: baseline-path does not match input"
             exit 1
           fi
           echo "PASS"

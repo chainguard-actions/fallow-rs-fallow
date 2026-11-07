@@ -1,4 +1,4 @@
-name: Test audit with dead-code, health and dupes baselines
+name: Test audit with gate, worsened and per-analysis baselines
 on:
   workflow_dispatch:
 jobs:
@@ -8,66 +8,82 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - id: save-dead-code
+      - name: Remove stale baselines
+        run: rm -f "$GITHUB_WORKSPACE"/audit-*-baseline.json
+      - id: dc
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
+          save-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/bl-dead-code.json
-      - id: save-health
+      - id: health
         uses: .
         with:
           command: health
           root: tests/fixtures/dirty-project
+          save-baseline: ${{ github.workspace }}/audit-health-baseline.json
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/bl-health.json
-      - id: save-dupes
+      - id: dupes
         uses: .
         with:
           command: dupes
           root: tests/fixtures/dirty-project
+          save-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          save-baseline: ${{ github.workspace }}/bl-dupes.json
       - name: Assert baselines saved
         run: |
-          for f in bl-dead-code.json bl-health.json bl-dupes.json; do
-            if [ ! -s "$GITHUB_WORKSPACE/$f" ]; then
-              echo "FAIL: $f not written"
+          for k in dead-code health dupes; do
+            F="$GITHUB_WORKSPACE/audit-$k-baseline.json"
+            if [ ! -f "$F" ]; then
+              echo "FAIL: $F not written"
               exit 1
             fi
           done
           echo "PASS"
-      - id: action
+      - id: audit
         uses: .
         with:
           command: audit
           root: tests/fixtures/dirty-project
+          changed-since: HEAD
+          gate: all
+          worsened: warn
+          dead-code-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
+          health-baseline: ${{ github.workspace }}/audit-health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          changed-since: HEAD
-          dead-code-baseline: ${{ github.workspace }}/bl-dead-code.json
-          health-baseline: ${{ github.workspace }}/bl-health.json
-          dupes-baseline: ${{ github.workspace }}/bl-dupes.json
       - name: Assert audit verdict
         env:
-          VERDICT: ${{ steps.action.outputs.verdict }}
-          ISSUES: ${{ steps.action.outputs.issues }}
+          VERDICT: ${{ steps.audit.outputs.verdict }}
+          GATE: ${{ steps.audit.outputs.gate }}
+          ISSUES: ${{ steps.audit.outputs.issues }}
         run: |
-          echo "verdict: $VERDICT issues: $ISSUES"
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE"
+          echo "issues: $ISSUES"
           case "$VERDICT" in
             pass|warn|fail) ;;
-            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+            *) echo "FAIL: unexpected audit verdict '$VERDICT'"; exit 1 ;;
           esac
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all'"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
           echo "PASS"

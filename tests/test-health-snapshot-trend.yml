@@ -1,4 +1,4 @@
-name: Test save-snapshot then trend
+name: Test health snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -6,22 +6,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snapshot
+      - name: Clear stale snapshots
+        run: rm -rf tests/fixtures/dirty-project/.fallow/snapshots
+      - id: save
         uses: .
         with:
           command: health
           root: tests/fixtures/dirty-project
+          save-snapshot: 'true'
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          save-snapshot: 'true'
       - name: Assert snapshot saved
         run: |
-          FOUND="$(find . -path '*/.fallow/snapshots/*' -type f -not -path './.git/*' | head -n5)"
-          echo "snapshots: $FOUND"
-          if [ -z "$FOUND" ]; then
-            echo "FAIL: no snapshot file written under .fallow/snapshots"
+          ls -la tests/fixtures/dirty-project/.fallow/snapshots || true
+          if [ -z "$(ls -A tests/fixtures/dirty-project/.fallow/snapshots 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot written to .fallow/snapshots"
             exit 1
           fi
           echo "PASS"
@@ -30,24 +31,18 @@ jobs:
         with:
           command: health
           root: tests/fixtures/dirty-project
+          trend: 'true'
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          trend: 'true'
       - name: Assert trend run produced results
         env:
-          ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
-          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

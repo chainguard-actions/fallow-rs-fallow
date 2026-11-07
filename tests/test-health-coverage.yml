@@ -1,4 +1,4 @@
-name: Test health with Istanbul coverage
+name: Test health with Istanbul coverage and coverage-root
 on:
   workflow_dispatch:
 jobs:
@@ -11,14 +11,14 @@ jobs:
         with:
           command: health
           root: tests/fixtures/dirty-project
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /ci-build
+          max-crap: '30'
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /build
-          max-crap: '30'
-      - name: Assert health with coverage ran
+      - name: Assert health results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -29,7 +29,7 @@ jobs:
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
             echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi

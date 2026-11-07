@@ -11,25 +11,29 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
+          workspace: web
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          workspace: '@fx/a'
-      - name: Assert only workspace a reported
+      - name: Assert scoped results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          [ -f "$RESULTS" ] && cat "$RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if grep -q "orphan-b" "$RESULTS"; then
-            echo "FAIL: workspace b findings should be scoped out"
+          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          if grep -q "packages/admin" "$RESULTS"; then
+            echo "FAIL: admin workspace findings leaked into web-scoped output"
+            cat "$RESULTS"
             exit 1
           fi
           echo "PASS"

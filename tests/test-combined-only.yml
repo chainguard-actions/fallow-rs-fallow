@@ -10,12 +10,12 @@ jobs:
         uses: .
         with:
           root: tests/fixtures/dirty-project
+          only: dead-code
           version: '3.38.0'
+          fail-on-issues: 'false'
           type-aware: 'false'
           format: json
-          fail-on-issues: 'false'
-          only: dead-code,dupes
-      - name: Assert combined run produced results
+      - name: Assert combined results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -26,8 +26,13 @@ jobs:
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
+          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
             echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          if ! grep -q "orphan" "$RESULTS"; then
+            echo "FAIL: dead-code analysis should report orphan.ts"
+            cat "$RESULTS"
             exit 1
           fi
           echo "PASS"
