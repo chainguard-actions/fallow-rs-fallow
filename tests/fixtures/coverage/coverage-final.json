@@ -1,10 +1,10 @@
 {
-  "/ci/project/index.js": {
-    "path": "/ci/project/index.js",
+  "/coverage-src/index.js": {
+    "path": "/coverage-src/index.js",
     "statementMap": {
       "0": { "start": { "line": 3, "column": 2 }, "end": { "line": 3, "column": 27 } },
       "1": { "start": { "line": 7, "column": 2 }, "end": { "line": 7, "column": 12 } },
-      "2": { "start": { "line": 10, "column": 0 }, "end": { "line": 10, "column": 29 } }
+      "2": { "start": { "line": 10, "column": 0 }, "end": { "line": 10, "column": 27 } }
     },
     "fnMap": {
       "0": {

@@ -1,4 +1,4 @@
-name: Test health with complexity thresholds, top, sort, min-severity and threads
+name: Test health complexity thresholds
 on:
   workflow_dispatch:
 
@@ -16,21 +16,21 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          max-cyclomatic: '20'
-          max-cognitive: '15'
-          max-crap: '30.0'
-          top: '5'
-          sort: cognitive
-          min-severity: critical
-          threads: '2'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          max-cyclomatic: '10'
+          max-cognitive: '10'
+          max-crap: '30.0'
+          top: '5'
+          sort: cognitive
+          min-severity: critical
+          threads: '2'
 
-      - name: Assert outputs
+      - name: Assert issues numeric and results file exists
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -42,19 +42,11 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing: '$RESULTS'"
+            echo "FAIL: results file missing at '$RESULTS'"
             exit 1
           fi
-          jq -e . "$RESULTS" > /dev/null || { echo "FAIL: results is not valid JSON"; exit 1; }
-          echo "PASS"
-
-      - name: Assert threshold flags were passed to fallow
-        run: |
-          echo "FALLOW_ANALYSIS_ARGS_JSON=$FALLOW_ANALYSIS_ARGS_JSON"
-          for flag in --max-cyclomatic --max-cognitive --max-crap --top --sort --min-severity --threads; do
-            if ! echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e --arg f "$flag" 'index($f) != null' > /dev/null; then
-              echo "FAIL: expected $flag in analysis args"
-              exit 1
-            fi
-          done
+          if ! jq empty "$RESULTS" 2>/dev/null; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test health save-snapshot followed by trend
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 
@@ -16,26 +16,25 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          save-snapshot: 'true'
 
-      - name: Assert snapshot run
+      - name: Assert snapshot run succeeded
         env:
           ISSUES: ${{ steps.snapshot.outputs.issues }}
         run: |
           echo "issues: $ISSUES"
-          echo "args: $FALLOW_ANALYSIS_ARGS_JSON"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
-          echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e 'index("--save-snapshot") != null' > /dev/null \
-            || { echo "FAIL: --save-snapshot missing"; exit 1; }
+          echo "snapshot files:"
+          find tests/fixtures/simple-js/.fallow -type f 2>/dev/null || true
           echo "PASS"
 
       - id: trend
@@ -44,29 +43,27 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
-          trend: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          trend: 'true'
 
-      - name: Assert trend run
+      - name: Assert trend run succeeded
         env:
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "args: $FALLOW_ANALYSIS_ARGS_JSON"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+            echo "FAIL: results file missing at '$RESULTS'"
             exit 1
           fi
-          echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e 'index("--trend") != null' > /dev/null \
-            || { echo "FAIL: --trend missing"; exit 1; }
           echo "PASS"

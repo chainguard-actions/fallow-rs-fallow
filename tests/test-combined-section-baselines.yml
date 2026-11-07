@@ -1,0 +1,82 @@
+name: Test combined run with health-baseline and dupes-baseline
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FALLOW_SKIP_BINARY_VERIFY: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: save-health
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/simple-js
+          save-baseline: ${{ github.workspace }}/fallow-health-baseline.json
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+
+      - id: save-dupes
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/simple-js
+          save-baseline: ${{ github.workspace }}/fallow-dupes-baseline.json
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+
+      - name: Assert section baselines were saved
+        run: |
+          for f in fallow-health-baseline.json fallow-dupes-baseline.json; do
+            if [ ! -s "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f was not written"
+              exit 1
+            fi
+            echo "found $f"
+          done
+          echo "PASS"
+
+      - id: combined
+        uses: .
+        with:
+          command: ''
+          root: tests/fixtures/simple-js
+          health-baseline: ${{ github.workspace }}/fallow-health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/fallow-dupes-baseline.json
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          comment: 'false'
+          no-cache: 'true'
+
+      - name: Assert combined run succeeded
+        env:
+          ISSUES: ${{ steps.combined.outputs.issues }}
+          RESULTS: ${{ steps.combined.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing at '$RESULTS'"
+            exit 1
+          fi
+          echo "PASS"

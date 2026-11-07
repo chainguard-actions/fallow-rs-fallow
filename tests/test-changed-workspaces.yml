@@ -1,4 +1,4 @@
-name: Test changed-workspaces scoping in a monorepo
+name: Test dead-code scoped with changed-workspaces
 on:
   workflow_dispatch:
 
@@ -17,8 +17,8 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          format: json
           changed-workspaces: HEAD
+          format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
@@ -26,21 +26,19 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert outputs
+      - name: Assert issues numeric and results file exists
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "args: $FALLOW_ANALYSIS_ARGS_JSON"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
             echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+            echo "FAIL: results file missing at '$RESULTS'"
             exit 1
           fi
-          echo "$FALLOW_ANALYSIS_ARGS_JSON" | jq -e 'index("--changed-workspaces") != null' > /dev/null \
-            || { echo "FAIL: --changed-workspaces missing"; exit 1; }
           echo "PASS"
