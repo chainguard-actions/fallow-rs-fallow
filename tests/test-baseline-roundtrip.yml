@@ -1,0 +1,59 @@
+name: Test dead-code baseline save and load
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline directory
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-baseline-save
+          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+      - name: Assert baseline file was written
+        run: |
+          f="$GITHUB_WORKSPACE/fallow-baselines/dead-code.json"
+          if [ ! -s "$f" ]; then
+            echo "FAIL: baseline file not written"
+            ls -la "$GITHUB_WORKSPACE/fallow-baselines" || true
+            exit 1
+          fi
+          head -c 2000 "$f"; echo
+          echo "PASS"
+      - id: load
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          type-aware: 'false'
+          fail-on-issues: 'true'
+          artifacts-dir: fallow-artifacts-baseline-load
+          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+      - name: Assert baseline suppresses known issues
+        env:
+          ISSUES: ${{ steps.load.outputs.issues }}
+          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
+          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
+          BPATH: ${{ steps.load.outputs.baseline-path }}
+        run: |
+          echo "issues: $ISSUES entries: $ENTRIES stale: $STALE path: $BPATH"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues with baseline loaded"
+            exit 1
+          fi
+          if [ -n "$STALE" ] && [ "$STALE" != "0" ]; then
+            echo "FAIL: expected no stale baseline entries"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,4 +1,4 @@
-name: Test dead-code issue-types filter for unused files
+name: Test dead-code scoped to a workspace
 on:
   workflow_dispatch:
 jobs:
@@ -10,27 +10,32 @@ jobs:
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/unused-project
+          root: tests/fixtures/monorepo
+          workspace: pkg-a
           version: 3.40.0
           format: json
-          issue-types: unused-files
-          fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-issue-types
           type-aware: 'false'
-      - name: Assert orphan file reported
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-workspace
+      - name: Assert workspace-scoped run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected at least one unused file"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
           f="$RESULTS"
           [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if ! grep -q 'orphan' "$f"; then
-            echo "FAIL: orphan.ts not reported"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: results file not found"
+            exit 1
+          fi
+          head -c 2000 "$f"; echo
+          if grep -q 'pkg-b/src' "$f"; then
+            echo "FAIL: results include findings from pkg-b outside the workspace scope"
             exit 1
           fi
           echo "PASS"

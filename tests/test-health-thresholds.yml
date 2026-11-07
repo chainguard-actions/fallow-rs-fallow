@@ -10,22 +10,21 @@ jobs:
         uses: .
         with:
           command: health
-          root: tests/fixtures/clean-project
-          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
+          root: tests/fixtures/unused-project
           version: 3.40.0
           format: json
-          max-cyclomatic: '20'
-          max-cognitive: '15'
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-health-thresholds
+          max-cyclomatic: '10'
+          max-cognitive: '10'
           max-crap: '30'
           max-file-lines: '500'
           sort: cognitive
-          top: '10'
+          top: '5'
           min-severity: critical
           threads: '2'
-          fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-health
-          type-aware: 'false'
-      - name: Assert issues output is an integer
+      - name: Assert issues is an integer and results exist
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -33,11 +32,14 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a non-negative integer"
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
-          if [ -z "$RESULTS" ]; then
-            echo "FAIL: results output empty"
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: results file not found"
             exit 1
           fi
+          head -c 2000 "$f"; echo
           echo "PASS"

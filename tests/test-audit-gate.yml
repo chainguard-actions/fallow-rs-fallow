@@ -1,0 +1,57 @@
+name: Test audit command with gate options
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Prepare baseline directory
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-audit"
+      - id: save-dead
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-audit-dead
+          save-baseline: ${{ github.workspace }}/fallow-audit/dead-code.json
+      - id: action
+        uses: .
+        with:
+          command: audit
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-audit
+          changed-since: HEAD
+          gate: all
+          worsened: warn
+          dead-code-baseline: ${{ github.workspace }}/fallow-audit/dead-code.json
+      - name: Assert audit verdict and gate outputs
+        env:
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "verdict: $VERDICT gate: $GATE issues: $ISSUES"
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+          esac
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all'"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not an integer"
+            exit 1
+          fi
+          echo "PASS"

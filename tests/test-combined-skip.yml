@@ -1,4 +1,4 @@
-name: Test combined run with skip selector
+name: Test combined run with skip
 on:
   workflow_dispatch:
 jobs:
@@ -10,19 +10,26 @@ jobs:
         uses: .
         with:
           root: tests/fixtures/clean-project
+          skip: dupes,health
           version: 3.40.0
           format: json
-          skip: dupes
+          type-aware: 'false'
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-skip
-          type-aware: 'false'
-      - name: Assert outputs
+      - name: Assert run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not an integer"
+            exit 1
+          fi
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: results file not found"
             exit 1
           fi
           echo "PASS"

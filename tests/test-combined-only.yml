@@ -1,4 +1,4 @@
-name: Test combined run with only selector
+name: Test combined run limited with only
 on:
   workflow_dispatch:
 jobs:
@@ -10,27 +10,31 @@ jobs:
         uses: .
         with:
           root: tests/fixtures/unused-project
+          only: dead-code
           version: 3.40.0
           format: json
-          only: dead-code,health
+          type-aware: 'false'
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-only
-          type-aware: 'false'
-      - name: Assert outputs
+      - name: Assert dead-code findings reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not an integer"
             exit 1
           fi
           f="$RESULTS"
           [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$f" ] || ! jq empty "$f"; then
-            echo "FAIL: results missing or invalid"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: results file not found"
+            exit 1
+          fi
+          head -c 3000 "$f"; echo
+          if ! grep -qE 'orphan|unusedSubtract' "$f"; then
+            echo "FAIL: dead-code findings missing"
             exit 1
           fi
           echo "PASS"

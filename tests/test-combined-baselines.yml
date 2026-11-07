@@ -1,0 +1,83 @@
+name: Test combined run with health and dupes baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline directory
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-combined"
+      - id: save-dead
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-combined-dead
+          save-baseline: ${{ github.workspace }}/fallow-combined/dead-code.json
+      - id: save-health
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-combined-health
+          save-baseline: ${{ github.workspace }}/fallow-combined/health.json
+      - id: save-dupes
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-combined-dupes
+          save-baseline: ${{ github.workspace }}/fallow-combined/dupes.json
+      - name: Assert baselines were written
+        run: |
+          ls -la "$GITHUB_WORKSPACE/fallow-combined"
+          for f in dead-code health dupes; do
+            if [ ! -f "$GITHUB_WORKSPACE/fallow-combined/$f.json" ]; then
+              echo "FAIL: $f baseline missing"
+              exit 1
+            fi
+          done
+          echo "PASS"
+      - id: combined
+        uses: .
+        with:
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-combined-run
+          baseline: ${{ github.workspace }}/fallow-combined/dead-code.json
+          health-baseline: ${{ github.workspace }}/fallow-combined/health.json
+          dupes-baseline: ${{ github.workspace }}/fallow-combined/dupes.json
+      - name: Assert combined run produced results
+        env:
+          ISSUES: ${{ steps.combined.outputs.issues }}
+          RESULTS: ${{ steps.combined.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not an integer"
+            exit 1
+          fi
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: results file not found"
+            exit 1
+          fi
+          echo "PASS"

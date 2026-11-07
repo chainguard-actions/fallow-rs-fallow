@@ -1,4 +1,4 @@
-name: Test health with Istanbul coverage and coverage-root
+name: Test health with Istanbul coverage
 on:
   workflow_dispatch:
 jobs:
@@ -13,19 +13,26 @@ jobs:
           root: tests/fixtures/clean-project
           version: 3.40.0
           format: json
-          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /ci-build
-          max-crap: '30'
+          type-aware: 'false'
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-coverage
-          type-aware: 'false'
-      - name: Assert issues output is an integer
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /build
+          max-crap: '30'
+      - name: Assert health run with coverage succeeded
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a non-negative integer"
+            echo "FAIL: issues is not an integer"
+            exit 1
+          fi
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: results file not found"
             exit 1
           fi
           echo "PASS"

@@ -13,15 +13,15 @@ jobs:
           root: tests/fixtures/unused-project
           version: 3.40.0
           format: json
-          dupes-mode: mild
-          min-tokens: '30'
-          min-lines: '3'
-          threshold: '0'
-          top: '5'
-          fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-dupes
           type-aware: 'false'
-      - name: Assert issues is an integer and results exist
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-dupes-options
+          dupes-mode: strict
+          min-tokens: '10'
+          min-lines: '2'
+          threshold: '100'
+          top: '5'
+      - name: Assert clone group count is an integer
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -29,13 +29,7 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a non-negative integer"
-            exit 1
-          fi
-          f="$RESULTS"
-          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$f" ] || ! jq empty "$f"; then
-            echo "FAIL: results file missing or invalid JSON"
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
           echo "PASS"

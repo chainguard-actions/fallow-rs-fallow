@@ -1,4 +1,4 @@
-name: Test git-derived changed-workspaces scoping
+name: Test dead-code scoped by changed-workspaces
 on:
   workflow_dispatch:
 jobs:
@@ -13,13 +13,13 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
+          changed-workspaces: HEAD
           version: 3.40.0
           format: json
-          changed-workspaces: HEAD
-          fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-changed-ws
           type-aware: 'false'
-      - name: Assert outputs
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-changed-workspaces
+      - name: Assert changed-workspaces run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
