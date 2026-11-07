@@ -6,33 +6,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
 
-      - name: Create sample project
+      - name: Create sample git project with a change
         run: |
           set -e
-          D="$GITHUB_WORKSPACE/fallow-test-sample"
-          rm -rf "$D"
-          mkdir -p "$D/src"
-          cat > "$D/package.json" <<'EOF'
-          {"name":"fallow-test-sample","version":"1.0.0","private":true,"main":"src/index.ts"}
+          git config --global --add safe.directory '*'
+          mkdir -p sample/src
+          cat > sample/package.json <<'EOF'
+          {"name":"sample","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
           EOF
-          cat > "$D/src/index.ts" <<'EOF'
-          export function main(): number {
-            return 1;
-          }
-          main();
+          cat > sample/src/index.js <<'EOF'
+          import { add } from './math.js';
+          console.log(add(1, 2));
           EOF
+          cat > sample/src/math.js <<'EOF'
+          export function add(a, b) { return a + b; }
+          EOF
+          cd sample
+          git init -q
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          git add -A
+          git commit -qm "initial"
+          cat > src/orphan.js <<'EOF'
+          export const orphan = 1;
+          EOF
+          git add -A
+          git commit -qm "add orphan"
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: fallow-test-sample
-          changed-since: HEAD
+          root: sample
+          changed-since: HEAD~1
           fail-on-issues: 'false'
-          auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
@@ -41,15 +49,17 @@ jobs:
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
+          UNAPPLIED: ${{ steps.action.outputs.requests-unapplied }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS changed-files-unavailable: $UNAVAILABLE"
+          echo "issues: $ISSUES"
+          echo "requests-unapplied: $UNAPPLIED"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
+            echo "FAIL: expected non-negative integer, got '$ISSUES'"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

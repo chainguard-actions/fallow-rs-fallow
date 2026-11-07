@@ -1,4 +1,4 @@
-name: Test health with complexity thresholds, sort, top and min-score
+name: Test health command with complexity thresholds and sorting
 on:
   workflow_dispatch:
 jobs:
@@ -7,63 +7,32 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project
-        run: |
-          set -e
-          D="$GITHUB_WORKSPACE/fallow-test-sample"
-          rm -rf "$D"
-          mkdir -p "$D/src"
-          cat > "$D/package.json" <<'EOF'
-          {"name":"fallow-test-sample","version":"1.0.0","private":true,"main":"src/index.ts"}
-          EOF
-          cat > "$D/src/index.ts" <<'EOF'
-          import { used } from './util';
-          export function main(): number {
-            return used(3);
-          }
-          main();
-          EOF
-          cat > "$D/src/util.ts" <<'EOF'
-          export function used(n: number): number {
-            if (n > 2) {
-              return n * 2;
-            }
-            return n;
-          }
-          export function unusedHelper(): number {
-            return 2;
-          }
-          EOF
-
       - id: action
         uses: .
         with:
           command: health
-          root: fallow-test-sample
-          max-cyclomatic: '30'
-          max-cognitive: '25'
-          max-crap: '50'
+          max-cyclomatic: '25'
+          max-cognitive: '20'
+          max-crap: '40'
+          top: '5'
           sort: cognitive
-          top: '10'
-          min-score: '0'
+          since: 1y
+          min-commits: '2'
+          min-observation-volume: '100'
+          low-traffic-threshold: '0.1'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert step succeeded and issues is a number
+      - name: Assert issues output is a number
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          OUTCOME: ${{ steps.action.outcome }}
         run: |
-          echo "outcome: $OUTCOME issues: $ISSUES"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: expected success"
-            exit 1
-          fi
+          echo "issues: $ISSUES"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
+            echo "FAIL: expected non-negative integer, got '$ISSUES'"
             exit 1
           fi
           echo "PASS"
@@ -77,5 +46,8 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: results is not valid JSON"
+            exit 1
+          fi
           echo "PASS"

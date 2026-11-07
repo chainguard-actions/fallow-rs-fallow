@@ -1,4 +1,4 @@
-name: Test security rejects an invalid security-gate value
+name: Test invalid security-gate value is rejected
 on:
   workflow_dispatch:
 jobs:
@@ -7,31 +7,18 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project
-        run: |
-          set -e
-          D="$GITHUB_WORKSPACE/fallow-test-sample"
-          rm -rf "$D"
-          mkdir -p "$D/src"
-          cat > "$D/package.json" <<'EOF'
-          {"name":"fallow-test-sample","version":"1.0.0","private":true,"main":"src/index.ts"}
-          EOF
-          echo 'export const x = 1;' > "$D/src/index.ts"
-
       - id: action
         uses: .
         continue-on-error: true
         with:
           command: security
-          root: fallow-test-sample
-          security-gate: not-a-valid-gate
-          fail-on-issues: 'false'
+          security-gate: bogus-gate
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert action failed on invalid security-gate
+      - name: Assert the action failed validation
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |

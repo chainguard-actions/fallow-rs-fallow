@@ -7,52 +7,60 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project and empty coverage file
+      - name: Create sample project and coverage data
         run: |
           set -e
-          D="$GITHUB_WORKSPACE/fallow-test-sample"
-          rm -rf "$D"
-          mkdir -p "$D/src" "$D/coverage"
-          cat > "$D/package.json" <<'EOF'
-          {"name":"fallow-test-sample","version":"1.0.0","private":true,"main":"src/index.ts"}
+          mkdir -p sample/src coverage
+          cat > sample/package.json <<'EOF'
+          {"name":"sample","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
           EOF
-          cat > "$D/src/index.ts" <<'EOF'
-          export function main(n: number): number {
-            if (n > 1) {
-              return n - 1;
+          cat > sample/src/index.js <<'EOF'
+          import { add } from './math.js';
+          console.log(add(1, 2));
+          EOF
+          cat > sample/src/math.js <<'EOF'
+          export function add(a, b) { return a + b; }
+          EOF
+          cat > coverage/coverage-final.json <<'EOF'
+          {
+            "/ci/build/src/math.js": {
+              "path": "/ci/build/src/math.js",
+              "statementMap": {"0": {"start": {"line": 1, "column": 28}, "end": {"line": 1, "column": 41}}},
+              "fnMap": {"0": {"name": "add", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}}, "loc": {"start": {"line": 1, "column": 26}, "end": {"line": 1, "column": 43}}, "line": 1}},
+              "branchMap": {},
+              "s": {"0": 1},
+              "f": {"0": 1},
+              "b": {}
             }
-            return n;
           }
-          main(2);
           EOF
-          echo '{}' > "$D/coverage/coverage-final.json"
 
       - id: action
         uses: .
         with:
           command: health
-          root: fallow-test-sample
-          coverage: ${{ github.workspace }}/fallow-test-sample/coverage/coverage-final.json
-          coverage-root: ${{ github.workspace }}/fallow-test-sample
-          max-crap: '30'
+          root: sample
+          coverage: ${{ github.workspace }}/coverage/coverage-final.json
+          coverage-root: /ci/build
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert issues is a number and results JSON exists
+      - name: Assert coverage-aware health run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
+            echo "FAIL: expected non-negative integer, got '$ISSUES'"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
+          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"
