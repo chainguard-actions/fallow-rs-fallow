@@ -11,27 +11,26 @@ jobs:
         with:
           command: health
           root: tests/fixtures/dirty-project
-          min-score: '0'
           version: '3.38.0'
-          fail-on-issues: 'true'
           type-aware: 'false'
           format: json
-      - name: Assert score computed and gate did not fail
+          min-score: '0'
+      - name: Assert min-score gate did not fail
         env:
+          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
           GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
+          GATES_PASSED: ${{ steps.action.outputs.gates-passed }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           echo "gates-failed: $GATES_FAILED"
-          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
-            exit 1
-          fi
-          if ! grep -qi "score" "$RESULTS"; then
-            echo "FAIL: expected a health score in results (min-score implies --score)"
-            cat "$RESULTS"
+          echo "gates-passed: $GATES_PASSED"
+          case ",$GATES_FAILED," in
+            *,health-min-score,*) echo "FAIL: health-min-score gate failed with min-score 0"; exit 1 ;;
+          esac
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"

@@ -1,3 +1,3 @@
-export function renderWeb(name: string): string {
-  return `web:${name}`;
-}
+import { format } from "./format";
+
+console.log(format("web"));

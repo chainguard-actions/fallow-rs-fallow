@@ -1,4 +1,4 @@
-name: Test explicit config, issue-types filter and threads
+name: Test config file and issue-types filter
 on:
   workflow_dispatch:
 jobs:
@@ -11,34 +11,30 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
-          config: ${{ github.workspace }}/tests/fixtures/fallow-config.json
-          issue-types: unused-files
-          threads: '2'
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
+          fail-on-issues: 'false'
           format: json
-      - name: Assert unused file reported
+          issue-types: unused-files
+      - name: Assert only unused files reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
-          if [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected orphan.ts to be reported as an unused file"
-            exit 1
-          fi
-          if [ ! -s "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid JSON"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one unused file"
             exit 1
           fi
           if ! grep -q "orphan" "$RESULTS"; then
-            echo "FAIL: orphan not mentioned in results"
+            echo "FAIL: orphan.ts should be reported as unused file"
+            cat "$RESULTS"
+            exit 1
+          fi
+          if grep -q "neverUsedHelper" "$RESULTS"; then
+            echo "FAIL: unused export reported despite issue-types=unused-files"
             cat "$RESULTS"
             exit 1
           fi

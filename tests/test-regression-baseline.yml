@@ -1,4 +1,4 @@
-name: Test regression baseline with no regression
+name: Test regression baseline save and compare
 on:
   workflow_dispatch:
 jobs:
@@ -6,48 +6,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Remove stale regression baseline
-        run: rm -f "$GITHUB_WORKSPACE/fallow-regression-baseline.json"
       - id: save
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
+          fail-on-issues: 'false'
           format: json
-      - name: Assert regression baseline saved
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
+      - name: Assert regression baseline written
         run: |
-          F="$GITHUB_WORKSPACE/fallow-regression-baseline.json"
-          if [ ! -s "$F" ]; then
-            echo "FAIL: regression baseline file missing"
+          if [ ! -s "$GITHUB_WORKSPACE/fallow-regression.json" ]; then
+            echo "FAIL: regression baseline file not written"
             exit 1
           fi
-          cat "$F"
           echo "PASS"
       - id: compare
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
-          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
-          fail-on-regression: 'true'
-          tolerance: '0'
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
+          fail-on-issues: 'false'
           format: json
-      - name: Assert no regression
+          fail-on-regression: 'true'
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
+      - name: Assert no regression detected
         env:
-          OUTCOME: ${{ steps.compare.outcome }}
           ISSUES: ${{ steps.compare.outputs.issues }}
+          GATES_FAILED: ${{ steps.compare.outputs.gates-failed }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          echo "gates-failed: $GATES_FAILED"
+          case ",$GATES_FAILED," in
+            *,regression,*) echo "FAIL: unchanged project must not regress"; exit 1 ;;
+          esac
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected issues count >= 1"
             exit 1
           fi
           echo "PASS"

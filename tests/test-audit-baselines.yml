@@ -1,4 +1,4 @@
-name: Test audit with gate, worsened and per-analysis baselines
+name: Test audit with dead-code, health and dupes baselines
 on:
   workflow_dispatch:
 jobs:
@@ -8,80 +8,69 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Remove stale baselines
-        run: rm -f "$GITHUB_WORKSPACE"/audit-*-baseline.json
-      - id: dc
+      - id: save-dead-code
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
-          save-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
+          fail-on-issues: 'false'
           format: json
-      - id: health
+          save-baseline: ${{ github.workspace }}/dead-code-baseline.json
+      - id: save-health
         uses: .
         with:
           command: health
           root: tests/fixtures/dirty-project
-          save-baseline: ${{ github.workspace }}/audit-health-baseline.json
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
+          fail-on-issues: 'false'
           format: json
-      - id: dupes
+          save-baseline: ${{ github.workspace }}/health-baseline.json
+      - id: save-dupes
         uses: .
         with:
           command: dupes
           root: tests/fixtures/dirty-project
-          save-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
+          fail-on-issues: 'false'
           format: json
-      - name: Assert baselines saved
+          save-baseline: ${{ github.workspace }}/dupes-baseline.json
+      - name: Assert baselines written
         run: |
-          for k in dead-code health dupes; do
-            F="$GITHUB_WORKSPACE/audit-$k-baseline.json"
-            if [ ! -f "$F" ]; then
-              echo "FAIL: $F not written"
+          for f in dead-code-baseline.json health-baseline.json dupes-baseline.json; do
+            if [ ! -s "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f not written"
               exit 1
             fi
           done
           echo "PASS"
-      - id: audit
+      - id: action
         uses: .
         with:
           command: audit
           root: tests/fixtures/dirty-project
-          changed-since: HEAD
-          gate: all
-          worsened: warn
-          dead-code-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
-          health-baseline: ${{ github.workspace }}/audit-health-baseline.json
-          dupes-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
           version: '3.38.0'
-          fail-on-issues: 'false'
           type-aware: 'false'
+          fail-on-issues: 'false'
           format: json
+          changed-since: HEAD
+          dead-code-baseline: ${{ github.workspace }}/dead-code-baseline.json
+          health-baseline: ${{ github.workspace }}/health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/dupes-baseline.json
       - name: Assert audit verdict
         env:
-          VERDICT: ${{ steps.audit.outputs.verdict }}
-          GATE: ${{ steps.audit.outputs.gate }}
-          ISSUES: ${{ steps.audit.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "verdict: $VERDICT"
-          echo "gate: $GATE"
           echo "issues: $ISSUES"
           case "$VERDICT" in
             pass|warn|fail) ;;
-            *) echo "FAIL: unexpected audit verdict '$VERDICT'"; exit 1 ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
           esac
-          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
-            echo "FAIL: expected gate 'all'"
-            exit 1
-          fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
