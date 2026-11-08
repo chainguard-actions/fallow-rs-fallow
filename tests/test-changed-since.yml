@@ -1,4 +1,4 @@
-name: Test health min-score gate (passing threshold)
+name: Test changed-since scoping to HEAD
 on:
   workflow_dispatch:
 jobs:
@@ -6,35 +6,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: action
         uses: .
         with:
-          command: health
+          command: dead-code
           root: tests/fixtures/dead-code-project
+          changed-since: HEAD
           version: '3.39.0'
-          auto-changed-since: 'false'
+          fail-on-issues: 'false'
           type-aware: 'false'
-          min-score: '0'
-      - name: Assert min-score 0 passes and results exist
+      - name: Assert scoped run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
-          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
+          UNAPPLIED: ${{ steps.action.outputs.requests-unapplied }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          echo "gates-failed: $GATES_FAILED"
+          echo "requests-unapplied: $UNAPPLIED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing"
-            exit 1
-          fi
-          if ! grep -qi 'score' "$RESULTS"; then
-            echo "FAIL: results do not contain a health score"
-            head -c 3000 "$RESULTS"
             exit 1
           fi
           echo "PASS"

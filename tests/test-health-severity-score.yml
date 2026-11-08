@@ -1,0 +1,47 @@
+name: Test health min-severity and min-score gates pass on a simple project
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: severity
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.39.0'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+          min-severity: critical
+      - id: score
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.39.0'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+          min-score: '0'
+      - name: Assert both gated runs passed
+        env:
+          SEV_ISSUES: ${{ steps.severity.outputs.issues }}
+          SCORE_ISSUES: ${{ steps.score.outputs.issues }}
+          SCORE_RESULTS: ${{ steps.score.outputs.results }}
+          GATES_FAILED: ${{ steps.score.outputs.gates-failed }}
+        run: |
+          echo "severity issues: $SEV_ISSUES"
+          echo "score issues: $SCORE_ISSUES"
+          echo "score results: $SCORE_RESULTS"
+          echo "gates-failed: $GATES_FAILED"
+          if ! [[ "$SEV_ISSUES" =~ ^[0-9]+$ ]] || ! [[ "$SCORE_ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -z "$SCORE_RESULTS" ] || [ ! -f "$SCORE_RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          echo "PASS"

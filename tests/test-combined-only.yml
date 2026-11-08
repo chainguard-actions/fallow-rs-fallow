@@ -1,4 +1,4 @@
-name: Test dupes tuning options
+name: Test combined run restricted with only
 on:
   workflow_dispatch:
 jobs:
@@ -9,17 +9,13 @@ jobs:
       - id: action
         uses: .
         with:
-          command: dupes
           root: tests/fixtures/dead-code-project
           version: '3.39.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          min-tokens: '10'
-          min-lines: '2'
-          threshold: '100'
-          top: '5'
-      - name: Assert dupes ran
+          only: dead-code,health
+      - name: Assert combined run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

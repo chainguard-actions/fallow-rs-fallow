@@ -1,4 +1,4 @@
-name: Test health thresholds
+name: Test health thresholds, sorting and hotspot window
 on:
   workflow_dispatch:
 jobs:
@@ -6,6 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: action
         uses: .
         with:
@@ -16,12 +18,15 @@ jobs:
           auto-changed-since: 'false'
           type-aware: 'false'
           max-cyclomatic: '10'
-          max-cognitive: '10'
+          max-cognitive: '8'
           max-crap: '25'
           max-file-lines: '500'
           top: '5'
-          sort: 'cognitive'
-          min-severity: 'critical'
+          sort: cognitive
+          hotspots: 'true'
+          since: 1y
+          min-commits: '1'
+          threads: '2'
       - name: Assert health ran with thresholds
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
