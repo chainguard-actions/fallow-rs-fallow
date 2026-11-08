@@ -18,7 +18,7 @@ jobs:
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-hotspots
           hotspots: 'true'
-          since: 1y
+          since: 10y
           min-commits: '1'
       - name: Assert outputs
         env:

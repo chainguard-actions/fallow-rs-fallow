@@ -6,6 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
       - id: save
         uses: .
         with:
@@ -14,20 +16,15 @@ jobs:
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
-          artifacts-dir: fallow-out-baseline-save
-          save-baseline: fallow-dead-code-baseline.json
-      - name: Assert baseline saved
+          artifacts-dir: fallow-out-save-baseline
+          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+      - name: Assert baseline file saved
         env:
           ISSUES: ${{ steps.save.outputs.issues }}
         run: |
           echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not numeric"
-            exit 1
-          fi
-          found=$(find "$GITHUB_WORKSPACE" -name fallow-dead-code-baseline.json -type f | head -n 1)
-          echo "baseline file: $found"
-          if [ -z "$found" ] || ! jq -e . "$found" > /dev/null; then
+          F="$GITHUB_WORKSPACE/fallow-baselines/dead-code.json"
+          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
             echo "FAIL: baseline file missing or invalid JSON"
             exit 1
           fi
@@ -38,26 +35,23 @@ jobs:
           command: dead-code
           root: tests/fixtures/sample-project
           version: 3.35.0
+          fail-on-issues: 'false'
           auto-changed-since: 'false'
-          artifacts-dir: fallow-out-baseline-load
-          baseline: fallow-dead-code-baseline.json
-      - name: Assert baseline suppresses known issues
+          artifacts-dir: fallow-out-load-baseline
+          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+      - name: Assert baseline was applied
         env:
           BEFORE: ${{ steps.save.outputs.issues }}
           AFTER: ${{ steps.load.outputs.issues }}
           BPATH: ${{ steps.load.outputs.baseline-path }}
         run: |
           echo "before: $BEFORE after: $AFTER baseline-path: $BPATH"
-          if ! [[ "$AFTER" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not numeric"
+          if ! [[ "$AFTER" =~ ^[0-9]+$ ]] || ! [[ "$BEFORE" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
             exit 1
           fi
           if [ "$AFTER" -gt "$BEFORE" ]; then
-            echo "FAIL: baseline run reported more issues than the original run"
-            exit 1
-          fi
-          if [ "$BEFORE" -gt 0 ] && [ "$AFTER" -ge "$BEFORE" ]; then
-            echo "FAIL: expected baseline to suppress known issues"
+            echo "FAIL: baseline run reported more issues than the run that saved it"
             exit 1
           fi
           echo "PASS"

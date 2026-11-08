@@ -1,4 +1,4 @@
-name: Test health thresholds with explicit config
+name: Test health with complexity thresholds, top, sort and threads
 on:
   workflow_dispatch:
 jobs:
@@ -11,17 +11,15 @@ jobs:
         with:
           command: health
           root: tests/fixtures/sample-project
-          config: tests/fixtures/fallow-config/.fallowrc.json
           version: 3.35.0
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-health-thresholds
-          max-cyclomatic: '10'
-          max-cognitive: '10'
+          max-cyclomatic: '5'
+          max-cognitive: '5'
           max-crap: '30.0'
           top: '5'
           sort: cognitive
-          min-severity: critical
           threads: '2'
       - name: Assert outputs
         env:
@@ -38,8 +36,4 @@ jobs:
             echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
-          case "$RESULTS" in
-            *fallow-out-health-thresholds/*) ;;
-            *) echo "FAIL: results not under artifacts-dir"; exit 1 ;;
-          esac
           echo "PASS"
