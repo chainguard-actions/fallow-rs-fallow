@@ -1,40 +1,82 @@
-name: Test dead-code with explicit config file and issue-types filter
+name: Test dead-code with explicit config and issue-types filter
 on:
   workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      FX: fallow-test-config-issue-types
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project
+      - name: Create fixture JS project
         run: |
           set -e
-          mkdir -p sample/src
-          cat > sample/package.json <<'EOF'
-          {"name":"sample","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          P="$GITHUB_WORKSPACE/$FX"
+          rm -rf "$P"
+          mkdir -p "$P/src" "$P/packages/pkg-a" "$P/packages/pkg-b" "$P/cov"
+          cat > "$P/package.json" <<'EOF'
+          {"name":"fallow-test-project","version":"1.0.0","private":true,"main":"src/index.js","workspaces":["packages/*"]}
           EOF
-          cat > sample/src/index.js <<'EOF'
-          import { add } from './math.js';
-          console.log(add(1, 2));
+          cat > "$P/.fallowrc.json" <<'EOF'
+          {"entry":["src/index.js"]}
           EOF
-          cat > sample/src/math.js <<'EOF'
-          export function add(a, b) { return a + b; }
-          export function unusedHelper() { return 0; }
+          cat > "$P/src/index.js" <<'EOF'
+          import { used, classify } from './used.js';
+          import { dupA } from './dup-a.js';
+          import { dupB } from './dup-b.js';
+          console.log(used(), classify(3), dupA([1, 2, 3]), dupB([4, 5, 6]));
           EOF
-          cat > sample/src/orphan.js <<'EOF'
-          export const orphan = 1;
+          cat > "$P/src/used.js" <<'EOF'
+          export function used() {
+            return 42;
+          }
+          export function unusedExport() {
+            return 'never imported';
+          }
+          export function classify(n) {
+            if (n < 0) {
+              return 'negative';
+            } else if (n === 0) {
+              return 'zero';
+            } else if (n < 10) {
+              return 'small';
+            }
+            return 'large';
+          }
           EOF
-          cat > sample/.fallowrc.json <<'EOF'
-          {"entry": ["src/index.js"]}
+          for name in A B; do
+            cat > "$P/src/dup-$(echo $name | tr AB ab).js" <<EOF
+          export function dup${name}(items) {
+            const result = [];
+            for (const item of items) {
+              if (item % 2 === 0) {
+                result.push(item * 2);
+              } else {
+                result.push(item * 3);
+              }
+            }
+            const total = result.reduce((acc, value) => acc + value, 0);
+            const average = total / result.length;
+            const max = Math.max(...result);
+            const min = Math.min(...result);
+            return { total, average, max, min, count: result.length };
+          }
           EOF
+          done
+          echo "export const orphan = 'unused file';" > "$P/src/orphan.js"
+          echo '{"name":"pkg-a","version":"1.0.0","main":"index.js"}' > "$P/packages/pkg-a/package.json"
+          echo "export const a = 'a';" > "$P/packages/pkg-a/index.js"
+          echo '{"name":"pkg-b","version":"1.0.0","main":"index.js"}' > "$P/packages/pkg-b/package.json"
+          echo "export const b = 'b';" > "$P/packages/pkg-b/index.js"
+          find "$P" -type f | sort
 
       - id: action
         uses: .
         with:
           command: dead-code
-          root: sample
-          config: ${{ github.workspace }}/sample/.fallowrc.json
+          root: ${{ env.FX }}
+          config: ${{ github.workspace }}/${{ env.FX }}/.fallowrc.json
           issue-types: unused-files,unused-exports
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -42,16 +84,20 @@ jobs:
           sarif: 'false'
           format: json
 
-      - name: Assert issues output is a number
+      - name: Assert issues output is a positive integer
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
           echo "issues: $ISSUES"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected non-negative integer, got '$ISSUES'"
+            echo "FAIL: expected integer issues, got '$ISSUES'"
             exit 1
           fi
-          echo "PASS"
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one unused file/export (orphan.js, unusedExport)"
+            exit 1
+          fi
+          echo "PASS: issues=$ISSUES"
 
       - name: Assert results file is valid JSON
         env:
@@ -63,5 +109,8 @@ jobs:
             exit 1
           fi
           jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
-          cat "$RESULTS" | head -c 3000
           echo "PASS"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE/$FX"

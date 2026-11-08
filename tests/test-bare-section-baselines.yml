@@ -1,0 +1,110 @@
+name: Test combined run with health-baseline, dupes-baseline and skip
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FX: fallow-test-bare-section-baselines
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fixture JS project
+        run: |
+          set -e
+          P="$GITHUB_WORKSPACE/$FX"
+          rm -rf "$P"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
+          {"name":"fallow-test-project","version":"1.0.0","private":true,"main":"src/index.js"}
+          EOF
+          cat > "$P/src/index.js" <<'EOF'
+          import { used } from './used.js';
+          console.log(used(3));
+          EOF
+          cat > "$P/src/used.js" <<'EOF'
+          export function used(n) {
+            if (n < 0) {
+              return 'negative';
+            } else if (n === 0) {
+              return 'zero';
+            }
+            return 'positive';
+          }
+          EOF
+
+      - id: save-health
+        uses: .
+        with:
+          command: health
+          root: ${{ env.FX }}
+          save-baseline: ${{ github.workspace }}/${{ env.FX }}/health-baseline.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - id: save-dupes
+        uses: .
+        with:
+          command: dupes
+          root: ${{ env.FX }}
+          save-baseline: ${{ github.workspace }}/${{ env.FX }}/dupes-baseline.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert baselines were saved
+        run: |
+          for f in health-baseline.json dupes-baseline.json; do
+            B="$GITHUB_WORKSPACE/$FX/$f"
+            if [ ! -f "$B" ]; then
+              echo "FAIL: $f not written"
+              exit 1
+            fi
+            jq empty "$B" || { echo "FAIL: $f not valid JSON"; exit 1; }
+          done
+          echo "PASS"
+
+      - id: action
+        uses: .
+        with:
+          root: ${{ env.FX }}
+          health-baseline: ${{ github.workspace }}/${{ env.FX }}/health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/${{ env.FX }}/dupes-baseline.json
+          skip: architecture
+          threshold: '100'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert combined run outputs
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+        run: |
+          echo "outcome: $OUTCOME issues: $ISSUES results: $RESULTS verdict: '$VERDICT'"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues not an integer: '$ISSUES'"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
+            exit 1
+          fi
+          if [ -n "$VERDICT" ]; then
+            echo "FAIL: verdict should be empty outside audit"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE/$FX"

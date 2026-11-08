@@ -1,0 +1,101 @@
+name: Test dead-code save-baseline then baseline comparison
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FX: fallow-test-baseline-roundtrip
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fixture JS project
+        run: |
+          set -e
+          P="$GITHUB_WORKSPACE/$FX"
+          rm -rf "$P"
+          mkdir -p "$P/src" "$P/packages/pkg-a" "$P/packages/pkg-b"
+          cat > "$P/package.json" <<'EOF'
+          {"name":"fallow-test-project","version":"1.0.0","private":true,"main":"src/index.js","workspaces":["packages/*"]}
+          EOF
+          cat > "$P/.fallowrc.json" <<'EOF'
+          {"entry":["src/index.js"]}
+          EOF
+          cat > "$P/src/index.js" <<'EOF'
+          import { used } from './used.js';
+          console.log(used());
+          EOF
+          cat > "$P/src/used.js" <<'EOF'
+          export function used() {
+            return 42;
+          }
+          export function unusedExport() {
+            return 'never imported';
+          }
+          EOF
+          echo "export const orphan = 'unused file';" > "$P/src/orphan.js"
+          echo '{"name":"pkg-a","version":"1.0.0","main":"index.js"}' > "$P/packages/pkg-a/package.json"
+          echo "export const a = 'a';" > "$P/packages/pkg-a/index.js"
+          echo '{"name":"pkg-b","version":"1.0.0","main":"index.js"}' > "$P/packages/pkg-b/package.json"
+          echo "export const b = 'b';" > "$P/packages/pkg-b/index.js"
+
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: ${{ env.FX }}
+          save-baseline: ${{ github.workspace }}/${{ env.FX }}/dead-code-baseline.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert baseline file was written
+        run: |
+          B="$GITHUB_WORKSPACE/$FX/dead-code-baseline.json"
+          if [ ! -f "$B" ]; then
+            echo "FAIL: baseline file not written at $B"
+            exit 1
+          fi
+          cat "$B"
+          jq empty "$B" || { echo "FAIL: baseline is not valid JSON"; exit 1; }
+          echo "PASS"
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: ${{ env.FX }}
+          baseline: ${{ github.workspace }}/${{ env.FX }}/dead-code-baseline.json
+          fail-on-issues: 'true'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert baseline suppressed all known issues
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          ENTRIES: ${{ steps.action.outputs.baseline-entries }}
+          STALE: ${{ steps.action.outputs.baseline-stale-entries }}
+          BPATH: ${{ steps.action.outputs.baseline-path }}
+        run: |
+          echo "issues: $ISSUES entries: '$ENTRIES' stale: '$STALE' path: '$BPATH'"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues against the baseline, got '$ISSUES'"
+            exit 1
+          fi
+          if [ -n "$ENTRIES" ] && ! echo "$ENTRIES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: baseline-entries is not an integer: '$ENTRIES'"
+            exit 1
+          fi
+          if [ -n "$STALE" ] && [ "$STALE" != "0" ]; then
+            echo "FAIL: expected no stale baseline entries, got '$STALE'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE/$FX"

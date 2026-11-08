@@ -1,32 +1,38 @@
-name: Test health save-snapshot followed by trend comparison
+name: Test health save-snapshot followed by trend
 on:
   workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      FX: fallow-test-snapshot-trend
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create sample project
+      - name: Create fixture JS project
         run: |
           set -e
-          mkdir -p sample/src
-          cat > sample/package.json <<'EOF'
-          {"name":"sample","version":"1.0.0","private":true,"type":"module","main":"src/index.js"}
+          P="$GITHUB_WORKSPACE/$FX"
+          rm -rf "$P"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
+          {"name":"fallow-test-project","version":"1.0.0","private":true,"main":"src/index.js"}
           EOF
-          cat > sample/src/index.js <<'EOF'
-          import { add } from './math.js';
-          console.log(add(1, 2));
+          cat > "$P/src/index.js" <<'EOF'
+          import { used } from './used.js';
+          console.log(used());
           EOF
-          cat > sample/src/math.js <<'EOF'
-          export function add(a, b) { return a + b; }
+          cat > "$P/src/used.js" <<'EOF'
+          export function used() {
+            return 42;
+          }
           EOF
 
       - id: snapshot
         uses: .
         with:
           command: health
-          root: sample
+          root: ${{ env.FX }}
           save-snapshot: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -34,12 +40,12 @@ jobs:
           sarif: 'false'
           format: json
 
-      - name: Assert a snapshot file was written
+      - name: Assert a snapshot file was saved
         run: |
-          found=$(find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f -not -path '*/.git/*' 2>/dev/null | head -n 5)
-          echo "snapshots: $found"
-          if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file was written"
+          P="$GITHUB_WORKSPACE/$FX"
+          find "$P" -path '*snapshots*' -type f | tee /tmp/snapshots.txt
+          if [ ! -s /tmp/snapshots.txt ]; then
+            echo "FAIL: no snapshot file found under $P"
             exit 1
           fi
           echo "PASS"
@@ -48,7 +54,7 @@ jobs:
         uses: .
         with:
           command: health
-          root: sample
+          root: ${{ env.FX }}
           trend: 'true'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -61,14 +67,17 @@ jobs:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: expected non-negative integer, got '$ISSUES'"
+            echo "FAIL: issues not an integer: '$ISSUES'"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing"
+          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE/$FX"

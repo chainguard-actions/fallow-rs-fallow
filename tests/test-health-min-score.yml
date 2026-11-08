@@ -1,0 +1,61 @@
+name: Test health min-score gate (score 0 always passes)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FX: fallow-test-health-min-score
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fixture JS project
+        run: |
+          set -e
+          P="$GITHUB_WORKSPACE/$FX"
+          rm -rf "$P"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
+          {"name":"fallow-test-project","version":"1.0.0","private":true,"main":"src/index.js"}
+          EOF
+          cat > "$P/src/index.js" <<'EOF'
+          import { used } from './used.js';
+          console.log(used());
+          EOF
+          cat > "$P/src/used.js" <<'EOF'
+          export function used() {
+            return 42;
+          }
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: ${{ env.FX }}
+          min-score: '0'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert run passed and gates outputs are sane
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
+        run: |
+          echo "outcome: $OUTCOME issues: $ISSUES gates-failed: '$FAILED'"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: min-score 0 should never fail"
+            exit 1
+          fi
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues not an integer: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE/$FX"

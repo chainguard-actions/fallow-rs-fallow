@@ -1,0 +1,89 @@
+name: Test dead-code regression baseline save and compare
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FX: fallow-test-regression-baseline
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fixture JS project
+        run: |
+          set -e
+          P="$GITHUB_WORKSPACE/$FX"
+          rm -rf "$P"
+          mkdir -p "$P/src"
+          cat > "$P/package.json" <<'EOF'
+          {"name":"fallow-test-project","version":"1.0.0","private":true,"main":"src/index.js"}
+          EOF
+          cat > "$P/src/index.js" <<'EOF'
+          import { used } from './used.js';
+          console.log(used());
+          EOF
+          cat > "$P/src/used.js" <<'EOF'
+          export function used() {
+            return 42;
+          }
+          export function unusedExport() {
+            return 'never imported';
+          }
+          EOF
+          echo "export const orphan = 'unused file';" > "$P/src/orphan.js"
+
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: ${{ env.FX }}
+          save-regression-baseline: ${{ github.workspace }}/${{ env.FX }}/regression-baseline.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert regression baseline file was written
+        run: |
+          B="$GITHUB_WORKSPACE/$FX/regression-baseline.json"
+          if [ ! -f "$B" ]; then
+            echo "FAIL: regression baseline not written at $B"
+            exit 1
+          fi
+          cat "$B"
+          jq empty "$B" || { echo "FAIL: not valid JSON"; exit 1; }
+          echo "PASS"
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: ${{ env.FX }}
+          regression-baseline: ${{ github.workspace }}/${{ env.FX }}/regression-baseline.json
+          fail-on-regression: 'true'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          annotations: 'false'
+          sarif: 'false'
+          format: json
+
+      - name: Assert unchanged code does not regress
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: compare step did not succeed"
+            exit 1
+          fi
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues not an integer: '$ISSUES'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE/$FX"
