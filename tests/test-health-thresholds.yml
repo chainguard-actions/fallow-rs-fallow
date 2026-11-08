@@ -14,7 +14,6 @@ jobs:
           version: '3.37.0'
           max-cyclomatic: '20'
           max-cognitive: '15'
-          max-crap: '30'
           top: '5'
           sort: cognitive
           min-severity: critical

@@ -1,8 +1,6 @@
 {
-  "name": "monorepo",
+  "name": "monorepo-fixture",
   "version": "1.0.0",
   "private": true,
-  "workspaces": [
-    "packages/*"
-  ]
+  "workspaces": ["packages/*"]
 }

@@ -1,4 +1,4 @@
-name: Test combined run with skip
+name: Test combined run with skipped analysis
 on:
   workflow_dispatch:
 jobs:
@@ -10,12 +10,12 @@ jobs:
         uses: .
         with:
           root: tests/fixtures/clean-project
-          skip: dupes,health
+          skip: dupes
           version: '3.37.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert combined run output
+      - name: Assert combined results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

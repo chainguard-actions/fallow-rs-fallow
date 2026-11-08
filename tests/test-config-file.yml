@@ -1,4 +1,4 @@
-name: Test dupes command with tuning thresholds
+name: Test dead-code with explicit config file ignoring a file
 on:
   workflow_dispatch:
 jobs:
@@ -9,17 +9,15 @@ jobs:
       - id: action
         uses: .
         with:
-          command: dupes
-          root: tests/fixtures/clean-project
+          command: dead-code
+          root: tests/fixtures/dead-code-project
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
+          issue-types: unused-files
           version: '3.37.0'
-          min-tokens: '30'
-          min-lines: '3'
-          threshold: '100'
-          top: '5'
-          fail-on-issues: 'false'
+          fail-on-issues: 'true'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert dupes output
+      - name: Assert orphan.js ignored via config
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -27,13 +25,7 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 clone groups"
-            exit 1
-          fi
-          F="$RESULTS"
-          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
-            echo "FAIL: results file missing or invalid JSON"
+            echo "FAIL: expected 0 unused files after ignoring orphan.js"
             exit 1
           fi
           echo "PASS"
