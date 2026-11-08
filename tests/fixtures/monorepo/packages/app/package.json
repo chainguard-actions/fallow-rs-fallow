@@ -1,8 +1,0 @@
-{
-  "name": "@fixture/app",
-  "version": "1.0.0",
-  "main": "index.js",
-  "dependencies": {
-    "@fixture/lib": "1.0.0"
-  }
-}

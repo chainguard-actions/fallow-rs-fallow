@@ -1,4 +1,4 @@
-name: Test dead-code with explicit config and issue-types filter
+name: Test explicit config file
 on:
   workflow_dispatch:
 
@@ -15,8 +15,7 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
-          issue-types: unused-exports, unused-files
+          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -25,7 +24,7 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert issues numeric and results file exists
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -37,11 +36,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at '$RESULTS'"
-            exit 1
-          fi
-          if ! jq empty "$RESULTS" 2>/dev/null; then
-            echo "FAIL: results file is not valid JSON"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"

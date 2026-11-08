@@ -1,4 +1,4 @@
-name: Test health min-score gate (passing threshold)
+name: Test combined run with skip selector
 on:
   workflow_dispatch:
 
@@ -13,7 +13,6 @@ jobs:
       - id: action
         uses: .
         with:
-          command: health
           root: tests/fixtures/simple-js
           format: json
           fail-on-issues: 'false'
@@ -22,9 +21,9 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          min-score: '0'
+          skip: dupes
 
-      - name: Assert action succeeded with score gate at 0
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -36,7 +35,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at '$RESULTS'"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"

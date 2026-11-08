@@ -1,4 +1,4 @@
-name: Test dead-code scoped with changed-workspaces
+name: Test changed-workspaces scoping in a monorepo
 on:
   workflow_dispatch:
 
@@ -26,7 +26,7 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert issues numeric and results file exists
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -38,7 +38,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at '$RESULTS'"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"

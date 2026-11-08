@@ -1,4 +1,4 @@
-name: Test combined run with only selector
+name: Test dead-code with issue-types filter
 on:
   workflow_dispatch:
 
@@ -13,8 +13,7 @@ jobs:
       - id: action
         uses: .
         with:
-          command: ''
-          only: dead-code,health
+          command: dead-code
           root: tests/fixtures/simple-js
           format: json
           fail-on-issues: 'false'
@@ -23,8 +22,9 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
+          issue-types: unused-exports, unused-files
 
-      - name: Assert issues numeric and results file exists
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -36,7 +36,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at '$RESULTS'"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"

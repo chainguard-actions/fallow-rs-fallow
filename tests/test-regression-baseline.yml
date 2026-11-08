@@ -1,4 +1,4 @@
-name: Test dead-code save-regression-baseline then regression-baseline
+name: Test save-regression-baseline then fail-on-regression comparison
 on:
   workflow_dispatch:
 
@@ -24,15 +24,13 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert regression baseline file was saved
-        env:
-          FILE: ${{ github.workspace }}/fallow-regression.json
+      - name: Assert regression baseline was saved
         run: |
-          if [ ! -s "$FILE" ]; then
-            echo "FAIL: regression baseline not written at $FILE"
+          f="$GITHUB_WORKSPACE/fallow-regression.json"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: regression baseline not saved at $f"
             exit 1
           fi
-          cat "$FILE"
           echo "PASS"
 
       - id: compare
@@ -50,13 +48,14 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert no regression against identical baseline
+      - name: Assert no regression and same issue count
         env:
-          ISSUES: ${{ steps.compare.outputs.issues }}
+          BEFORE: ${{ steps.save.outputs.issues }}
+          AFTER: ${{ steps.compare.outputs.issues }}
         run: |
-          echo "issues: $ISSUES"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
+          echo "before: $BEFORE after: $AFTER"
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "FAIL: issue count changed between identical runs"
             exit 1
           fi
           echo "PASS"

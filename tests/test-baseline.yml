@@ -1,4 +1,4 @@
-name: Test dead-code save-baseline then baseline comparison
+name: Test save-baseline then baseline comparison
 on:
   workflow_dispatch:
 
@@ -15,7 +15,7 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          save-baseline: ${{ github.workspace }}/fallow-test-baseline.json
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -25,23 +25,24 @@ jobs:
           no-cache: 'true'
 
       - name: Assert baseline file was saved
-        env:
-          BASELINE: ${{ github.workspace }}/fallow-test-baseline.json
         run: |
-          echo "baseline: $BASELINE"
-          if [ ! -s "$BASELINE" ]; then
-            echo "FAIL: baseline file was not written"
+          f="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: baseline not saved at $f"
             exit 1
           fi
-          cat "$BASELINE"
-          echo "PASS"
+          if ! jq -e . "$f" > /dev/null; then
+            echo "FAIL: baseline is not valid JSON"
+            exit 1
+          fi
+          echo "PASS: baseline saved"
 
       - id: load
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/simple-js
-          baseline: ${{ github.workspace }}/fallow-test-baseline.json
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
           format: json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -50,19 +51,17 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert baseline run succeeded with no new issues
+      - name: Assert baseline suppressed all findings
         env:
           ISSUES: ${{ steps.load.outputs.issues }}
+          BASELINE_PATH: ${{ steps.load.outputs.baseline-path }}
           STALE: ${{ steps.load.outputs.baseline-stale-entries }}
         run: |
           echo "issues: $ISSUES"
-          echo "stale entries: $STALE"
-          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues output is not a number: '$ISSUES'"
-            exit 1
-          fi
+          echo "baseline-path: $BASELINE_PATH"
+          echo "baseline-stale-entries: $STALE"
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 issues after baselining the same project"
+            echo "FAIL: expected 0 issues after loading a baseline from the same run"
             exit 1
           fi
           echo "PASS"

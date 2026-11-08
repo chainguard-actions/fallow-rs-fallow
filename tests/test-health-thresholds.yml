@@ -1,4 +1,4 @@
-name: Test health complexity thresholds
+name: Test health thresholds and sorting
 on:
   workflow_dispatch:
 
@@ -23,14 +23,13 @@ jobs:
           comment: 'false'
           no-cache: 'true'
           max-cyclomatic: '10'
-          max-cognitive: '10'
-          max-crap: '30.0'
+          max-cognitive: '8'
+          max-crap: '20'
           top: '5'
           sort: cognitive
-          min-severity: critical
           threads: '2'
 
-      - name: Assert issues numeric and results file exists
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -42,10 +41,10 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at '$RESULTS'"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
-          if ! jq empty "$RESULTS" 2>/dev/null; then
+          if ! jq -e . "$RESULTS" > /dev/null; then
             echo "FAIL: results file is not valid JSON"
             exit 1
           fi

@@ -22,12 +22,12 @@ jobs:
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          min-tokens: '10'
+          min-tokens: '20'
           min-lines: '2'
           threshold: '100'
-          top: '5'
+          top: '3'
 
-      - name: Assert issues numeric and results file exists
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -39,7 +39,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at '$RESULTS'"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"

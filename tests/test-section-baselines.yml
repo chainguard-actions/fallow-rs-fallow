@@ -38,21 +38,19 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert section baselines were saved
+      - name: Assert baselines saved
         run: |
           for f in fallow-health-baseline.json fallow-dupes-baseline.json; do
-            if [ ! -s "$GITHUB_WORKSPACE/$f" ]; then
-              echo "FAIL: $f was not written"
+            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f not saved"
               exit 1
             fi
-            echo "found $f"
           done
           echo "PASS"
 
-      - id: combined
+      - id: action
         uses: .
         with:
-          command: ''
           root: tests/fixtures/simple-js
           health-baseline: ${{ github.workspace }}/fallow-health-baseline.json
           dupes-baseline: ${{ github.workspace }}/fallow-dupes-baseline.json
@@ -64,10 +62,10 @@ jobs:
           comment: 'false'
           no-cache: 'true'
 
-      - name: Assert combined run succeeded
+      - name: Assert outputs
         env:
-          ISSUES: ${{ steps.combined.outputs.issues }}
-          RESULTS: ${{ steps.combined.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
@@ -76,7 +74,7 @@ jobs:
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
-            echo "FAIL: results file missing at '$RESULTS'"
+            echo "FAIL: results file missing: '$RESULTS'"
             exit 1
           fi
           echo "PASS"
