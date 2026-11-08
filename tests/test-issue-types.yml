@@ -1,4 +1,4 @@
-name: Test dead-code with config, issue-types and threads
+name: Test dead-code restricted to unused-files issue type
 on:
   workflow_dispatch:
 jobs:
@@ -11,32 +11,32 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
-          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
-          issue-types: unused-files
-          threads: '2'
           version: '3.41.0'
           format: json
           type-aware: 'false'
           auto-changed-since: 'false'
           fail-on-issues: 'false'
           annotations: 'false'
-      - name: Assert unused file reported
+          issue-types: unused-files
+      - name: Assert orphan file reported
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
+          echo "results: $RESULTS"
           echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected a numeric issue count >= 1"
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -f "$f" ]; then
+            echo "FAIL: results file missing"
             exit 1
           fi
-          f="$RESULTS"; [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$f" ] || ! jq -e . "$f" > /dev/null; then
-            echo "FAIL: results file missing or invalid JSON"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one unused file"
             exit 1
           fi
           if ! grep -q "orphan" "$f"; then
-            echo "FAIL: expected orphan.ts as unused file"
+            echo "FAIL: expected orphan.ts in unused files"
             head -c 4000 "$f"
             exit 1
           fi

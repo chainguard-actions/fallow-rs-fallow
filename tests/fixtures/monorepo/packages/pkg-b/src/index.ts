@@ -1,3 +1,0 @@
-export function beta(value: number): number {
-  return value * 3;
-}
