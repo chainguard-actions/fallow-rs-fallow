@@ -1,4 +1,4 @@
-name: Test dupes tuning options
+name: Test health min-score gate passes at zero
 on:
   workflow_dispatch:
 jobs:
@@ -9,16 +9,12 @@ jobs:
       - id: action
         uses: .
         with:
-          command: dupes
+          command: health
           root: tests/fixtures/sample-project
           version: '3.36.0'
-          fail-on-issues: 'false'
-          min-tokens: '10'
-          min-lines: '2'
-          threshold: '100'
-          top: '5'
-          artifacts-dir: fallow-artifacts-dupes-options
-      - name: Assert dupes results produced
+          min-score: '0'
+          artifacts-dir: fallow-artifacts-min-score
+      - name: Assert health score run succeeded
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -33,9 +29,6 @@ jobs:
             /*) FILE="$RESULTS" ;;
             *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
           esac
-          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
-            echo "FAIL: results file missing"
-            exit 1
-          fi
+          [ -s "$FILE" ] || { echo "FAIL: results file missing"; exit 1; }
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

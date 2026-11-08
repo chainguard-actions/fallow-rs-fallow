@@ -1,0 +1,40 @@
+name: Test dead-code with config, issue-types and threads
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          config: ${{ github.workspace }}/tests/fixtures/fallowrc/.fallowrc.json
+          issue-types: unused-files
+          threads: '2'
+          artifacts-dir: fallow-artifacts-issue-types
+      - name: Assert unused file reported
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one unused file (orphan.ts)"
+            exit 1
+          fi
+          case "$RESULTS" in
+            /*) FILE="$RESULTS" ;;
+            *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
+          esac
+          [ -s "$FILE" ] || { echo "FAIL: results file missing"; exit 1; }
+          if ! grep -q "orphan" "$FILE"; then
+            echo "FAIL: orphan.ts not mentioned in results"
+            exit 1
+          fi
+          echo "PASS"

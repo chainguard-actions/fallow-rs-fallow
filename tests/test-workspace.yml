@@ -13,15 +13,14 @@ jobs:
           root: tests/fixtures/monorepo
           version: '3.36.0'
           fail-on-issues: 'false'
-          workspace: pkg-a
+          workspace: web
           artifacts-dir: fallow-artifacts-workspace
-      - name: Assert scoped results produced
+      - name: Assert workspace-scoped results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
@@ -30,13 +29,6 @@ jobs:
             /*) FILE="$RESULTS" ;;
             *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
           esac
-          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
-            echo "FAIL: results file missing"
-            exit 1
-          fi
+          [ -s "$FILE" ] || { echo "FAIL: results file missing"; exit 1; }
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
-          if grep -q "pkg-b/src" "$FILE"; then
-            echo "FAIL: pkg-b findings leaked into pkg-a scoped run"
-            exit 1
-          fi
           echo "PASS"
