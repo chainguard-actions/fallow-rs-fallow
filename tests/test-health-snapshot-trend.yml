@@ -6,22 +6,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snapshot
+      - name: Copy fixture to a scratch project
+        run: |
+          rm -rf scratch-snapshot
+          cp -r tests/fixtures/clean-project scratch-snapshot
+      - id: save
         uses: .
         with:
           command: health
-          root: tests/fixtures/clean-project
+          root: scratch-snapshot
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
           save-snapshot: 'true'
-          artifacts-dir: fallow-artifacts-snapshot
-      - name: Assert a snapshot was saved
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-snapshot-save
+      - name: Assert snapshot was saved
         run: |
-          found="$(find "$GITHUB_WORKSPACE" -path '*/.fallow/snapshots/*' -type f 2>/dev/null | head -n 5)"
-          echo "snapshots found: $found"
-          if [ -z "$found" ]; then
-            echo "FAIL: no snapshot saved under any .fallow/snapshots directory"
+          ls -laR scratch-snapshot/.fallow || true
+          if ! ls scratch-snapshot/.fallow/snapshots/* >/dev/null 2>&1; then
+            echo "FAIL: no snapshot written under scratch-snapshot/.fallow/snapshots"
             exit 1
           fi
           echo "PASS"
@@ -29,17 +32,23 @@ jobs:
         uses: .
         with:
           command: health
-          root: tests/fixtures/clean-project
+          root: scratch-snapshot
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
           trend: 'true'
-          artifacts-dir: fallow-artifacts-trend
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-snapshot-trend
       - name: Assert trend run produced results
         env:
+          ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
+          echo "issues: $ISSUES"
           echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing"
             exit 1

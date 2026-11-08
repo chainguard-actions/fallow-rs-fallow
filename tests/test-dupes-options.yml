@@ -16,9 +16,9 @@ jobs:
           min-tokens: '30'
           min-lines: '3'
           threshold: '100'
-          top: '10'
-          artifacts-dir: fallow-artifacts-dupes
-      - name: Assert dupes ran and found no clone groups
+          fail-on-issues: 'true'
+          artifacts-dir: fallow-artifacts-dupes-options
+      - name: Assert no clone groups and valid results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -26,7 +26,7 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 clone groups in the clean fixture"
+            echo "FAIL: expected 0 clone groups"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then

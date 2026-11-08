@@ -1,4 +1,4 @@
-name: Test dead-code with an explicit config file
+name: Test dead-code with changed-workspaces derived from git
 on:
   workflow_dispatch:
 jobs:
@@ -6,22 +6,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - id: action
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/clean-project
-          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
+          root: tests/fixtures/monorepo
           version: '3.38.1'
           type-aware: 'false'
+          changed-workspaces: HEAD
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-config
-      - name: Assert config-driven run produced results
+          artifacts-dir: fallow-artifacts-changed-workspaces
+      - name: Assert changed-workspaces run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1

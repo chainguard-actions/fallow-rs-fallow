@@ -1,0 +1,79 @@
+name: Test audit with dead-code, health and dupes baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - id: save-dead-code
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          save-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-audit-bl-dead
+      - id: save-health
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          save-baseline: ${{ github.workspace }}/audit-health-baseline.json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-audit-bl-health
+      - id: save-dupes
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          save-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-audit-bl-dupes
+      - name: Assert baselines written
+        run: |
+          for f in audit-dead-code-baseline.json audit-health-baseline.json audit-dupes-baseline.json; do
+            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f not written"
+              exit 1
+            fi
+            jq empty "$GITHUB_WORKSPACE/$f" || { echo "FAIL: $f invalid JSON"; exit 1; }
+          done
+          echo "PASS"
+      - id: action
+        uses: .
+        with:
+          command: audit
+          root: tests/fixtures/clean-project
+          version: '3.38.1'
+          type-aware: 'false'
+          changed-since: HEAD
+          dead-code-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
+          health-baseline: ${{ github.workspace }}/audit-health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
+          fail-on-issues: 'true'
+          artifacts-dir: fallow-artifacts-audit-baselines
+      - name: Assert audit passed with baselines
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "verdict: $VERDICT"
+          case "$VERDICT" in
+            pass|warn) ;;
+            *) echo "FAIL: expected pass/warn verdict on unchanged clean project"; exit 1 ;;
+          esac
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 introduced findings"
+            exit 1
+          fi
+          echo "PASS"

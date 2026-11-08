@@ -13,20 +13,20 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
-          fail-on-issues: 'false'
           coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /ci/project
+          coverage-root: /ci-build
           max-crap: '30'
+          fail-on-issues: 'true'
           artifacts-dir: fallow-artifacts-coverage
-      - name: Assert health ran with coverage
+      - name: Assert coverage-aware health run is clean
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 findings"
             exit 1
           fi
           if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then

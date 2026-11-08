@@ -1,4 +1,4 @@
-name: Test combined run skipping dupes and health
+name: Test combined run with skip
 on:
   workflow_dispatch:
 jobs:
@@ -12,15 +12,16 @@ jobs:
           root: tests/fixtures/clean-project
           version: '3.38.1'
           type-aware: 'false'
+          skip: dupes,architecture
           fail-on-issues: 'false'
-          skip: dupes,health
           artifacts-dir: fallow-artifacts-skip
       - name: Assert combined run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
