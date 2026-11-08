@@ -1,4 +1,4 @@
-name: Test dead-code scoped to a workspace
+name: Test dead-code scoped to one workspace
 on:
   workflow_dispatch:
 jobs:
@@ -11,31 +11,32 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          workspace: pkg-a
           version: 3.40.0
           format: json
-          type-aware: 'false'
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-workspace
-      - name: Assert workspace-scoped run produced results
+          type-aware: 'false'
+          workspace: pkg-a
+      - name: Assert results scoped to pkg-a
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not an integer"
+            echo "FAIL: issues is not a non-negative integer"
             exit 1
           fi
           f="$RESULTS"
           [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$f" ]; then
-            echo "FAIL: results file not found"
+          if [ ! -f "$f" ] || ! jq empty "$f"; then
+            echo "FAIL: results file missing or invalid"
             exit 1
           fi
-          head -c 2000 "$f"; echo
-          if grep -q 'pkg-b/src' "$f"; then
-            echo "FAIL: results include findings from pkg-b outside the workspace scope"
+          head -c 3000 "$f"; echo
+          if grep -q 'unusedHelperB' "$f"; then
+            echo "FAIL: pkg-b finding leaked into pkg-a scoped results"
             exit 1
           fi
           echo "PASS"

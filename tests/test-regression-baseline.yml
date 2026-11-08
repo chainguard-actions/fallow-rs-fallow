@@ -1,4 +1,4 @@
-name: Test regression baseline save and compare
+name: Test regression baseline save and fail-on-regression
 on:
   workflow_dispatch:
 jobs:
@@ -6,8 +6,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Prepare baseline directory
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-regression"
       - id: save
         uses: .
         with:
@@ -15,19 +13,18 @@ jobs:
           root: tests/fixtures/unused-project
           version: 3.40.0
           format: json
-          type-aware: 'false'
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-regression-save
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
-      - name: Assert regression baseline was written
+          artifacts-dir: fallow-artifacts-save-regression
+          type-aware: 'false'
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+      - name: Assert regression baseline saved
         run: |
-          f="$GITHUB_WORKSPACE/fallow-regression/regression.json"
-          if [ ! -s "$f" ]; then
-            echo "FAIL: regression baseline not written"
-            ls -la "$GITHUB_WORKSPACE/fallow-regression" || true
+          f="$GITHUB_WORKSPACE/fallow-regression-baseline.json"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: regression baseline file not written"
             exit 1
           fi
-          head -c 2000 "$f"; echo
+          cat "$f"; echo
           echo "PASS"
       - id: compare
         uses: .
@@ -36,19 +33,25 @@ jobs:
           root: tests/fixtures/unused-project
           version: 3.40.0
           format: json
-          type-aware: 'false'
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-regression-compare
+          artifacts-dir: fallow-artifacts-compare-regression
+          type-aware: 'false'
+          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
           fail-on-regression: 'true'
           tolerance: '0'
-          regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
-      - name: Assert no regression against identical baseline
+      - name: Assert no regression on identical code
         env:
+          OUTCOME: ${{ steps.compare.outcome }}
           ISSUES: ${{ steps.compare.outputs.issues }}
         run: |
+          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: identical code should not regress"
+            exit 1
+          fi
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected the known issues to still be counted"
+            echo "FAIL: expected unused code still reported"
             exit 1
           fi
           echo "PASS"

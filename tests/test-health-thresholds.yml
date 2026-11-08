@@ -13,18 +13,17 @@ jobs:
           root: tests/fixtures/unused-project
           version: 3.40.0
           format: json
-          type-aware: 'false'
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-health-thresholds
-          max-cyclomatic: '10'
-          max-cognitive: '10'
-          max-crap: '30'
+          artifacts-dir: fallow-artifacts-health
+          type-aware: 'false'
+          max-cyclomatic: '5'
+          max-cognitive: '5'
+          max-crap: '10'
           max-file-lines: '500'
-          sort: cognitive
           top: '5'
-          min-severity: critical
+          sort: cognitive
           threads: '2'
-      - name: Assert issues is an integer and results exist
+      - name: Assert outputs
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -32,7 +31,7 @@ jobs:
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not an integer"
+            echo "FAIL: issues is not a non-negative integer"
             exit 1
           fi
           f="$RESULTS"
@@ -41,5 +40,8 @@ jobs:
             echo "FAIL: results file not found"
             exit 1
           fi
-          head -c 2000 "$f"; echo
+          if ! jq empty "$f"; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
           echo "PASS"

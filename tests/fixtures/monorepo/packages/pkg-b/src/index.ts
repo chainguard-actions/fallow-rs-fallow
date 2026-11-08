@@ -1,3 +1,7 @@
-export function farewell(name: string): string {
-  return `bye ${name}`;
+export function run(): string {
+  return "b";
+}
+
+export function unusedHelperB(): string {
+  return "unused";
 }
