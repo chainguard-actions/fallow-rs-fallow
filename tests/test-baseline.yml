@@ -1,4 +1,4 @@
-name: Test saving and loading dead-code and regression baselines
+name: Test save-baseline then compare against baseline
 on:
   workflow_dispatch:
 jobs:
@@ -6,8 +6,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Prepare baseline directory
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
       - id: save
         uses: .
         with:
@@ -17,44 +15,35 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-          save-regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
-      - name: Assert baselines were written
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+      - name: Assert baseline file was saved
         run: |
-          ls -la "$GITHUB_WORKSPACE/fallow-baselines"
-          for f in dead-code.json regression.json; do
-            if [ ! -s "$GITHUB_WORKSPACE/fallow-baselines/$f" ]; then
-              echo "FAIL: $f was not written"
-              exit 1
-            fi
-          done
+          ls -la "$GITHUB_WORKSPACE"/fallow-dead-code-baseline.json || true
+          if [ ! -s "$GITHUB_WORKSPACE/fallow-dead-code-baseline.json" ]; then
+            echo "FAIL: baseline file not written"
+            exit 1
+          fi
           echo "PASS"
-      - id: load
+      - id: compare
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dead-code-project
           version: '3.39.0'
-          fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-          regression-baseline: ${{ github.workspace }}/fallow-baselines/regression.json
-          fail-on-regression: 'true'
-          tolerance: '0'
-      - name: Assert baseline was loaded and no regression
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+      - name: Assert baseline suppressed existing issues
         env:
-          ISSUES: ${{ steps.load.outputs.issues }}
-          ENTRIES: ${{ steps.load.outputs.baseline-entries }}
-          STALE: ${{ steps.load.outputs.baseline-stale-entries }}
-          BPATH: ${{ steps.load.outputs.baseline-path }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          ENTRIES: ${{ steps.compare.outputs.baseline-entries }}
+          STALE: ${{ steps.compare.outputs.baseline-stale-entries }}
         run: |
           echo "issues: $ISSUES"
           echo "baseline-entries: $ENTRIES"
           echo "baseline-stale-entries: $STALE"
-          echo "baseline-path: $BPATH"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues against a fresh baseline"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test dupes with min-tokens, min-lines and threshold
+name: Test dupes with token/line limits and threshold
 on:
   workflow_dispatch:
 jobs:
@@ -10,16 +10,16 @@ jobs:
         uses: .
         with:
           command: dupes
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dead-code-project
           version: '3.39.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          min-tokens: '30'
+          min-tokens: '20'
           min-lines: '3'
           threshold: '100'
           top: '3'
-      - name: Assert dupes ran under a permissive threshold
+      - name: Assert dupes ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

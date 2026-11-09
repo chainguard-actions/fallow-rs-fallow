@@ -1,4 +1,4 @@
-name: Test combined run restricted with only
+name: Test combined run with only selector
 on:
   workflow_dispatch:
 jobs:
@@ -14,7 +14,7 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          only: dead-code,health
+          only: dead-code,dupes
       - name: Assert combined run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}

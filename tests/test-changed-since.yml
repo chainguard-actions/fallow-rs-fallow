@@ -1,4 +1,4 @@
-name: Test changed-since scoping to HEAD
+name: Test dead-code scoped by changed-since
 on:
   workflow_dispatch:
 jobs:
@@ -13,11 +13,11 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dead-code-project
-          changed-since: HEAD
           version: '3.39.0'
           fail-on-issues: 'false'
           type-aware: 'false'
-      - name: Assert scoped run produced results
+          changed-since: HEAD
+      - name: Assert scoped run
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

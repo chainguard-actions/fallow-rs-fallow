@@ -1,4 +1,4 @@
-name: Test workspace scoping in a monorepo
+name: Test dead-code scoped to a single workspace
 on:
   workflow_dispatch:
 jobs:
@@ -11,12 +11,12 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/monorepo
-          workspace: web
           version: '3.39.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert scoped run produced results
+          workspace: '@fx/lib'
+      - name: Assert workspace-scoped run
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}

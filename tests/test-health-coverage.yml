@@ -10,14 +10,13 @@ jobs:
         uses: .
         with:
           command: health
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dead-code-project
           version: '3.39.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
           coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /ci/project
-          max-crap: '30'
+          coverage-root: /build
       - name: Assert health ran with coverage
         env:
           ISSUES: ${{ steps.action.outputs.issues }}

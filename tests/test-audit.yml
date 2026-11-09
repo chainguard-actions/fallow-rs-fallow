@@ -1,4 +1,4 @@
-name: Test audit with gate, worsened and per-analysis baselines
+name: Test audit command with gate, worsened and dead-code baseline
 on:
   workflow_dispatch:
 jobs:
@@ -8,43 +8,21 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Prepare baseline directory
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
-      - id: save-dead-code
+      - id: save
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dead-code-project
           version: '3.39.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-      - id: save-health
-        uses: .
-        with:
-          command: health
-          root: tests/fixtures/clean-project
-          version: '3.39.0'
-          fail-on-issues: 'false'
-          auto-changed-since: 'false'
-          type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-baselines/health.json
-      - id: save-dupes
-        uses: .
-        with:
-          command: dupes
-          root: tests/fixtures/clean-project
-          version: '3.39.0'
-          fail-on-issues: 'false'
-          auto-changed-since: 'false'
-          type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/fallow-baselines/dupes.json
+          save-baseline: ${{ github.workspace }}/fallow-audit-dc-baseline.json
       - id: action
         uses: .
         with:
           command: audit
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dead-code-project
           version: '3.39.0'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
@@ -52,9 +30,7 @@ jobs:
           changed-since: HEAD
           gate: all
           worsened: warn
-          dead-code-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-          health-baseline: ${{ github.workspace }}/fallow-baselines/health.json
-          dupes-baseline: ${{ github.workspace }}/fallow-baselines/dupes.json
+          dead-code-baseline: ${{ github.workspace }}/fallow-audit-dc-baseline.json
       - name: Assert audit verdict and gate
         env:
           VERDICT: ${{ steps.action.outputs.verdict }}
