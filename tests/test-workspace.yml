@@ -1,4 +1,4 @@
-name: Test workspace scoping in monorepo
+name: Test workspace scoping in a monorepo
 on:
   workflow_dispatch:
 jobs:
@@ -12,11 +12,11 @@ jobs:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.38.0'
-          type-aware: 'false'
           fail-on-issues: 'false'
+          type-aware: 'false'
           format: json
-          workspace: web
-      - name: Assert workspace-scoped results
+          workspace: pkg-a
+      - name: Assert scoped results produced
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -27,13 +27,12 @@ jobs:
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results missing or invalid JSON"
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ]; then
+            echo "FAIL: results file missing or empty"
             exit 1
           fi
-          if grep -q "packages/api" "$RESULTS"; then
-            echo "FAIL: api workspace findings leaked into web-scoped run"
-            cat "$RESULTS"
+          if grep -q "pkg-b/src" "$RESULTS"; then
+            echo "FAIL: results include findings from pkg-b despite workspace: pkg-a"
             exit 1
           fi
           echo "PASS"

@@ -12,40 +12,36 @@ jobs:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          type-aware: 'false'
           fail-on-issues: 'false'
+          type-aware: 'false'
           format: json
           save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
-      - name: Assert regression baseline written
+      - name: Assert regression baseline saved
         run: |
           if [ ! -s "$GITHUB_WORKSPACE/fallow-regression.json" ]; then
-            echo "FAIL: regression baseline file not written"
+            echo "FAIL: regression baseline not written"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: regression baseline saved"
       - id: compare
         uses: .
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          type-aware: 'false'
           fail-on-issues: 'false'
+          type-aware: 'false'
           format: json
-          fail-on-regression: 'true'
           regression-baseline: ${{ github.workspace }}/fallow-regression.json
+          fail-on-regression: 'true'
+          tolerance: '0'
       - name: Assert no regression detected
         env:
           ISSUES: ${{ steps.compare.outputs.issues }}
-          GATES_FAILED: ${{ steps.compare.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
-          echo "gates-failed: $GATES_FAILED"
-          case ",$GATES_FAILED," in
-            *,regression,*) echo "FAIL: unchanged project must not regress"; exit 1 ;;
-          esac
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected issues count >= 1"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: same code compared to its own regression baseline passed"

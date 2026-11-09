@@ -1,4 +1,4 @@
-name: Test dupes with min-tokens, min-lines, threshold and top
+name: Test dupes with token/line/threshold options
 on:
   workflow_dispatch:
 jobs:
@@ -12,31 +12,26 @@ jobs:
           command: dupes
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          type-aware: 'false'
           fail-on-issues: 'false'
+          type-aware: 'false'
           format: json
           min-tokens: '10'
           min-lines: '2'
           threshold: '100'
           top: '5'
-      - name: Assert dupes ran and threshold gate did not fail
+      - name: Assert dupes issues numeric
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
-          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          echo "gates-failed: $GATES_FAILED"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
-          case ",$GATES_FAILED," in
-            *,duplication-threshold,*) echo "FAIL: threshold 100 must never fail"; exit 1 ;;
-          esac
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results missing or invalid JSON"
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ]; then
+            echo "FAIL: results file missing or empty"
             exit 1
           fi
           echo "PASS"

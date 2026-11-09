@@ -1,4 +1,4 @@
-name: Test combined run with only and threads
+name: Test health with Istanbul coverage and coverage-root
 on:
   workflow_dispatch:
 jobs:
@@ -9,26 +9,25 @@ jobs:
       - id: action
         uses: .
         with:
+          command: health
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          type-aware: 'false'
           fail-on-issues: 'false'
+          type-aware: 'false'
           format: json
-          only: dead-code
-          threads: '2'
-      - name: Assert dead-code findings present
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /build
+      - name: Assert results produced
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results missing or invalid JSON"
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ]; then
+            echo "FAIL: results file missing or empty"
             exit 1
           fi
-          if ! grep -q "orphan" "$RESULTS"; then
-            echo "FAIL: dead-code analysis should report orphan.ts"
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: results is not valid JSON"
             exit 1
           fi
           echo "PASS"

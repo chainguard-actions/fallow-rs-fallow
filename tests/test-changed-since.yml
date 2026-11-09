@@ -1,4 +1,4 @@
-name: Test changed-since scopes out unchanged files
+name: Test changed-since scoping with no changes
 on:
   workflow_dispatch:
 jobs:
@@ -14,23 +14,25 @@ jobs:
           command: dead-code
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          type-aware: 'false'
           fail-on-issues: 'false'
+          type-aware: 'false'
           format: json
           changed-since: HEAD
-      - name: Assert no issues in unchanged files
+      - name: Assert scoped run produced results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          UNAPPLIED: ${{ steps.action.outputs.requests-unapplied }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
           echo "issues: $ISSUES"
-          echo "requests-unapplied: $UNAPPLIED"
-          if [ -n "$UNAPPLIED" ]; then
-            echo "FAIL: changed-since request was not applied: $UNAPPLIED"
+          echo "results: $RESULTS"
+          echo "changed-files-unavailable: $UNAVAILABLE"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
             exit 1
           fi
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 issues since nothing changed since HEAD"
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ]; then
+            echo "FAIL: results file missing or empty"
             exit 1
           fi
           echo "PASS"

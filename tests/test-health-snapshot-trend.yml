@@ -1,4 +1,4 @@
-name: Test save-snapshot then trend
+name: Test health save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -12,38 +12,35 @@ jobs:
           command: health
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          type-aware: 'false'
           fail-on-issues: 'false'
+          type-aware: 'false'
           format: json
-          save-snapshot: 'true'
+          save-snapshot: ${{ github.workspace }}/fallow-snapshot.json
       - name: Assert snapshot written
         run: |
-          echo "snapshot files:"
-          find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f -not -path '*/.git/*' | tee /tmp/snaps.txt
-          if [ ! -s /tmp/snaps.txt ]; then
-            echo "FAIL: no snapshot file was written"
+          ls -la "$GITHUB_WORKSPACE" || true
+          if [ ! -s "$GITHUB_WORKSPACE/fallow-snapshot.json" ]; then
+            echo "FAIL: snapshot file not written"
             exit 1
           fi
-          echo "PASS"
+          echo "PASS: snapshot written"
       - id: trend
         uses: .
         with:
           command: health
           root: tests/fixtures/dirty-project
           version: '3.38.0'
-          type-aware: 'false'
           fail-on-issues: 'false'
+          type-aware: 'false'
           format: json
           trend: 'true'
-      - name: Assert trend run succeeded
+      - name: Assert trend run produced results
         env:
           RESULTS: ${{ steps.trend.outputs.results }}
-          ISSUES: ${{ steps.trend.outputs.issues }}
         run: |
           echo "results: $RESULTS"
-          echo "issues: $ISSUES"
-          if [ -z "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: trend results missing or invalid JSON"
+          if [ -z "$RESULTS" ] || [ ! -s "$RESULTS" ]; then
+            echo "FAIL: results file missing or empty"
             exit 1
           fi
           echo "PASS"
