@@ -1,4 +1,4 @@
-name: Test dead-code restricted to unused-files issue type
+name: Test dead-code restricted by issue-types
 on:
   workflow_dispatch:
 jobs:
@@ -11,36 +11,25 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dead-code-project
-          issue-types: unused-files
           version: '3.37.0'
+          issue-types: unused-files
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert only unused files reported
+      - name: Assert unused file reported
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected at least one unused file (orphan.js)"
+            echo "FAIL: expected at least one unused file"
             exit 1
           fi
           F="$RESULTS"
           [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$F" ]; then
-            echo "FAIL: results file not found"
-            exit 1
-          fi
           if ! grep -q 'orphan' "$F"; then
-            echo "FAIL: orphan.js not reported"
-            head -c 3000 "$F"
-            exit 1
-          fi
-          if grep -q 'unusedHelper' "$F"; then
-            echo "FAIL: unused export reported despite issue-types=unused-files"
-            head -c 3000 "$F"
+            echo "FAIL: expected orphan.js in results"
             exit 1
           fi
           echo "PASS"

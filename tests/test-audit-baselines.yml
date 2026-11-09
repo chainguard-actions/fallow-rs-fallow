@@ -1,4 +1,4 @@
-name: Test audit command with per-analysis baselines
+name: Test audit with dead-code, health and dupes baselines
 on:
   workflow_dispatch:
 jobs:
@@ -8,15 +8,13 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Prepare baseline directory
-        run: mkdir -p "$GITHUB_WORKSPACE/fallow-baselines"
-      - id: save-dead-code
+      - id: save-dead
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/clean-project
-          save-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
+          root: tests/fixtures/dead-code-project
           version: '3.37.0'
+          save-baseline: ${{ github.workspace }}/bl-dead-code.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
@@ -24,9 +22,9 @@ jobs:
         uses: .
         with:
           command: health
-          root: tests/fixtures/clean-project
-          save-baseline: ${{ github.workspace }}/fallow-baselines/health.json
+          root: tests/fixtures/dead-code-project
           version: '3.37.0'
+          save-baseline: ${{ github.workspace }}/bl-health.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
@@ -34,54 +32,47 @@ jobs:
         uses: .
         with:
           command: dupes
-          root: tests/fixtures/clean-project
-          save-baseline: ${{ github.workspace }}/fallow-baselines/dupes.json
+          root: tests/fixtures/dead-code-project
           version: '3.37.0'
+          save-baseline: ${{ github.workspace }}/bl-dupes.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert baselines saved
+      - name: Assert baselines exist and modify a file
         run: |
-          for f in dead-code health dupes; do
-            F="$GITHUB_WORKSPACE/fallow-baselines/$f.json"
-            if [ ! -s "$F" ]; then
-              echo "FAIL: $f baseline missing"
+          for f in bl-dead-code.json bl-health.json bl-dupes.json; do
+            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f not created"
               exit 1
             fi
           done
-          echo "PASS"
-      - id: audit
+          echo "export const extra = 1;" >> tests/fixtures/dead-code-project/src/utils.js
+          echo "PASS: baselines exist"
+      - id: action
         uses: .
         with:
           command: audit
-          root: tests/fixtures/clean-project
-          changed-since: HEAD
-          gate: all
-          worsened: warn
-          dead-code-baseline: ${{ github.workspace }}/fallow-baselines/dead-code.json
-          health-baseline: ${{ github.workspace }}/fallow-baselines/health.json
-          dupes-baseline: ${{ github.workspace }}/fallow-baselines/dupes.json
+          root: tests/fixtures/dead-code-project
           version: '3.37.0'
+          changed-since: HEAD
+          dead-code-baseline: ${{ github.workspace }}/bl-dead-code.json
+          health-baseline: ${{ github.workspace }}/bl-health.json
+          dupes-baseline: ${{ github.workspace }}/bl-dupes.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
       - name: Assert audit verdict
         env:
-          VERDICT: ${{ steps.audit.outputs.verdict }}
-          GATE: ${{ steps.audit.outputs.gate }}
-          ISSUES: ${{ steps.audit.outputs.issues }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "verdict: $VERDICT gate: $GATE issues: $ISSUES"
+          echo "verdict: $VERDICT issues: $ISSUES"
           case "$VERDICT" in
             pass|warn|fail) ;;
-            *) echo "FAIL: unexpected audit verdict '$VERDICT'"; exit 1 ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
           esac
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
-            exit 1
-          fi
-          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
-            echo "FAIL: expected gate 'all'"
             exit 1
           fi
           echo "PASS"

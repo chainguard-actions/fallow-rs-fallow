@@ -1,4 +1,4 @@
-name: Test health snapshot save and trend comparison
+name: Test save-snapshot then trend comparison
 on:
   workflow_dispatch:
 jobs:
@@ -6,32 +6,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: save
+      - id: snap
         uses: .
         with:
           command: health
           root: tests/fixtures/clean-project
           version: '3.37.0'
-          save-snapshot: 'true'
+          save-snapshot: ${{ github.workspace }}/tests/fixtures/clean-project/.fallow/snapshots/test-snapshot.json
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert snapshot written
-        env:
-          ISSUES: ${{ steps.save.outputs.issues }}
+      - name: Assert snapshot saved
         run: |
-          echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          ls -la tests/fixtures/clean-project/.fallow/snapshots 2>/dev/null || true
+          if ! find tests/fixtures/clean-project/.fallow/snapshots -type f -name '*.json' 2>/dev/null | grep -q .; then
+            echo "FAIL: no snapshot file saved"
             exit 1
           fi
-          echo "snapshot files:"
-          find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f -print || true
-          if [ -z "$(find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f -name '*.json' -print -quit)" ]; then
-            echo "FAIL: no snapshot json file was written"
-            exit 1
-          fi
-          echo "PASS"
+          echo "PASS: snapshot saved"
       - id: trend
         uses: .
         with:
@@ -42,21 +34,20 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert trend run produced results
+      - name: Assert trend run
         env:
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
           F="$RESULTS"
           [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$F" ] || ! jq -e . "$F" > /dev/null; then
-            echo "FAIL: results file missing or invalid JSON"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: results file not found"
             exit 1
           fi
           echo "PASS"

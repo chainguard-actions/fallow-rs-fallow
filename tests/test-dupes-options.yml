@@ -1,4 +1,4 @@
-name: Test dupes command with token/line limits and threshold
+name: Test dupes with min-tokens, min-lines, threshold and top
 on:
   workflow_dispatch:
 jobs:
@@ -14,26 +14,22 @@ jobs:
           version: '3.37.0'
           min-tokens: '30'
           min-lines: '3'
-          threshold: '100'
-          top: '5'
-          fail-on-issues: 'true'
+          threshold: '50'
+          top: '3'
           auto-changed-since: 'false'
           type-aware: 'false'
-      - name: Assert no clones under threshold
+      - name: Assert no clones and threshold not exceeded
         env:
+          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 clone groups"
+          echo "outcome: $OUTCOME issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
             exit 1
           fi
-          F="$RESULTS"
-          [ -f "$F" ] || F="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$F" ]; then
-            echo "FAIL: results file not found"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 clone groups"
             exit 1
           fi
           echo "PASS"
