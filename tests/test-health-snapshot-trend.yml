@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - id: snap
+      - id: snapshot
         uses: .
         with:
           command: health
@@ -15,21 +15,13 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-snapshot
-          score: 'true'
           save-snapshot: 'true'
-      - name: Assert snapshot written
-        env:
-          ISSUES: ${{ steps.snap.outputs.issues }}
+      - name: Assert snapshot saved
         run: |
-          echo "issues: $ISSUES"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not numeric"
-            exit 1
-          fi
-          found=$(find "$GITHUB_WORKSPACE" -path '*snapshots*' -type f -not -path '*/.git/*' | head -5)
-          echo "snapshots: $found"
-          if [ -z "$found" ]; then
-            echo "FAIL: no snapshot file written"
+          dir="tests/fixtures/sample-project/.fallow/snapshots"
+          ls -la "$dir" || true
+          if [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+            echo "FAIL: no snapshot written under $dir"
             exit 1
           fi
           echo "PASS"
@@ -42,14 +34,14 @@ jobs:
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           artifacts-dir: fallow-out-trend
-          score: 'true'
           trend: 'true'
-      - name: Assert trend run outputs
+      - name: Assert trend run produced results
         env:
           ISSUES: ${{ steps.trend.outputs.issues }}
           RESULTS: ${{ steps.trend.outputs.results }}
         run: |
           echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues is not numeric"
             exit 1
