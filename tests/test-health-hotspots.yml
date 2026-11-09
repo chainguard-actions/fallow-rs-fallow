@@ -18,15 +18,15 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
+          hotspots: 'true'
+          since: 1y
+          min-commits: '1'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          hotspots: 'true'
-          since: 1y
-          min-commits: '1'
 
       - name: Assert outputs
         env:

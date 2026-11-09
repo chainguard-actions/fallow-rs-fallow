@@ -15,13 +15,13 @@ jobs:
         with:
           root: tests/fixtures/simple-js
           format: json
+          skip: dupes
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          skip: dupes
 
       - name: Assert outputs
         env:

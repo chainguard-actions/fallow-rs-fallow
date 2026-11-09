@@ -1,7 +1,5 @@
-export function greet(name) {
-  return `Hello, ${name}`;
+function add(a, b) {
+  return a + b;
 }
 
-export function unusedA() {
-  return 'a';
-}
+module.exports = { add };

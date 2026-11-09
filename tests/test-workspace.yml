@@ -40,7 +40,7 @@ jobs:
             exit 1
           fi
           if grep -q 'pkg-b/index.js' "$RESULTS"; then
-            echo "FAIL: results include findings from pkg-b despite workspace: pkg-a"
+            echo "FAIL: results reference pkg-b although scoped to pkg-a"
             exit 1
           fi
           echo "PASS"

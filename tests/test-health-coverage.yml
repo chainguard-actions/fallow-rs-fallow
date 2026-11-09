@@ -16,15 +16,15 @@ jobs:
           command: health
           root: tests/fixtures/simple-js
           format: json
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /ci/project
+          max-crap: '30'
           fail-on-issues: 'false'
           auto-changed-since: 'false'
           sarif: 'false'
           annotations: 'false'
           comment: 'false'
           no-cache: 'true'
-          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /build/project
-          max-crap: '30'
 
       - name: Assert outputs
         env:

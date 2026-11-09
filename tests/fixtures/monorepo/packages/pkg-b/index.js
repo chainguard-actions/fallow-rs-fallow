@@ -1,7 +1,5 @@
-export function add(a, b) {
-  return a + b;
+function multiply(a, b) {
+  return a * b;
 }
 
-export function unusedB() {
-  return 'b';
-}
+module.exports = { multiply };
