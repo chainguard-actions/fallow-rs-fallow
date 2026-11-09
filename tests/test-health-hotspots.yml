@@ -19,7 +19,7 @@ jobs:
           since: 1y
           min-commits: '1'
           artifacts-dir: fallow-artifacts-hotspots
-      - name: Assert hotspot run produced results
+      - name: Assert hotspot analysis ran
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -34,6 +34,9 @@ jobs:
             /*) FILE="$RESULTS" ;;
             *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
           esac
-          [ -s "$FILE" ] || { echo "FAIL: results file missing"; exit 1; }
+          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

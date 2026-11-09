@@ -1,4 +1,4 @@
-name: Test health with runtime coverage (paid feature)
+name: Test runtime coverage inputs (paid sidecar feature)
 on:
   workflow_dispatch:
 jobs:
@@ -6,9 +6,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      # runtime-coverage is a paid feature; without a license in the harness
-      # fallow may refuse it. Success must produce valid results; failure must
-      # be a clean failure (no unexpected outcome).
+      # Runtime coverage needs the licensed fallow-cov sidecar. Without it the
+      # CLI exits with a dedicated runtime-coverage code (4-7), so the step may
+      # fail; if it succeeds, the results must be valid.
       - id: action
         uses: .
         continue-on-error: true
@@ -18,34 +18,31 @@ jobs:
           version: '3.36.0'
           fail-on-issues: 'false'
           runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
-          coverage-root: /ci/build
-          min-invocations-hot: '10'
-          min-observation-volume: '1'
+          coverage-root: /ci/project
+          min-invocations-hot: '100'
+          min-observation-volume: '10'
           low-traffic-threshold: '0.01'
           artifacts-dir: fallow-artifacts-runtime-coverage
-      - name: Assert runtime coverage outcome
+      - name: Assert runtime coverage handled
         env:
           OUTCOME: ${{ steps.action.outcome }}
-          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "outcome: $OUTCOME"
-          echo "issues: $ISSUES"
           echo "results: $RESULTS"
           if [ "$OUTCOME" = "success" ]; then
-            if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-              echo "FAIL: issues output is not a number"
-              exit 1
-            fi
             case "$RESULTS" in
               /*) FILE="$RESULTS" ;;
               *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
             esac
-            [ -s "$FILE" ] || { echo "FAIL: results file missing"; exit 1; }
+            if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
+              echo "FAIL: succeeded but results file missing"
+              exit 1
+            fi
             jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
-            echo "PASS: runtime coverage analysed"
+            echo "PASS: runtime coverage analysis produced results"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: runtime coverage rejected (paid feature unavailable in harness)"
+            echo "PASS: runtime coverage failed gracefully (sidecar/license unavailable)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

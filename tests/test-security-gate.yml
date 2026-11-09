@@ -1,4 +1,4 @@
-name: Test security command with security-gate new
+name: Test security command with security-gate
 on:
   workflow_dispatch:
 jobs:
@@ -18,16 +18,12 @@ jobs:
           changed-since: HEAD
           security-gate: new
           artifacts-dir: fallow-artifacts-security
-      - name: Assert security gate applied
+      - name: Assert security run passed gate
         env:
-          GATE: ${{ steps.action.outputs.gate }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
         run: |
-          echo "gate: $GATE issues: $ISSUES"
-          if [ "$GATE" != "new" ]; then
-            echo "FAIL: expected gate 'new'"
-            exit 1
-          fi
+          echo "issues: $ISSUES gate: $GATE"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1

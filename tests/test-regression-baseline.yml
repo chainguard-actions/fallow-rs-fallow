@@ -1,4 +1,4 @@
-name: Test regression baseline round-trip with fail-on-regression
+name: Test regression baseline with fail-on-regression
 on:
   workflow_dispatch:
 jobs:
@@ -20,9 +20,13 @@ jobs:
       - name: Assert regression baseline saved
         run: |
           F="$GITHUB_WORKSPACE/fallow-regression/regression.json"
-          [ -s "$F" ] || { echo "FAIL: regression baseline not written"; exit 1; }
+          if [ ! -s "$F" ]; then
+            echo "FAIL: regression baseline not written"
+            exit 1
+          fi
+          jq empty "$F" || { echo "FAIL: not JSON"; exit 1; }
           echo "PASS"
-      - id: compare
+      - id: action
         uses: .
         with:
           command: dead-code
@@ -32,19 +36,15 @@ jobs:
           fail-on-regression: 'true'
           tolerance: '0'
           regression-baseline: ${{ github.workspace }}/fallow-regression/regression.json
-          artifacts-dir: fallow-artifacts-regression-compare
-      - name: Assert no regression detected
+          artifacts-dir: fallow-artifacts-regression-load
+      - name: Assert no regression and same issue count
         env:
-          ISSUES: ${{ steps.compare.outputs.issues }}
-          OUTCOME: ${{ steps.compare.outcome }}
+          BEFORE: ${{ steps.save.outputs.issues }}
+          AFTER: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME issues: $ISSUES"
-          if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: identical code should not regress"
-            exit 1
-          fi
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
+          echo "before: $BEFORE after: $AFTER"
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "FAIL: issue count changed between identical runs"
             exit 1
           fi
           echo "PASS"

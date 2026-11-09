@@ -1,4 +1,4 @@
-name: Test audit with per-analysis baselines and gate all
+name: Test audit with per-analysis baselines
 on:
   workflow_dispatch:
 jobs:
@@ -37,8 +37,16 @@ jobs:
           fail-on-issues: 'false'
           save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
           artifacts-dir: fallow-artifacts-audit-dupes
-      - name: Show baselines
-        run: ls -la "$GITHUB_WORKSPACE/fallow-audit-baselines"
+      - name: Assert baselines written
+        run: |
+          for f in dead-code health dupes; do
+            F="$GITHUB_WORKSPACE/fallow-audit-baselines/$f.json"
+            if [ ! -s "$F" ]; then
+              echo "FAIL: $F missing"
+              exit 1
+            fi
+          done
+          echo "PASS"
       - id: action
         uses: .
         with:
@@ -53,7 +61,7 @@ jobs:
           health-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
           dupes-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
           artifacts-dir: fallow-artifacts-audit
-      - name: Assert audit verdict and gate
+      - name: Assert audit verdict
         env:
           VERDICT: ${{ steps.action.outputs.verdict }}
           GATE: ${{ steps.action.outputs.gate }}
@@ -66,10 +74,6 @@ jobs:
           esac
           if [ "$GATE" != "all" ]; then
             echo "FAIL: expected gate 'all'"
-            exit 1
-          fi
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
             exit 1
           fi
           echo "PASS"

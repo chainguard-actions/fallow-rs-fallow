@@ -1,0 +1,42 @@
+name: Test combined run with only and skip selectors
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: only
+        uses: .
+        with:
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          only: dead-code,health
+          artifacts-dir: fallow-artifacts-only
+      - id: skip
+        uses: .
+        with:
+          root: tests/fixtures/sample-project
+          version: '3.36.0'
+          fail-on-issues: 'false'
+          skip: dupes
+          artifacts-dir: fallow-artifacts-skip
+      - name: Assert both runs produced results
+        env:
+          ONLY_RESULTS: ${{ steps.only.outputs.results }}
+          SKIP_RESULTS: ${{ steps.skip.outputs.results }}
+        run: |
+          for R in "$ONLY_RESULTS" "$SKIP_RESULTS"; do
+            echo "results: $R"
+            case "$R" in
+              /*) FILE="$R" ;;
+              *) FILE="$GITHUB_WORKSPACE/$R" ;;
+            esac
+            if [ -z "$R" ] || [ ! -s "$FILE" ]; then
+              echo "FAIL: results file missing"
+              exit 1
+            fi
+            jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
+          done
+          echo "PASS"

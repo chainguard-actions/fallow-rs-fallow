@@ -1,4 +1,4 @@
-name: Test health min-score gate passes at zero
+name: Test health min-score gate
 on:
   workflow_dispatch:
 jobs:
@@ -14,21 +14,26 @@ jobs:
           version: '3.36.0'
           min-score: '0'
           artifacts-dir: fallow-artifacts-min-score
-      - name: Assert health score run succeeded
+      - name: Assert min-score 0 passes and results exist
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
         run: |
           echo "issues: $ISSUES"
           echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
+          echo "gates-failed: $FAILED"
           case "$RESULTS" in
             /*) FILE="$RESULTS" ;;
             *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
           esac
-          [ -s "$FILE" ] || { echo "FAIL: results file missing"; exit 1; }
+          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
           jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
+          if ! grep -qi "score" "$FILE"; then
+            echo "FAIL: expected a health score in results"
+            exit 1
+          fi
           echo "PASS"

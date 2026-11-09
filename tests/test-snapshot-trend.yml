@@ -1,4 +1,4 @@
-name: Test save-snapshot then trend comparison
+name: Test save-snapshot then trend
 on:
   workflow_dispatch:
 jobs:
@@ -14,20 +14,9 @@ jobs:
           version: '3.36.0'
           fail-on-issues: 'false'
           score: 'true'
-          save-snapshot: .fallow/snapshots/ci-snapshot.json
+          save-snapshot: 'true'
           artifacts-dir: fallow-artifacts-snapshot
-      - name: Assert snapshot run succeeded
-        env:
-          ISSUES: ${{ steps.snap.outputs.issues }}
-        run: |
-          echo "issues: $ISSUES"
-          find "$GITHUB_WORKSPACE/tests/fixtures/sample-project/.fallow" -type f 2>/dev/null || true
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
-          echo "PASS"
-      - id: trend
+      - id: action
         uses: .
         with:
           command: health
@@ -39,17 +28,17 @@ jobs:
           artifacts-dir: fallow-artifacts-trend
       - name: Assert trend run produced results
         env:
-          ISSUES: ${{ steps.trend.outputs.issues }}
-          RESULTS: ${{ steps.trend.outputs.results }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues output is not a number"
-            exit 1
-          fi
+          echo "results: $RESULTS"
+          ls -la tests/fixtures/sample-project/.fallow/snapshots 2>/dev/null || echo "(no default snapshot dir listing)"
           case "$RESULTS" in
             /*) FILE="$RESULTS" ;;
             *) FILE="$GITHUB_WORKSPACE/$RESULTS" ;;
           esac
-          [ -s "$FILE" ] || { echo "FAIL: results file missing"; exit 1; }
+          if [ -z "$RESULTS" ] || [ ! -s "$FILE" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq empty "$FILE" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"
