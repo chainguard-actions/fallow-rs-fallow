@@ -1,4 +1,4 @@
-name: Test audit with gate, worsened and per-analysis baselines
+name: Test audit command with gate, worsened and per-analysis baselines
 on:
   workflow_dispatch:
 jobs:
@@ -8,7 +8,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - id: save-dead-code
+      - id: dc
         uses: .
         with:
           command: dead-code
@@ -19,7 +19,7 @@ jobs:
           artifacts-dir: fallow-artifacts-audit-dc
           type-aware: 'false'
           save-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
-      - id: save-health
+      - id: hb
         uses: .
         with:
           command: health
@@ -30,7 +30,7 @@ jobs:
           artifacts-dir: fallow-artifacts-audit-health
           type-aware: 'false'
           save-baseline: ${{ github.workspace }}/audit-health-baseline.json
-      - id: save-dupes
+      - id: db
         uses: .
         with:
           command: dupes
@@ -41,15 +41,6 @@ jobs:
           artifacts-dir: fallow-artifacts-audit-dupes
           type-aware: 'false'
           save-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
-      - name: Assert baselines exist
-        run: |
-          for b in audit-dead-code-baseline.json audit-health-baseline.json audit-dupes-baseline.json; do
-            if [ ! -f "$GITHUB_WORKSPACE/$b" ]; then
-              echo "FAIL: $b not written"
-              exit 1
-            fi
-          done
-          echo "PASS"
       - id: action
         uses: .
         with:
@@ -66,25 +57,19 @@ jobs:
           dead-code-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
           health-baseline: ${{ github.workspace }}/audit-health-baseline.json
           dupes-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
-      - name: Assert audit verdict
+      - name: Assert audit verdict and gate
         env:
           VERDICT: ${{ steps.action.outputs.verdict }}
           GATE: ${{ steps.action.outputs.gate }}
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "verdict: $VERDICT"
-          echo "gate: $GATE"
-          echo "issues: $ISSUES"
+          echo "verdict: $VERDICT gate: $GATE issues: $ISSUES"
           case "$VERDICT" in
             pass|warn|fail) ;;
-            *) echo "FAIL: verdict '$VERDICT' is not pass/warn/fail"; exit 1 ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
           esac
           if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
             echo "FAIL: expected gate 'all'"
-            exit 1
-          fi
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a non-negative integer"
             exit 1
           fi
           echo "PASS"

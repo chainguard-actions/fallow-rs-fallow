@@ -9,28 +9,27 @@ jobs:
       - id: action
         uses: .
         with:
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/unused-project
           version: 3.40.0
           format: json
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-skip
           type-aware: 'false'
-          skip: dupes,architecture
-      - name: Assert outputs
+          skip: dupes,health
+      - name: Assert results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a non-negative integer"
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
           f="$RESULTS"
           [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
           if [ ! -f "$f" ] || ! jq empty "$f"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"

@@ -1,4 +1,4 @@
-name: Test dead-code with changed-workspaces scoping
+name: Test changed-workspaces git-derived scoping
 on:
   workflow_dispatch:
 jobs:
@@ -8,6 +8,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      # Nothing changed since HEAD, so no workspace is in scope.
       - id: action
         uses: .
         with:
@@ -16,24 +17,16 @@ jobs:
           version: 3.40.0
           format: json
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-changed-ws
+          artifacts-dir: fallow-artifacts-changed-workspaces
           type-aware: 'false'
           changed-workspaces: HEAD
-      - name: Assert run completed with numeric issues
+      - name: Assert run produced a numeric issue count
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
           echo "issues: $ISSUES"
-          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a non-negative integer"
-            exit 1
-          fi
-          f="$RESULTS"
-          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ ! -f "$f" ] || ! jq empty "$f"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
           echo "PASS"

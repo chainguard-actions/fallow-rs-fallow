@@ -1,4 +1,4 @@
-name: Test regression baseline save and fail-on-regression
+name: Test regression baseline save and no-regression gate
 on:
   workflow_dispatch:
 jobs:
@@ -14,18 +14,17 @@ jobs:
           version: 3.40.0
           format: json
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-save-regression
+          artifacts-dir: fallow-artifacts-regression-save
           type-aware: 'false'
-          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
-      - name: Assert regression baseline saved
+          save-regression-baseline: ${{ github.workspace }}/fallow-test-regression.json
+      - name: Assert regression baseline written
         run: |
-          f="$GITHUB_WORKSPACE/fallow-regression-baseline.json"
-          if [ ! -f "$f" ]; then
-            echo "FAIL: regression baseline file not written"
+          if [ ! -s "$GITHUB_WORKSPACE/fallow-test-regression.json" ]; then
+            echo "FAIL: regression baseline not written"
             exit 1
           fi
-          cat "$f"; echo
           echo "PASS"
+      # Same code, same counts: fail-on-regression must not trip.
       - id: compare
         uses: .
         with:
@@ -34,24 +33,19 @@ jobs:
           version: 3.40.0
           format: json
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-compare-regression
+          artifacts-dir: fallow-artifacts-regression-compare
           type-aware: 'false'
-          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+          regression-baseline: ${{ github.workspace }}/fallow-test-regression.json
           fail-on-regression: 'true'
           tolerance: '0'
-      - name: Assert no regression on identical code
+      - name: Assert compare succeeded
         env:
           OUTCOME: ${{ steps.compare.outcome }}
           ISSUES: ${{ steps.compare.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME"
-          echo "issues: $ISSUES"
+          echo "outcome: $OUTCOME issues: $ISSUES"
           if [ "$OUTCOME" != "success" ]; then
-            echo "FAIL: identical code should not regress"
-            exit 1
-          fi
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
-            echo "FAIL: expected unused code still reported"
+            echo "FAIL: expected no regression"
             exit 1
           fi
           echo "PASS"

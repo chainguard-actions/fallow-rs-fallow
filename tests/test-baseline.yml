@@ -1,0 +1,58 @@
+name: Test save-baseline then baseline comparison
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-baseline-save
+          type-aware: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-test-baseline.json
+      - name: Assert baseline file written
+        run: |
+          if [ ! -s "$GITHUB_WORKSPACE/fallow-test-baseline.json" ]; then
+            echo "FAIL: baseline file not written"
+            exit 1
+          fi
+          head -c 1000 "$GITHUB_WORKSPACE/fallow-test-baseline.json"; echo
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/unused-project
+          version: 3.40.0
+          format: json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-baseline-compare
+          type-aware: 'false'
+          baseline: ${{ github.workspace }}/fallow-test-baseline.json
+      - name: Assert baseline suppressed known issues
+        env:
+          BEFORE: ${{ steps.save.outputs.issues }}
+          AFTER: ${{ steps.compare.outputs.issues }}
+          PATH_OUT: ${{ steps.compare.outputs.baseline-path }}
+        run: |
+          echo "before: $BEFORE after: $AFTER baseline-path: $PATH_OUT"
+          if ! [[ "$BEFORE" =~ ^[0-9]+$ && "$AFTER" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issue counts are not integers"
+            exit 1
+          fi
+          if [ "$BEFORE" -lt 1 ]; then
+            echo "FAIL: expected issues before baseline"
+            exit 1
+          fi
+          if [ "$AFTER" -ge "$BEFORE" ]; then
+            echo "FAIL: baseline did not reduce reported issues"
+            exit 1
+          fi
+          echo "PASS"

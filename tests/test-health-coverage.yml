@@ -6,32 +6,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Create Istanbul coverage file
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/coverage-data"
-          cat > "$GITHUB_WORKSPACE/coverage-data/coverage-final.json" <<'EOF'
-          {
-            "/ci/build/src/math.ts": {
-              "path": "/ci/build/src/math.ts",
-              "statementMap": {
-                "0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 15}}
-              },
-              "fnMap": {
-                "0": {
-                  "name": "add",
-                  "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 19}},
-                  "loc": {"start": {"line": 1, "column": 0}, "end": {"line": 3, "column": 1}},
-                  "line": 1
-                }
-              },
-              "branchMap": {},
-              "s": {"0": 1},
-              "f": {"0": 1},
-              "b": {}
-            }
-          }
-          EOF
-          jq empty "$GITHUB_WORKSPACE/coverage-data/coverage-final.json"
       - id: action
         uses: .
         with:
@@ -42,24 +16,23 @@ jobs:
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-coverage
           type-aware: 'false'
-          coverage: ${{ github.workspace }}/coverage-data/coverage-final.json
-          coverage-root: /ci/build
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /ci-build
           max-crap: '30'
-      - name: Assert outputs
+      - name: Assert results file is valid JSON
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
-          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a non-negative integer"
-            exit 1
-          fi
+          echo "results: $RESULTS issues: $ISSUES"
           f="$RESULTS"
           [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
           if [ ! -f "$f" ] || ! jq empty "$f"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
           echo "PASS"

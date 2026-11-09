@@ -1,4 +1,4 @@
-name: Test dead-code scoped to one workspace
+name: Test workspace scoping in a monorepo
 on:
   workflow_dispatch:
 jobs:
@@ -16,27 +16,26 @@ jobs:
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-workspace
           type-aware: 'false'
-          workspace: pkg-a
-      - name: Assert results scoped to pkg-a
+          workspace: app
+      - name: Assert results scoped to app
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues is not a non-negative integer"
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
           f="$RESULTS"
           [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
           if [ ! -f "$f" ] || ! jq empty "$f"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
-          head -c 3000 "$f"; echo
-          if grep -q 'unusedHelperB' "$f"; then
-            echo "FAIL: pkg-b finding leaked into pkg-a scoped results"
+          head -c 2000 "$f"; echo
+          if grep -q 'packages/lib' "$f"; then
+            echo "FAIL: results include the lib workspace"
             exit 1
           fi
           echo "PASS"

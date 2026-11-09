@@ -1,0 +1,36 @@
+name: Test config file and issue-types filtering
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # The config ignores src/orphan.ts, and issue-types limits reporting to
+      # unused files, so no issues should remain.
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/config-project
+          config: ${{ github.workspace }}/tests/fixtures/config-project/.fallowrc.json
+          issue-types: unused-files
+          version: 3.40.0
+          format: json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-config
+          type-aware: 'false'
+      - name: Assert no unused files reported
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          [ -f "$f" ] && head -c 2000 "$f"; echo
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues (orphan ignored by config)"
+            exit 1
+          fi
+          echo "PASS"

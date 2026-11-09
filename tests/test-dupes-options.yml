@@ -1,4 +1,4 @@
-name: Test dupes command with tuning options
+name: Test dupes command with token/line/threshold options
 on:
   workflow_dispatch:
 jobs:
@@ -16,26 +16,24 @@ jobs:
           fail-on-issues: 'false'
           artifacts-dir: fallow-artifacts-dupes
           type-aware: 'false'
-          dupes-mode: strict
           min-tokens: '10'
           min-lines: '2'
-          threshold: '0'
-          top: '3'
-      - name: Assert outputs
+          threshold: '100'
+          top: '5'
+      - name: Assert clone group count is an integer and results valid
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES"
-          echo "results: $RESULTS"
+          echo "issues: $ISSUES results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
-            echo "FAIL: issues (clone groups) is not a non-negative integer"
+            echo "FAIL: issues is not an integer"
             exit 1
           fi
           f="$RESULTS"
           [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
           if [ ! -f "$f" ] || ! jq empty "$f"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: results file missing or invalid JSON"
             exit 1
           fi
           echo "PASS"
