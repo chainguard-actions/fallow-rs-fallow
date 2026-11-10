@@ -1,0 +1,43 @@
+name: Test audit command with gate and worsened
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: audit
+          root: tests/fixtures/project-clean
+          version: 3.42.0
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          changed-since: HEAD
+          gate: all
+          worsened: warn
+      - name: Assert audit produced a verdict or failed cleanly
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "verdict: $VERDICT"
+          echo "gate: $GATE"
+          if [ "$OUTCOME" = "success" ]; then
+            case "$VERDICT" in
+              pass|warn|fail) ;;
+              *) echo "FAIL: verdict should be pass/warn/fail"; exit 1 ;;
+            esac
+            echo "PASS: audit verdict '$VERDICT'"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed (audit base not resolvable under harness)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

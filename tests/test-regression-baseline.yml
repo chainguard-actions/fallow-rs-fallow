@@ -1,0 +1,52 @@
+name: Test regression baseline save then compare
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/project-unused
+          version: 3.42.0
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
+      - name: Assert regression baseline saved
+        run: |
+          f="$GITHUB_WORKSPACE/fallow-regression.json"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: regression baseline not written"
+            exit 1
+          fi
+          cat "$f"
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/project-unused
+          version: 3.42.0
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          fail-on-regression: 'true'
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
+      - name: Assert no regression against identical baseline
+        env:
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          FAILED: ${{ steps.compare.outputs.gates-failed }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "gates-failed: '$FAILED'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not numeric"
+            exit 1
+          fi
+          if echo "$FAILED" | grep -q 'regression'; then
+            echo "FAIL: unexpected regression gate failure"
+            exit 1
+          fi
+          echo "PASS"

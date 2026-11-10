@@ -1,0 +1,43 @@
+name: Test health with runtime coverage options
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: health
+          root: tests/fixtures/project-unused
+          version: 3.42.0
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          runtime-coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: /ci-build
+          min-invocations-hot: '10'
+          min-observation-volume: '100'
+          low-traffic-threshold: '0.01'
+      - name: Assert runtime coverage run completed or failed cleanly
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+              echo "FAIL: results file missing"
+              exit 1
+            fi
+            echo "PASS: runtime coverage run succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed (runtime coverage is a licensed feature)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

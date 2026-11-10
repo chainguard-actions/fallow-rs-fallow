@@ -1,0 +1,34 @@
+name: Test health min-score gate passes at zero
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/project-unused
+          version: 3.42.0
+          type-aware: 'false'
+          min-score: '0'
+      - name: Assert score gate passed and results exist
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          echo "gates-failed: '$FAILED'"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if echo "$FAILED" | grep -q 'min-score'; then
+            echo "FAIL: min-score 0 should never fail"
+            exit 1
+          fi
+          echo "PASS"

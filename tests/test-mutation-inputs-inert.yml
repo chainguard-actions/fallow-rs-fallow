@@ -1,0 +1,37 @@
+name: Test mutation tuning inputs are inert when mutation is disabled
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/project-clean
+          version: 3.42.0
+          type-aware: 'false'
+          fail-on-issues: 'true'
+          mutation: 'false'
+          mutation-min-score: '50'
+          mutation-max-mutants: '5'
+      - name: Assert no mutation run and clean analysis
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          MUT_OUTCOME: ${{ steps.action.outputs.mutation-outcome }}
+          MUT_RESULTS: ${{ steps.action.outputs.mutation-results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "mutation-outcome: '$MUT_OUTCOME'"
+          echo "mutation-results: '$MUT_RESULTS'"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues"
+            exit 1
+          fi
+          if [ -n "$MUT_OUTCOME" ]; then
+            echo "FAIL: mutation-outcome should be empty when mutation is false"
+            exit 1
+          fi
+          echo "PASS"

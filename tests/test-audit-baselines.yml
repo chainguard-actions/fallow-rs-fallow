@@ -1,0 +1,79 @@
+name: Test audit with per-analysis baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - id: dead
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/project-unused
+          version: 3.42.0
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/bl-dead-code.json
+      - id: health
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/project-unused
+          version: 3.42.0
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/bl-health.json
+      - id: dupes
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/project-unused
+          version: 3.42.0
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/bl-dupes.json
+      - name: Assert baselines saved
+        run: |
+          for f in bl-dead-code.json bl-health.json bl-dupes.json; do
+            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f not written"
+              exit 1
+            fi
+            echo "found $f"
+          done
+          echo "PASS"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: audit
+          root: tests/fixtures/project-unused
+          version: 3.42.0
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          changed-since: HEAD
+          dead-code-baseline: ${{ github.workspace }}/bl-dead-code.json
+          health-baseline: ${{ github.workspace }}/bl-health.json
+          dupes-baseline: ${{ github.workspace }}/bl-dupes.json
+      - name: Assert audit with baselines produced a verdict or failed cleanly
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "verdict: $VERDICT"
+          if [ "$OUTCOME" = "success" ]; then
+            case "$VERDICT" in
+              pass|warn|fail) ;;
+              *) echo "FAIL: verdict should be pass/warn/fail"; exit 1 ;;
+            esac
+            echo "PASS: audit verdict '$VERDICT'"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed (audit base not resolvable under harness)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

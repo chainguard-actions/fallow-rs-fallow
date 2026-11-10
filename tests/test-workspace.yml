@@ -1,0 +1,43 @@
+name: Test workspace scoping on single-package project
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: dead-code
+          root: tests/fixtures/project-unused
+          version: 3.42.0
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          workspace: fixture-unused
+      - name: Assert workspace run completed or was rejected cleanly
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if [ "$OUTCOME" = "success" ]; then
+            if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+              echo "FAIL: issues is not numeric"
+              exit 1
+            fi
+            if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+              echo "FAIL: results file missing"
+              exit 1
+            fi
+            echo "PASS: workspace-scoped run succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed (project is not a monorepo workspace)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

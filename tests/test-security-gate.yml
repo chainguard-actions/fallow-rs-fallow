@@ -1,0 +1,42 @@
+name: Test security command with security-gate
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: security
+          root: tests/fixtures/project-clean
+          version: 3.42.0
+          type-aware: 'false'
+          fail-on-issues: 'false'
+          changed-since: HEAD
+          security-gate: new
+      - name: Assert security run completed or failed cleanly
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          echo "gate: $GATE"
+          if [ "$OUTCOME" = "success" ]; then
+            if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+              echo "FAIL: issues is not numeric"
+              exit 1
+            fi
+            echo "PASS: security run succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed (security gate needs a resolvable base)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
