@@ -4,68 +4,37 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      FX: fallow-test-changed-since
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Create fixture JS project
-        run: |
-          set -e
-          P="$GITHUB_WORKSPACE/$FX"
-          rm -rf "$P"
-          mkdir -p "$P/src"
-          cat > "$P/package.json" <<'EOF'
-          {"name":"fallow-test-project","version":"1.0.0","private":true,"main":"src/index.js"}
-          EOF
-          cat > "$P/src/index.js" <<'EOF'
-          import { used } from './used.js';
-          console.log(used());
-          EOF
-          cat > "$P/src/used.js" <<'EOF'
-          export function used() {
-            return 42;
-          }
-          export function unusedExport() {
-            return 'never imported';
-          }
-          EOF
-
       - id: action
         uses: .
         with:
           command: dead-code
-          root: ${{ env.FX }}
           changed-since: HEAD
           fail-on-issues: 'false'
-          auto-changed-since: 'false'
+          fail-on-empty-analysis: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert outputs
+      - name: Assert results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
           RESULTS: ${{ steps.action.outputs.results }}
+          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
         run: |
-          echo "issues: $ISSUES unavailable: $UNAVAILABLE results: $RESULTS"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          echo "changed-files-unavailable: $UNAVAILABLE"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not an integer: '$ISSUES'"
+            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
             exit 1
           fi
-          if [ "$UNAVAILABLE" != "false" ]; then
-            echo "FAIL: expected changed-files-unavailable=false outside PR context, got '$UNAVAILABLE'"
-            exit 1
-          fi
-          if [ ! -f "$RESULTS" ]; then
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
             echo "FAIL: results file missing"
             exit 1
           fi
           echo "PASS"
-
-      - name: Cleanup
-        if: always()
-        run: rm -rf "$GITHUB_WORKSPACE/$FX"

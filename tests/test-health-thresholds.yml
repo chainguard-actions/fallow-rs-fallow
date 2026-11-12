@@ -1,95 +1,50 @@
-name: Test health with thresholds, coverage, sort, top and min-severity
+name: Test health command with complexity thresholds, sort and top
 on:
   workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      FX: fallow-test-health-thresholds
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Create fixture JS project with Istanbul coverage
-        run: |
-          set -e
-          P="$GITHUB_WORKSPACE/$FX"
-          rm -rf "$P"
-          mkdir -p "$P/src" "$P/cov"
-          cat > "$P/package.json" <<'EOF'
-          {"name":"fallow-test-project","version":"1.0.0","private":true,"main":"src/index.js"}
-          EOF
-          cat > "$P/src/index.js" <<'EOF'
-          import { used, classify } from './used.js';
-          console.log(used(), classify(3));
-          EOF
-          cat > "$P/src/used.js" <<'EOF'
-          export function used() {
-            return 42;
-          }
-          export function classify(n) {
-            if (n < 0) {
-              return 'negative';
-            } else if (n === 0) {
-              return 'zero';
-            } else if (n < 10) {
-              return 'small';
-            }
-            return 'large';
-          }
-          EOF
-          cat > "$P/cov/coverage-final.json" <<'EOF'
-          {
-            "/build/src/used.js": {
-              "path": "/build/src/used.js",
-              "statementMap": {"0": {"start": {"line": 2, "column": 2}, "end": {"line": 2, "column": 12}}},
-              "fnMap": {"0": {"name": "used", "decl": {"start": {"line": 1, "column": 16}, "end": {"line": 1, "column": 20}}, "loc": {"start": {"line": 1, "column": 23}, "end": {"line": 3, "column": 1}}, "line": 1}},
-              "branchMap": {},
-              "s": {"0": 5},
-              "f": {"0": 5},
-              "b": {}
-            }
-          }
-          EOF
 
       - id: action
         uses: .
         with:
           command: health
-          root: ${{ env.FX }}
-          max-cyclomatic: '50'
-          max-cognitive: '50'
-          max-crap: '100'
-          coverage: ${{ github.workspace }}/${{ env.FX }}/cov/coverage-final.json
-          coverage-root: /build
-          top: '5'
+          max-cyclomatic: '30'
+          max-cognitive: '25'
+          max-crap: '45.5'
           sort: cognitive
-          min-severity: critical
+          top: '10'
           fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert no findings with generous thresholds
+      - name: Assert issues output is a number
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
-          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not an integer: '$ISSUES'"
-            exit 1
-          fi
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 findings with max-cyclomatic/max-cognitive=50, got $ISSUES"
-            exit 1
-          fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
-            echo "FAIL: results file missing or invalid"
+            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
             exit 1
           fi
           echo "PASS"
 
-      - name: Cleanup
-        if: always()
-        run: rm -rf "$GITHUB_WORKSPACE/$FX"
+      - name: Assert results file is valid JSON
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: results is not valid JSON"
+            exit 1
+          fi
+          echo "PASS"

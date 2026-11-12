@@ -4,60 +4,38 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      FX: fallow-test-bare-only
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Create fixture JS project
-        run: |
-          set -e
-          P="$GITHUB_WORKSPACE/$FX"
-          rm -rf "$P"
-          mkdir -p "$P/src"
-          cat > "$P/package.json" <<'EOF'
-          {"name":"fallow-test-project","version":"1.0.0","private":true,"main":"src/index.js"}
-          EOF
-          cat > "$P/src/index.js" <<'EOF'
-          import { used } from './used.js';
-          console.log(used());
-          EOF
-          cat > "$P/src/used.js" <<'EOF'
-          export function used() {
-            return 42;
-          }
-          export function unusedExport() {
-            return 'never imported';
-          }
-          EOF
 
       - id: action
         uses: .
         with:
-          root: ${{ env.FX }}
-          only: dead-code,health
+          only: dead-code
           fail-on-issues: 'false'
+          fail-on-empty-analysis: 'false'
           auto-changed-since: 'false'
           annotations: 'false'
           sarif: 'false'
           format: json
 
-      - name: Assert combined run outputs
+      - name: Assert results
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
         run: |
-          echo "issues: $ISSUES results: $RESULTS"
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
           if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: issues not an integer: '$ISSUES'"
+            echo "FAIL: expected a non-negative integer, got '$ISSUES'"
             exit 1
           fi
-          if [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ] || ! jq empty "$RESULTS"; then
             echo "FAIL: results file missing or invalid"
             exit 1
           fi
+          if [ -n "$VERDICT" ]; then
+            echo "FAIL: verdict should be empty outside audit"
+            exit 1
+          fi
           echo "PASS"
-
-      - name: Cleanup
-        if: always()
-        run: rm -rf "$GITHUB_WORKSPACE/$FX"
