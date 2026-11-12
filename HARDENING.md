@@ -16,18 +16,18 @@ Action **fallow-rs--fallow/v3.41.0** was hardened automatically. 1 finding(s) we
 
 ### script-injection (severity: high)
 
-Rule (a) violated: GitHub Actions expressions are put straight into run: shell commands in 8 composite steps of action.yml. Each step uses the form `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`. The affected steps are: Install fallow (install.sh), Fallow branded token (broker-token.sh), Run analysis (analyze.sh), Check Code Scanning availability (check-code-scanning.sh), Post PR comment (comment.sh), Emit inline annotations (annotate.sh), Job summary (summary.sh) and Post review comments (review.sh). The YAML template substitutes the path before any shell quoting happens. Fix: use the runner-provided env var instead, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
+Rule (a), expression placed directly in a run: block. Eight composite steps in action.yml put the GitHub expression ${{ github.action_path }} straight into the shell command, for example `run: bash ${{ github.action_path }}/action/scripts/install.sh`. The affected steps are Install fallow, Fallow branded token, Run analysis, Check Code Scanning availability, Post PR comment, Emit inline annotations, Job summary and Post review comments. The runner substitutes the value into the script text before the shell parses it. Fix: use the runner-provided env var instead, quoted: `bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
 
 Locations:
 
 - `action.yml:417`
 - `action.yml:430`
-- `action.yml:545`
-- `action.yml:558`
-- `action.yml:605`
-- `action.yml:627`
-- `action.yml:653`
-- `action.yml:686`
+- `action.yml:546`
+- `action.yml:559`
+- `action.yml:606`
+- `action.yml:628`
+- `action.yml:654`
+- `action.yml:687`
 
 ## Iteration Notes
 
@@ -37,5 +37,5 @@ Locations:
 
 **Notes:**
 
-In action.yml, I changed 8 composite steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review). Each one ran `bash ${{ github.action_path }}/action/scripts/X.sh` and now runs `bash "$GITHUB_ACTION_PATH/action/scripts/X.sh"`. All of these steps use shell: bash, so this way of referencing the variable works. I left the ACTION_JQ_DIR expressions alone because they sit in env: blocks, not in run: commands. I haven't run the action or its tests after the change.
+In action.yml, eight run: lines used `bash ${{ github.action_path }}/action/scripts/<script>.sh`. Each now reads `bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"`. The steps are install, broker-token, analyze, check-code-scanning, comment, annotate, summary and review. All of them use shell: bash. Two env: entries still use ${{ github.action_path }} for ACTION_JQ_DIR. I left them alone because the value goes into an environment variable and is never parsed as shell code.
 

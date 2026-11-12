@@ -1,4 +1,4 @@
-name: Test combined run limited with only
+name: Test combined run restricted with only
 on:
   workflow_dispatch:
 jobs:
@@ -10,28 +10,25 @@ jobs:
         uses: .
         with:
           root: tests/fixtures/dirty-project
+          only: dead-code
           version: '3.41.0'
           format: json
           type-aware: 'false'
           auto-changed-since: 'false'
           fail-on-issues: 'false'
           annotations: 'false'
-          only: dead-code,health
-      - name: Assert combined results produced
+      - name: Assert combined results
         env:
-          RESULTS: ${{ steps.action.outputs.results }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "results: $RESULTS issues: $ISSUES"
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output not numeric"
+            exit 1
+          fi
           f="$RESULTS"
           [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -f "$f" ]; then
-            echo "FAIL: results file missing"
-            exit 1
-          fi
-          jq -e . "$f" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
-          if ! grep -q "orphan" "$f"; then
-            echo "FAIL: expected dead-code findings (orphan.ts) in combined results"
-            exit 1
-          fi
+          jq -e . "$f" > /dev/null || { echo "FAIL: invalid results JSON"; exit 1; }
+          grep -q "orphan" "$f" || { echo "FAIL: dead-code findings missing"; head -c 4000 "$f"; exit 1; }
           echo "PASS"

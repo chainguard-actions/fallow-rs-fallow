@@ -1,4 +1,4 @@
-name: Test health command with complexity thresholds
+name: Test health with complexity thresholds
 on:
   workflow_dispatch:
 jobs:
@@ -11,35 +11,31 @@ jobs:
         with:
           command: health
           root: tests/fixtures/dirty-project
+          max-cyclomatic: '10'
+          max-cognitive: '10'
+          max-crap: '30'
+          max-file-lines: '500'
+          min-severity: critical
+          top: '5'
+          sort: cognitive
           version: '3.41.0'
           format: json
           type-aware: 'false'
           auto-changed-since: 'false'
           fail-on-issues: 'false'
-          max-cyclomatic: '50'
-          max-cognitive: '50'
-          max-crap: '100'
-          max-file-lines: '1000'
-          top: '5'
-          sort: cognitive
-          min-severity: critical
-          threads: '2'
-      - name: Assert results JSON produced
+          annotations: 'false'
+      - name: Assert health results
         env:
-          RESULTS: ${{ steps.action.outputs.results }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "results: $RESULTS"
           echo "issues: $ISSUES"
-          f="$RESULTS"
-          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -f "$f" ]; then
-            echo "FAIL: results file missing"
-            exit 1
-          fi
-          jq -e . "$f" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
+          echo "results: $RESULTS"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
+          f="$RESULTS"
+          [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
+          jq -e . "$f" > /dev/null || { echo "FAIL: invalid results JSON"; exit 1; }
           echo "PASS"

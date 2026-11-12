@@ -13,27 +13,23 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
+          changed-since: HEAD
           version: '3.41.0'
           format: json
           type-aware: 'false'
-          changed-since: HEAD
           fail-on-issues: 'false'
           annotations: 'false'
-      - name: Assert scoped analysis completed
+      - name: Assert scoped run produced numeric result
         env:
-          RESULTS: ${{ steps.action.outputs.results }}
           ISSUES: ${{ steps.action.outputs.issues }}
-          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "results: $RESULTS issues: $ISSUES changed-files-unavailable: $UNAVAILABLE"
+          echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
           f="$RESULTS"
           [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -f "$f" ]; then
-            echo "FAIL: results file missing"
-            exit 1
-          fi
+          jq -e . "$f" > /dev/null || { echo "FAIL: invalid results JSON"; exit 1; }
           echo "PASS"

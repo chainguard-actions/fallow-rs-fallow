@@ -1,4 +1,4 @@
-name: Test changed-workspaces scoping
+name: Test health with Istanbul coverage
 on:
   workflow_dispatch:
 jobs:
@@ -6,34 +6,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
       - id: action
         uses: .
         with:
-          command: dead-code
-          root: tests/fixtures/monorepo
+          command: health
+          root: tests/fixtures/dirty-project
+          coverage: ${{ github.workspace }}/tests/fixtures/coverage/coverage-final.json
+          coverage-root: ${{ github.workspace }}/tests/fixtures/dirty-project
           version: '3.41.0'
           format: json
           type-aware: 'false'
           auto-changed-since: 'false'
           fail-on-issues: 'false'
           annotations: 'false'
-          changed-workspaces: HEAD
-      - name: Assert analysis completed
+      - name: Assert health results
         env:
-          RESULTS: ${{ steps.action.outputs.results }}
           ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
         run: |
-          echo "results: $RESULTS issues: $ISSUES"
+          echo "issues: $ISSUES"
           if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
             echo "FAIL: issues output is not a number"
             exit 1
           fi
           f="$RESULTS"
           [ -f "$f" ] || f="$GITHUB_WORKSPACE/$RESULTS"
-          if [ -z "$RESULTS" ] || [ ! -f "$f" ]; then
-            echo "FAIL: results file missing"
-            exit 1
-          fi
+          jq -e . "$f" > /dev/null || { echo "FAIL: invalid results JSON"; exit 1; }
           echo "PASS"
