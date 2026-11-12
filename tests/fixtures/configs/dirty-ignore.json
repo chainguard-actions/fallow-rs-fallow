@@ -1,0 +1,4 @@
+{
+  "ignorePatterns": ["src/orphan.js"],
+  "ignoreDependencies": ["left-pad"]
+}

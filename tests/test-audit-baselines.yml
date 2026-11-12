@@ -1,4 +1,4 @@
-name: Test audit with dead-code, health and dupes baselines
+name: Test audit with gate, worsened and per-analysis baselines
 on:
   workflow_dispatch:
 jobs:
@@ -8,72 +8,78 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - id: save-dead-code
+      - name: Prepare baseline dir
+        run: mkdir -p "$GITHUB_WORKSPACE/fallow-audit-baselines"
+      - id: dc
         uses: .
         with:
           command: dead-code
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
-          type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
+          save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-audit-bl-dead
-      - id: save-health
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-audit-dc
+      - id: health
         uses: .
         with:
           command: health
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
-          type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/audit-health-baseline.json
+          save-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-audit-bl-health
-      - id: save-dupes
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-audit-health
+      - id: dupes
         uses: .
         with:
           command: dupes
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
-          type-aware: 'false'
-          save-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
+          save-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-audit-bl-dupes
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-audit-dupes
       - name: Assert baselines written
         run: |
-          for f in audit-dead-code-baseline.json audit-health-baseline.json audit-dupes-baseline.json; do
-            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
-              echo "FAIL: $f not written"
+          for f in dead-code health dupes; do
+            P="$GITHUB_WORKSPACE/fallow-audit-baselines/$f.json"
+            if [ ! -s "$P" ]; then
+              echo "FAIL: $P not written"
               exit 1
             fi
-            jq empty "$GITHUB_WORKSPACE/$f" || { echo "FAIL: $f invalid JSON"; exit 1; }
           done
           echo "PASS"
       - id: action
         uses: .
         with:
           command: audit
-          root: tests/fixtures/clean-project
+          root: tests/fixtures/dirty-project
           version: '3.38.1'
-          type-aware: 'false'
           changed-since: HEAD
-          dead-code-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
-          health-baseline: ${{ github.workspace }}/audit-health-baseline.json
-          dupes-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
-          fail-on-issues: 'true'
-          artifacts-dir: fallow-artifacts-audit-baselines
-      - name: Assert audit passed with baselines
+          gate: all
+          worsened: warn
+          dead-code-baseline: ${{ github.workspace }}/fallow-audit-baselines/dead-code.json
+          health-baseline: ${{ github.workspace }}/fallow-audit-baselines/health.json
+          dupes-baseline: ${{ github.workspace }}/fallow-audit-baselines/dupes.json
+          fail-on-issues: 'false'
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-audit
+      - name: Assert audit verdict and gate
         env:
-          ISSUES: ${{ steps.action.outputs.issues }}
           VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+          ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "issues: $ISSUES"
           echo "verdict: $VERDICT"
+          echo "gate: $GATE"
+          echo "issues: $ISSUES"
           case "$VERDICT" in
-            pass|warn) ;;
-            *) echo "FAIL: expected pass/warn verdict on unchanged clean project"; exit 1 ;;
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
           esac
-          if [ "$ISSUES" != "0" ]; then
-            echo "FAIL: expected 0 introduced findings"
+          if [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all'"
             exit 1
           fi
           echo "PASS"

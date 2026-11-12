@@ -1,4 +1,4 @@
-name: Test dead-code with explicit config and issue-types filter
+name: Test dead-code with config file and issue-types
 on:
   workflow_dispatch:
 jobs:
@@ -11,13 +11,13 @@ jobs:
         with:
           command: dead-code
           root: tests/fixtures/dirty-project
-          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
-          issue-types: unused-files,unused-exports
+          config: ${{ github.workspace }}/tests/fixtures/configs/dirty-ignore.json
+          issue-types: unused-files,unused-deps
           version: '3.38.1'
-          type-aware: 'false'
           fail-on-issues: 'false'
-          artifacts-dir: fallow-artifacts-config-issue-types
-      - name: Assert filtered dead-code results
+          type-aware: 'false'
+          artifacts-dir: fallow-artifacts-config
+      - name: Assert config ignores were honoured
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -33,4 +33,14 @@ jobs:
             exit 1
           fi
           jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
+          if grep -q 'orphan.js' "$RESULTS"; then
+            echo "FAIL: orphan.js should be ignored via config ignorePatterns"
+            cat "$RESULTS"
+            exit 1
+          fi
+          if grep -q '"left-pad"' "$RESULTS"; then
+            echo "FAIL: left-pad should be ignored via config ignoreDependencies"
+            cat "$RESULTS"
+            exit 1
+          fi
           echo "PASS"

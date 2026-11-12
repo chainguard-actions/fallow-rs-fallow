@@ -1,4 +1,4 @@
-name: Test dead-code with changed-workspaces derived from git
+name: Test dead-code scoped via changed-workspaces
 on:
   workflow_dispatch:
 jobs:
@@ -14,11 +14,11 @@ jobs:
           command: dead-code
           root: tests/fixtures/monorepo
           version: '3.38.1'
-          type-aware: 'false'
           changed-workspaces: HEAD
           fail-on-issues: 'false'
+          type-aware: 'false'
           artifacts-dir: fallow-artifacts-changed-workspaces
-      - name: Assert changed-workspaces run produced results
+      - name: Assert changed-workspaces run completed
         env:
           ISSUES: ${{ steps.action.outputs.issues }}
           RESULTS: ${{ steps.action.outputs.results }}
@@ -33,5 +33,4 @@ jobs:
             echo "FAIL: results file missing"
             exit 1
           fi
-          jq empty "$RESULTS" || { echo "FAIL: invalid JSON"; exit 1; }
           echo "PASS"

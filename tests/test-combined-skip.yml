@@ -11,9 +11,9 @@ jobs:
         with:
           root: tests/fixtures/clean-project
           version: '3.38.1'
-          type-aware: 'false'
           skip: dupes,architecture
           fail-on-issues: 'false'
+          type-aware: 'false'
           artifacts-dir: fallow-artifacts-skip
       - name: Assert combined run produced results
         env:
