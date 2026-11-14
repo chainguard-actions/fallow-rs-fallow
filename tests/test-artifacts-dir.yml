@@ -1,0 +1,43 @@
+name: Test custom artifacts-dir
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Let the bundled verifier resolve detect-libc from the global fallow install
+        run: |
+          G="$(npm root -g)"
+          echo "NODE_PATH=$G/fallow/node_modules:$G" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/with-issues
+          version: 3.43.0
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          artifacts-dir: fallow-artifacts
+      - name: Assert artifacts written under artifacts-dir
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "results: $RESULTS"
+          echo "issues: $ISSUES"
+          ls -la "$GITHUB_WORKSPACE/fallow-artifacts" || true
+          case "$RESULTS" in
+            *fallow-artifacts/fallow-results.json) ;;
+            *) echo "FAIL: results path not under artifacts-dir"; exit 1 ;;
+          esac
+          if [ ! -f "$GITHUB_WORKSPACE/fallow-artifacts/fallow-results.json" ]; then
+            echo "FAIL: fallow-results.json not found in artifacts-dir"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected positive issues count"
+            exit 1
+          fi
+          echo "PASS"

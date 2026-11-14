@@ -1,0 +1,61 @@
+name: Test save-baseline then baseline comparison
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Let the bundled verifier resolve detect-libc from the global fallow install
+        run: |
+          G="$(npm root -g)"
+          echo "NODE_PATH=$G/fallow/node_modules:$G" >> "$GITHUB_ENV"
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/with-issues
+          version: 3.43.0
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          save-baseline: ${{ runner.temp }}/fallow-baseline.json
+      - name: Assert baseline file saved
+        env:
+          BASELINE: ${{ runner.temp }}/fallow-baseline.json
+        run: |
+          echo "baseline: $BASELINE"
+          if [ ! -s "$BASELINE" ]; then
+            echo "FAIL: baseline file was not written"
+            exit 1
+          fi
+          head -c 2000 "$BASELINE"; echo
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/with-issues
+          version: 3.43.0
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          baseline: ${{ runner.temp }}/fallow-baseline.json
+      - name: Assert comparison run produced results
+        env:
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          RESULTS: ${{ steps.compare.outputs.results }}
+          BASELINE_PATH: ${{ steps.compare.outputs.baseline-path }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          echo "baseline-path: $BASELINE_PATH"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,0 +1,6 @@
+# paste reaches this sidecar only through the pinned candle-core and tokenizers.
+# Remove this entry when candle, gemm, and tokenizers drop paste.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "paste is an unmaintained compile-time macro crate used by candle; no patched release exists."

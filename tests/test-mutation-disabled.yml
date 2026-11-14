@@ -1,0 +1,41 @@
+name: Test mutation settings are inert when mutation is disabled
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Let the bundled verifier resolve detect-libc from the global fallow install
+        run: |
+          G="$(npm root -g)"
+          echo "NODE_PATH=$G/fallow/node_modules:$G" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean
+          version: 3.43.0
+          auto-changed-since: 'false'
+          sarif: 'false'
+          mutation: 'false'
+          mutation-max-mutants: '10'
+          mutation-min-score: '80'
+      - name: Assert mutation did not run and analysis passed
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          OUTCOME: ${{ steps.action.outputs.mutation-outcome }}
+          RESULTS: ${{ steps.action.outputs.mutation-results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "mutation-outcome: '$OUTCOME'"
+          echo "mutation-results: '$RESULTS'"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues"
+            exit 1
+          fi
+          if [ -n "$OUTCOME" ] || [ -n "$RESULTS" ]; then
+            echo "FAIL: mutation outputs should be empty when mutation is false"
+            exit 1
+          fi
+          echo "PASS"
