@@ -1,0 +1,61 @@
+name: Test health min-score, save-snapshot and trend
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: snapshot
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.43.1'
+          format: json
+          min-score: '0'
+          save-snapshot: 'true'
+          fail-on-issues: 'false'
+      - name: Assert snapshot run succeeded
+        env:
+          ISSUES: ${{ steps.snapshot.outputs.issues }}
+          RESULTS: ${{ steps.snapshot.outputs.results }}
+          GATES_FAILED: ${{ steps.snapshot.outputs.gates-failed }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "gates-failed: '$GATES_FAILED'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not numeric"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if echo "$GATES_FAILED" | grep -q "min-score"; then
+            echo "FAIL: min-score 0 must never fail"
+            exit 1
+          fi
+          echo "PASS"
+      - id: trend
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.43.1'
+          format: json
+          score: 'true'
+          trend: 'true'
+          fail-on-issues: 'false'
+      - name: Assert trend run succeeded
+        env:
+          ISSUES: ${{ steps.trend.outputs.issues }}
+          RESULTS: ${{ steps.trend.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not numeric"
+            exit 1
+          fi
+          jq . "$RESULTS" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
+          echo "PASS"

@@ -1,0 +1,43 @@
+name: Test health-only and mutation inputs are inert for dead-code
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # Runtime-coverage and mutation inputs only apply to the health command
+      # and to mutation: true respectively. On a dead-code run with mutation
+      # disabled they must be ignored, not break the run.
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean-project
+          version: '3.43.1'
+          format: json
+          runtime-coverage: does-not-exist/coverage
+          min-invocations-hot: '100'
+          min-observation-volume: '1000'
+          low-traffic-threshold: '0.01'
+          mutation-max-mutants: '10'
+          mutation-min-score: '50'
+          fail-on-issues: 'true'
+      - name: Assert dead-code ran clean and mutation did not run
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          MUTATION_OUTCOME: ${{ steps.action.outputs.mutation-outcome }}
+          MUTATION_SCORE: ${{ steps.action.outputs.mutation-score }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "mutation-outcome: '$MUTATION_OUTCOME'"
+          echo "mutation-score: '$MUTATION_SCORE'"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: clean project should report 0 issues"
+            exit 1
+          fi
+          if [ -n "$MUTATION_OUTCOME" ] || [ -n "$MUTATION_SCORE" ]; then
+            echo "FAIL: mutation outputs should be empty when mutation is false"
+            exit 1
+          fi
+          echo "PASS"

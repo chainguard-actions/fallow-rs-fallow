@@ -1,0 +1,38 @@
+name: Test dead-code with issue-types filter and explicit config
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/unused-project
+          config: ${{ github.workspace }}/tests/fixtures/config-file/.fallowrc.json
+          version: '3.43.1'
+          format: json
+          issue-types: unused-files
+          fail-on-issues: 'false'
+      - name: Assert only unused files reported
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected orphan.ts as an unused file"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if ! grep -q "orphan" "$RESULTS"; then
+            echo "FAIL: orphan.ts not reported"
+            cat "$RESULTS"
+            exit 1
+          fi
+          echo "PASS"

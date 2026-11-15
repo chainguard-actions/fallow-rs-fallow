@@ -1,0 +1,6072 @@
+{
+  "schema_version": 1,
+  "generated_from": {
+    "discovery_provenance": {
+      "generated_at": "2026-11-10T18:28:44.209Z",
+      "manifest_sha256": "3a55fcd52dfb4269a47951128ca7cba41d3183423bb1f30623f69e3ee8d5412e",
+      "fallow": {
+        "version": "fallow 3.42.0",
+        "sha256": "661f67d8edaaa046d3cf4307f07b5019ed0cc851366d9da18b0cf11aed2da903"
+      },
+      "sidecar": {
+        "sha256": "4e6637a142dc5fd5b92258c5911258557c39df4b81727dae4f9a3f27d939a1fe"
+      },
+      "runtime": {
+        "platform": "darwin",
+        "architecture": "arm64",
+        "node": "v26.13.0"
+      },
+      "dependency_environments": {
+        "svelte": {
+          "dependency_installation": "ancestor-workspace",
+          "path_base": "fallow-workspace-root",
+          "dependency_root": ".",
+          "lockfile": "pnpm-lock.yaml",
+          "lockfile_sha256": "857a138639ee3d541e9d4f17c1d0dce7a93fd449c1ba691e9a7d987b05ea46b5",
+          "type_declaration_tree_sha256": "b1169e3716f0c714bd69c2f1251767780fff96623fb750e0c4fbf8b9bffcb022"
+        },
+        "vue-core": {
+          "dependency_installation": "ancestor-workspace",
+          "path_base": "fallow-workspace-root",
+          "dependency_root": ".",
+          "lockfile": "pnpm-lock.yaml",
+          "lockfile_sha256": "857a138639ee3d541e9d4f17c1d0dce7a93fd449c1ba691e9a7d987b05ea46b5",
+          "type_declaration_tree_sha256": "b1169e3716f0c714bd69c2f1251767780fff96623fb750e0c4fbf8b9bffcb022"
+        },
+        "astro": {
+          "dependency_installation": "ancestor-workspace",
+          "path_base": "fallow-workspace-root",
+          "dependency_root": ".",
+          "lockfile": "pnpm-lock.yaml",
+          "lockfile_sha256": "857a138639ee3d541e9d4f17c1d0dce7a93fd449c1ba691e9a7d987b05ea46b5",
+          "type_declaration_tree_sha256": "b1169e3716f0c714bd69c2f1251767780fff96623fb750e0c4fbf8b9bffcb022"
+        },
+        "typescript": {
+          "dependency_installation": "ancestor-workspace",
+          "path_base": "fallow-workspace-root",
+          "dependency_root": ".",
+          "lockfile": "pnpm-lock.yaml",
+          "lockfile_sha256": "857a138639ee3d541e9d4f17c1d0dce7a93fd449c1ba691e9a7d987b05ea46b5",
+          "type_declaration_tree_sha256": "b1169e3716f0c714bd69c2f1251767780fff96623fb750e0c4fbf8b9bffcb022"
+        },
+        "next.js": {
+          "dependency_installation": "ancestor-workspace",
+          "path_base": "fallow-workspace-root",
+          "dependency_root": ".",
+          "lockfile": "pnpm-lock.yaml",
+          "lockfile_sha256": "857a138639ee3d541e9d4f17c1d0dce7a93fd449c1ba691e9a7d987b05ea46b5",
+          "type_declaration_tree_sha256": "b1169e3716f0c714bd69c2f1251767780fff96623fb750e0c4fbf8b9bffcb022"
+        },
+        "preact": {
+          "dependency_installation": "ancestor-workspace",
+          "path_base": "fallow-workspace-root",
+          "dependency_root": ".",
+          "lockfile": "pnpm-lock.yaml",
+          "lockfile_sha256": "857a138639ee3d541e9d4f17c1d0dce7a93fd449c1ba691e9a7d987b05ea46b5",
+          "type_declaration_tree_sha256": "b1169e3716f0c714bd69c2f1251767780fff96623fb750e0c4fbf8b9bffcb022"
+        },
+        "query": {
+          "dependency_installation": "ancestor-workspace",
+          "path_base": "fallow-workspace-root",
+          "dependency_root": ".",
+          "lockfile": "pnpm-lock.yaml",
+          "lockfile_sha256": "857a138639ee3d541e9d4f17c1d0dce7a93fd449c1ba691e9a7d987b05ea46b5",
+          "type_declaration_tree_sha256": "b1169e3716f0c714bd69c2f1251767780fff96623fb750e0c4fbf8b9bffcb022"
+        },
+        "vite": {
+          "dependency_installation": "ancestor-workspace",
+          "path_base": "fallow-workspace-root",
+          "dependency_root": ".",
+          "lockfile": "pnpm-lock.yaml",
+          "lockfile_sha256": "857a138639ee3d541e9d4f17c1d0dce7a93fd449c1ba691e9a7d987b05ea46b5",
+          "type_declaration_tree_sha256": "b1169e3716f0c714bd69c2f1251767780fff96623fb750e0c4fbf8b9bffcb022"
+        },
+        "fastify": {
+          "dependency_installation": "ancestor-workspace",
+          "path_base": "fallow-workspace-root",
+          "dependency_root": ".",
+          "lockfile": "pnpm-lock.yaml",
+          "lockfile_sha256": "857a138639ee3d541e9d4f17c1d0dce7a93fd449c1ba691e9a7d987b05ea46b5",
+          "type_declaration_tree_sha256": "b1169e3716f0c714bd69c2f1251767780fff96623fb750e0c4fbf8b9bffcb022"
+        },
+        "zod": {
+          "dependency_installation": "ancestor-workspace",
+          "path_base": "fallow-workspace-root",
+          "dependency_root": ".",
+          "lockfile": "pnpm-lock.yaml",
+          "lockfile_sha256": "857a138639ee3d541e9d4f17c1d0dce7a93fd449c1ba691e9a7d987b05ea46b5",
+          "type_declaration_tree_sha256": "b1169e3716f0c714bd69c2f1251767780fff96623fb750e0c4fbf8b9bffcb022"
+        }
+      },
+      "fixtures": [
+        {
+          "id": "svelte",
+          "repo": "sveltejs/svelte",
+          "ref": "svelte@5.57.2",
+          "commit": "10fdca7d705081cae17bf7d609d46ee6eb237d17"
+        },
+        {
+          "id": "vue-core",
+          "repo": "vuejs/core",
+          "ref": "v3.5.30",
+          "commit": "fdd863f617f98c3d41cb8b2401d8e550d8a44d34"
+        },
+        {
+          "id": "astro",
+          "repo": "withastro/astro",
+          "ref": "astro@6.3.1",
+          "commit": "868892ba788369128a09ba7640f0364678190431"
+        },
+        {
+          "id": "typescript",
+          "repo": "microsoft/TypeScript",
+          "ref": "v5.9.3",
+          "commit": "c63de15a992d37f0d6cec03ac7631872838602cb"
+        },
+        {
+          "id": "next.js",
+          "repo": "vercel/next.js",
+          "ref": "v16.4.2",
+          "commit": "2864b1772c37242a9b40ab4d366eb7d368c2a070"
+        },
+        {
+          "id": "preact",
+          "repo": "preactjs/preact",
+          "ref": "10.25.4",
+          "commit": "055cc5b8c62326fbb0fcaccb9816504e82f121b8"
+        },
+        {
+          "id": "query",
+          "repo": "TanStack/query",
+          "ref": "v5.90.3",
+          "commit": "4d8da1e29e97ad5b0c151822d4962849515b4478"
+        },
+        {
+          "id": "vite",
+          "repo": "vitejs/vite",
+          "ref": "v8.0.1",
+          "commit": "028ff86dd68f679dac659024b18c4e0a0d511c22"
+        },
+        {
+          "id": "fastify",
+          "repo": "fastify/fastify",
+          "ref": "v5.2.1",
+          "commit": "eafe0aa25ced21033310ae708b33e645ffb0d532"
+        },
+        {
+          "id": "zod",
+          "repo": "colinhacks/zod",
+          "ref": "v3.24.2",
+          "commit": "e30870369d5b8f31ff4d0130d4439fd997deb523"
+        }
+      ]
+    },
+    "evidence_producer": {
+      "protocol_version": 7,
+      "sidecar_sha256": "4e6637a142dc5fd5b92258c5911258557c39df4b81727dae4f9a3f27d939a1fe",
+      "request_set_sha256": "314401376e65324c5e72bda3dabeecf7983edb389f4b4dcbef98b85c06214f3d",
+      "response_set_sha256": "10288dcd3521af5fcbe3e93dcd490a58ddda7e2f98b7f58c1d3c8539cd5d7379"
+    },
+    "adjudication": {
+      "decisions_sha256": "f2b4b3780706ce1fa5f7415cf2b1427aa658d9862c08b698caf21ffe3be34fcd",
+      "reviewed_on": "2026-11-10",
+      "reviewer": "primary-source-adjudication",
+      "method": "Confirmed uses require an exact checker-resolved declaration and concrete source use. Contract-preserved records require an exact inherited declaration and independently reviewed contract or override behavior. Retained candidates are indeterminate unless source review proves that only the declaration exists.",
+      "independent_signoff": {
+        "verdict": "approved",
+        "reviews": [
+          {
+            "project_id": "svelte",
+            "candidate_count": 62,
+            "candidate_set_sha256": "2572ffc6ac452666bbdaf797f71a1a12974d50f23a6d8c975748b48b71da3bbc",
+            "evidence_sha256": "563a5a52cc9eea60bc5c3f55612507d1333f1b1a5cd4bb867a4eac5a776ce00b",
+            "reviewer": "independent-source-review-svelte",
+            "method": "Two or more reviewers checked each record against the pinned source. Confirmed uses were checked for a concrete source use of the exact member, with accessor reads and writes credited to the matching half. Contract-preserved records were checked for the declaration, the heritage edge, the signature, and a required interface member, an abstract member, or an override that changes the behavior of the class.",
+            "verdict": "approved"
+          },
+          {
+            "project_id": "astro",
+            "candidate_count": 20,
+            "candidate_set_sha256": "b9e97b08f624956c7bb77fdbb8d91ce6bb085e40329758cb4df3e16b3f8f5e0e",
+            "evidence_sha256": "85533c9ad449200cb3766acbf8ff89e29a737b7d311b50d3f20fde524ef59c26",
+            "reviewer": "independent-source-review-astro",
+            "method": "Two or more reviewers checked each record against the pinned source. Confirmed uses were checked for a concrete source use of the exact member, with accessor reads and writes credited to the matching half. Contract-preserved records were checked for the declaration, the heritage edge, the signature, and a required interface member, an abstract member, or an override that changes the behavior of the class.",
+            "verdict": "approved"
+          },
+          {
+            "project_id": "typescript",
+            "candidate_count": 74,
+            "candidate_set_sha256": "bb9a3d9822393f596327cc8d5dcfe2f627d3295c92011e3911cb6ca51358d543",
+            "evidence_sha256": "1b22718975075a3145d6bbc8b332417edd7bf60b5732f4acdc093a9dc3209c3a",
+            "reviewer": "independent-source-review-typescript",
+            "method": "Two or more reviewers checked each record against the pinned source. Confirmed uses were checked for a concrete source use of the exact member, with accessor reads and writes credited to the matching half. Contract-preserved records were checked for the declaration, the heritage edge, the signature, and a required interface member, an abstract member, or an override that changes the behavior of the class.",
+            "verdict": "approved"
+          },
+          {
+            "project_id": "next.js",
+            "candidate_count": 64,
+            "candidate_set_sha256": "7f650cfcd2d4fb0dd784603f63ed390894452b53de5ca461be20b2c3a84c24f2",
+            "evidence_sha256": "0b3198e26039cced724b066c68a5844bc7a0d5cdf2136572c57b18e3a36e6b29",
+            "reviewer": "independent-source-review-next.js",
+            "method": "Two or more reviewers checked each record against the pinned source. Confirmed uses were checked for a concrete source use of the exact member, with accessor reads and writes credited to the matching half. Contract-preserved records were checked for the declaration, the heritage edge, the signature, and a required interface member, an abstract member, or an override that changes the behavior of the class.",
+            "verdict": "approved"
+          },
+          {
+            "project_id": "query",
+            "candidate_count": 3,
+            "candidate_set_sha256": "8e2a04bfe7918a1145f796aa9c44f0b0fd48cf71e898e49fd1279668ef3ab2e9",
+            "evidence_sha256": "fc8e89177c3589366b08e300e0a86548a957e5db4292628f0095d68c7bba8bca",
+            "reviewer": "independent-source-review-query",
+            "method": "Two or more reviewers checked each record against the pinned source. Confirmed uses were checked for a concrete source use of the exact member, with accessor reads and writes credited to the matching half. Contract-preserved records were checked for the declaration, the heritage edge, the signature, and a required interface member, an abstract member, or an override that changes the behavior of the class.",
+            "verdict": "approved"
+          },
+          {
+            "project_id": "vite",
+            "candidate_count": 17,
+            "candidate_set_sha256": "54609a071ff13c4f533f5288108376381acd289b0cbad11948a71508ee1270ba",
+            "evidence_sha256": "a6484c021405984f93eae6476654e979bf7923807b963a7cd602e70124c5ce8b",
+            "reviewer": "independent-source-review-vite",
+            "method": "Two or more reviewers checked each record against the pinned source. Confirmed uses were checked for a concrete source use of the exact member, with accessor reads and writes credited to the matching half. Contract-preserved records were checked for the declaration, the heritage edge, the signature, and a required interface member, an abstract member, or an override that changes the behavior of the class.",
+            "verdict": "approved"
+          }
+        ]
+      }
+    }
+  },
+  "summary": {
+    "schema_version": 6,
+    "gate": {
+      "go": true,
+      "checks": {
+        "zero_incorrect_removals": true,
+        "zero_controls_clean": true,
+        "multiple_repositories": true,
+        "multiple_feature_buckets": true,
+        "deterministic_output": true,
+        "focused_cases": true,
+        "confirmation_precision": true,
+        "checked_confirmation_yield": true,
+        "checked_candidates": true,
+        "correct_unused_retention": true,
+        "abstention": true,
+        "blocking_diagnostics_share": true,
+        "marginal_overhead": true,
+        "refined_rss": true,
+        "independent_signoff": true
+      },
+      "thresholds": {
+        "minimum_confirmation_precision": 1,
+        "minimum_checked_confirmation_yield": 0.25,
+        "minimum_checked_candidates": 250,
+        "minimum_correct_unused_retention": 1,
+        "maximum_abstention": 0.5,
+        "maximum_blocking_diagnostics_share": 0.5,
+        "maximum_p95_marginal_overhead_ms": 5000,
+        "maximum_p95_refined_rss_kb": 2621440
+      },
+      "known_incorrect_removals": 0,
+      "zero_controls_clean": true,
+      "multiple_repositories": true,
+      "multiple_feature_buckets": true
+    },
+    "accuracy": {
+      "candidate_count": 466,
+      "confirmed_used_count": 167,
+      "contract_preserved_count": 73,
+      "retained_count": 226,
+      "truth_counts": {
+        "used": 167,
+        "preserved": 73,
+        "unused": 2,
+        "indeterminate": 224
+      },
+      "confirmation_precision": 1,
+      "correct_confirmed_count": 167,
+      "confirmation_yield": 0.358369,
+      "checked_candidate_count": 435,
+      "checked_confirmation_yield": 0.383908,
+      "blocking_diagnostics_count": 31,
+      "blocking_diagnostics_share": 0.066524,
+      "no_type_evidence_count": 226,
+      "no_type_evidence_share": 0.484979,
+      "blocked_projects": [
+        {
+          "project_id": "astro",
+          "blocked_candidate_count": 5,
+          "programs": [
+            {
+              "config": "packages/astro/tsconfig.test.json",
+              "blocking_diagnostic_count": 1
+            },
+            {
+              "config": "packages/language-tools/language-server/tsconfig.build.json",
+              "blocking_diagnostic_count": 1
+            }
+          ]
+        },
+        {
+          "project_id": "next.js",
+          "blocked_candidate_count": 25,
+          "programs": [
+            {
+              "config": "tsconfig.json",
+              "blocking_diagnostic_count": 2
+            }
+          ]
+        },
+        {
+          "project_id": "preact",
+          "blocked_candidate_count": 1,
+          "programs": [
+            {
+              "config": "<inferred>",
+              "blocking_diagnostic_count": 1
+            },
+            {
+              "config": "demo/tsconfig.json",
+              "blocking_diagnostic_count": 2
+            }
+          ]
+        }
+      ],
+      "safe_resolution_yield": 0.515021,
+      "adjudicated_truth_count": 242,
+      "adjudicated_truth_coverage": 0.519313,
+      "adjudication_scope": "Baseline class members only: confirmed uses, required contracts, and reviewed declaration-only negatives. Semantic-only promotions and indeterminate candidates are excluded; corpus-wide recall is not claimed.",
+      "correct_unused_retention": 1,
+      "abstained_count": 153,
+      "abstention": 0.328326,
+      "unresolved_count": 73,
+      "unresolved": 0.156652
+    },
+    "ignored_paths": [
+      {
+        "project_id": "zod",
+        "patterns": [
+          "deno/lib/**"
+        ],
+        "reason": "deno/lib is a copy of src that the build:deno script generates for deno.land/x. Its class members are public API there, but no package.json entry declares that."
+      }
+    ],
+    "value": {
+      "confirmed_repository_count": 7,
+      "confirmed_repositories": [
+        "astro",
+        "next.js",
+        "query",
+        "svelte",
+        "typescript",
+        "vite",
+        "vitest"
+      ],
+      "confirmed_feature_buckets": [
+        "callback-inference",
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    "performance": {
+      "baseline_wall_ms": {
+        "median": 587.227,
+        "p95": 3691.857
+      },
+      "refined_wall_ms": {
+        "median": 1136.939,
+        "p95": 5696.736
+      },
+      "marginal_overhead_ms": {
+        "clock": "process-tree-cpu",
+        "median": 485,
+        "p95": 3577
+      },
+      "marginal_wall_overhead_ms": {
+        "median": 257.833,
+        "p95": 2242.973
+      },
+      "process_tree_peak_rss_kb": {
+        "baseline_p95": 711275.2,
+        "refined_p95": 1680288.8
+      },
+      "program_counts": [
+        1,
+        1,
+        1,
+        1,
+        6,
+        6,
+        6,
+        6,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "source_files_per_program": [
+        3502,
+        3502,
+        3502,
+        3502,
+        843,
+        1266,
+        237,
+        210,
+        227,
+        221,
+        843,
+        1266,
+        237,
+        210,
+        227,
+        221,
+        843,
+        1266,
+        237,
+        210,
+        227,
+        221,
+        843,
+        1266,
+        237,
+        210,
+        227,
+        221,
+        251,
+        447,
+        296,
+        261,
+        251,
+        447,
+        296,
+        261,
+        251,
+        447,
+        296,
+        261,
+        251,
+        447,
+        296,
+        261,
+        136,
+        69,
+        2111,
+        2732,
+        136,
+        69,
+        2111,
+        2732,
+        136,
+        69,
+        2111,
+        2732,
+        136,
+        69,
+        2111,
+        2732,
+        84,
+        40,
+        84,
+        40,
+        84,
+        40,
+        84,
+        40,
+        112,
+        81,
+        61,
+        112,
+        81,
+        61,
+        112,
+        81,
+        61,
+        112,
+        81,
+        61,
+        355,
+        332,
+        235,
+        355,
+        332,
+        235,
+        355,
+        332,
+        235,
+        355,
+        332,
+        235
+      ],
+      "phase_timings_ms": {
+        "diagnostics": {
+          "median": 27,
+          "p95": 544.45
+        },
+        "project_setup": {
+          "median": 45,
+          "p95": 713.65
+        },
+        "symbol_scan": {
+          "median": 131.5,
+          "p95": 1490.6
+        }
+      },
+      "reason_counts": {
+        "ambiguous_project": 0,
+        "blocking_diagnostics": 124,
+        "capacity": 0,
+        "no_project": 0,
+        "svelte_virtual_module_exports": 0,
+        "unknown_symbol": 72,
+        "unsupported_syntax": 0
+      }
+    }
+  },
+  "confirmations": [
+    {
+      "key": "tac_0044b892f03f349197c7",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/nodes.js",
+        "line": 146,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/AnimateDirective.js",
+          "line": 31,
+          "col": 29
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/AttachTag.js",
+          "line": 18,
+          "col": 29
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/AwaitBlock.js",
+          "line": 80,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/BindDirective.js",
+          "line": 270,
+          "col": 29
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/EachBlock.js",
+          "line": 349,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/HtmlTag.js",
+          "line": 49,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+          "line": 120,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/KeyBlock.js",
+          "line": 34,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/shared/utils.js",
+          "line": 366,
+          "col": 32
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/SvelteElement.js",
+          "line": 150,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/TransitionDirective.js",
+          "line": 34,
+          "col": 29
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/UseDirective.js",
+          "line": 41,
+          "col": 29
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/AwaitBlock.js",
+          "line": 38,
+          "col": 28
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/EachBlock.js",
+          "line": 77,
+          "col": 28
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/HtmlTag.js",
+          "line": 18,
+          "col": 29
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+          "line": 43,
+          "col": 28
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/SvelteElement.js",
+          "line": 85,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_00530fea3fe4fb81fc5b",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 2444,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2973,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_00d317b0352f7b2c6468",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/image-optimizer.ts",
+        "line": 340,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/next-server.ts",
+          "line": 1077,
+          "col": 43
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_04ef7fe280650856d2cf",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+        "line": 263,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/dom/blocks/branches.js",
+          "line": 214,
+          "col": 11
+        },
+        {
+          "path": "packages/svelte/src/internal/client/dom/blocks/each.js",
+          "line": 324,
+          "col": 11
+        },
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+          "line": 779,
+          "col": 12
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_06561417b6e4718c6097",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 1328,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2755,
+          "col": 39
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_0935deb14d9fa757e01c",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 5585,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2195,
+          "col": 35
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_095401647d78d3084fa6",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/image-optimizer.ts",
+        "line": 178,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/next-server.ts",
+          "line": 1064,
+          "col": 47
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_0bbc52b13b385a7db3d0",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/scope.js",
+        "line": 120,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/2-analyze/visitors/EachBlock.js",
+          "line": 93,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_0ddcf52f16aec7dc6155",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/incremental-cache/index.ts",
+        "line": 372,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/web/spec-extension/unstable-cache.ts",
+          "line": 140,
+          "col": 31
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_0fc597b5939de9cd5312",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 1696,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 3002,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_11c4b12dfaaa5ddf82a3",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+        "line": 907,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/dom/blocks/branches.js",
+          "line": 229,
+          "col": 9
+        },
+        {
+          "path": "packages/svelte/src/internal/client/dom/blocks/each.js",
+          "line": 382,
+          "col": 10
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_160e41f6096e48ffe23e",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/fetch/fetch-state.ts",
+        "line": 552,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/core/fetch/fetch-state.ts",
+          "line": 501,
+          "col": 17
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_178d329df6f526dd2161",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 2807,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 3003,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_183164dfe6776f1108b8",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/incremental-cache/index.ts",
+        "line": 323,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/build/templates/app-page-runtime.ts",
+          "line": 858,
+          "col": 24
+        },
+        {
+          "path": "packages/next/src/build/templates/app-route.ts",
+          "line": 239,
+          "col": 20
+        },
+        {
+          "path": "packages/next/src/server/base-server.ts",
+          "line": 1562,
+          "col": 25
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_18e2dacb242082000600",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/build.ts",
+        "line": 1688,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/plugins/oxc.ts",
+          "line": 272,
+          "col": 20
+        },
+        {
+          "path": "packages/vite/src/node/plugins/resolve.ts",
+          "line": 245,
+          "col": 18
+        },
+        {
+          "path": "packages/vite/src/node/server/pluginContainer.ts",
+          "line": 216,
+          "col": 18
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_1928713288df165f48d7",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/server/renderer.js",
+        "line": 993,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/server/renderer.js",
+          "line": 915,
+          "col": 47
+        },
+        {
+          "path": "packages/svelte/src/internal/server/renderer.test.ts",
+          "line": 123,
+          "col": 10
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_19ed61348c3adcc77aed",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 852,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/helpers.ts",
+          "line": 904,
+          "col": 22
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_1a12236302c2c8904871",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/server/renderer.js",
+        "line": 1059,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/server/abort-signal.js",
+          "line": 7,
+          "col": 50
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_1b340a906e91e4d0b689",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/nodes.js",
+        "line": 174,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/2-analyze/visitors/StyleDirective.js",
+          "line": 36,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_1e14dd6de378d2762631",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/route-modules/route-module.ts",
+        "line": 1172,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/build/templates/app-page-runtime.ts",
+          "line": 1317,
+          "col": 57
+        },
+        {
+          "path": "packages/next/src/build/templates/app-route.ts",
+          "line": 399,
+          "col": 43
+        },
+        {
+          "path": "packages/next/src/server/route-modules/pages/pages-handler.ts",
+          "line": 552,
+          "col": 41
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_24cb785e983a270665dd",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/environments/fullBundleEnvironment.ts",
+        "line": 260,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/server/middlewares/indexHtml.ts",
+          "line": 479,
+          "col": 32
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_26f7418f1db2d28b474a",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/scriptVersionCache.ts",
+        "line": 348,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/scriptVersionCache.ts",
+          "line": 401,
+          "col": 34
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_2995385373bebb7df1f2",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 5414,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 595,
+          "col": 113
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_29ab70bab39550cfb2da",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+        "line": 250,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/dom/blocks/boundary.js",
+          "line": 482,
+          "col": 40
+        },
+        {
+          "path": "packages/svelte/src/internal/client/dom/blocks/branches.js",
+          "line": 216,
+          "col": 11
+        },
+        {
+          "path": "packages/svelte/src/internal/client/dom/blocks/each.js",
+          "line": 377,
+          "col": 12
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_2cb99cc852c8dd9c2783",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/scope.js",
+        "line": 883,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/scope.js",
+          "line": 737,
+          "col": 12
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_322bc4e69dcc33869f36",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/baseEnvironment.ts",
+        "line": 136,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/plugins/oxc.ts",
+          "line": 272,
+          "col": 20
+        },
+        {
+          "path": "packages/vite/src/node/plugins/resolve.ts",
+          "line": 245,
+          "col": 18
+        },
+        {
+          "path": "packages/vite/src/node/server/pluginContainer.ts",
+          "line": 216,
+          "col": 18
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_3565384c8b0d20086054",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/1-parse/index.js",
+        "line": 309,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/element.js",
+          "line": 126,
+          "col": 10
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/tag.js",
+          "line": 656,
+          "col": 11
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_39316c995344ed089131",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 1017,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/importFixes.ts",
+          "line": 1811,
+          "col": 32
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_3c3c782bdc137409fd73",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 840,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/addEmptyExportDeclaration.ts",
+          "line": 26,
+          "col": 20
+        },
+        {
+          "path": "src/services/codefixes/fixAddMissingMember.ts",
+          "line": 630,
+          "col": 18
+        },
+        {
+          "path": "src/services/codefixes/fixImportNonExportedMember.ts",
+          "line": 193,
+          "col": 12
+        },
+        {
+          "path": "src/services/refactors/extractSymbol.ts",
+          "line": 1166,
+          "col": 22
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_3da88eb5ab1320baa323",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 1426,
+        "col": 21
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 1728,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_3e0952b005c7113b678e",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 593,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/organizeImports.ts",
+          "line": 185,
+          "col": 53
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_3ef2b2da0bdf367d478b",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/fetch/fetch-state.ts",
+        "line": 403,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/core/fetch/fetch-state.ts",
+          "line": 343,
+          "col": 40
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_3f0cc7b7dcb4b1acec37",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/1-parse/index.js",
+        "line": 282,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/read/script.js",
+          "line": 25,
+          "col": 21
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/read/style.js",
+          "line": 479,
+          "col": 25
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_3fdf71b546318dce31a5",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/project.ts",
+        "line": 1990,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/editorServices.ts",
+          "line": 5070,
+          "col": 29
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_4651b1722a4797ad6e16",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+        "line": 643,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/deriveds.js",
+          "line": 408,
+          "col": 18
+        },
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/sources.js",
+          "line": 200,
+          "col": 8
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_46eafa43f793e688cafc",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 687,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/addMissingConst.ts",
+          "line": 84,
+          "col": 22
+        },
+        {
+          "path": "src/services/codefixes/addMissingDeclareProperty.ts",
+          "line": 47,
+          "col": 22
+        },
+        {
+          "path": "src/services/codefixes/convertToTypeOnlyExport.ts",
+          "line": 62,
+          "col": 16
+        },
+        {
+          "path": "src/services/codefixes/fixAwaitInSyncFunction.ts",
+          "line": 110,
+          "col": 12
+        },
+        {
+          "path": "src/services/codefixes/fixUnreferenceableDecoratorMetadata.ts",
+          "line": 70,
+          "col": 16
+        },
+        {
+          "path": "src/services/codefixes/importFixes.ts",
+          "line": 1863,
+          "col": 32
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_473bfc5fd81fe14e2795",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/1-parse/index.js",
+        "line": 65,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/element.js",
+          "line": 157,
+          "col": 25
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_484d0c754beab3131a44",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 5693,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2311,
+          "col": 35
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_494135ca79c02cfe9d9f",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/dom/blocks/boundary.js",
+        "line": 376,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/dom/blocks/boundary.js",
+          "line": 377,
+          "col": 58
+        },
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/async.js",
+          "line": 397,
+          "col": 28
+        },
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/deriveds.js",
+          "line": 192,
+          "col": 14
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_4dd26908767fe98f5d34",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/server-islands/shared-state.ts",
+        "line": 73,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/core/server-islands/vite-plugin-server-islands.ts",
+          "line": 27,
+          "col": 58
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_5159d61ecb9033fc0bf7",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/scriptInfo.ts",
+        "line": 651,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 746,
+          "col": 29
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_515c90b6e299989701bb",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 1330,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2521,
+          "col": 39
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_51afeec4bdc66c7e4ba4",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/1-parse/index.js",
+        "line": 215,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/read/script.js",
+          "line": 32,
+          "col": 8
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/read/style.js",
+          "line": 33,
+          "col": 8
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/element.js",
+          "line": 412,
+          "col": 9
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/tag.js",
+          "line": 745,
+          "col": 13
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_52b19e42805200132f6c",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/moduleGraph.ts",
+        "line": 443,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/server/middlewares/transform.ts",
+          "line": 85,
+          "col": 51
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_54b62c1fb19f1c36621e",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/moduleGraph.ts",
+        "line": 252,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/plugins/css.ts",
+          "line": 1207,
+          "col": 24
+        },
+        {
+          "path": "packages/vite/src/node/plugins/importAnalysis.ts",
+          "line": 302,
+          "col": 48
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_57850407e5f32726a85b",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 5616,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2200,
+          "col": 35
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_57faa59112016dc3dff8",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 3216,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2319,
+          "col": 32
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_5c27d1a2170a893e1ed5",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 806,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/fixClassSuperMustPrecedeThisAccess.ts",
+          "line": 54,
+          "col": 12
+        },
+        {
+          "path": "src/services/codefixes/fixConstructorForDerivedNeedSuperCall.ts",
+          "line": 40,
+          "col": 12
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_5caaafb59cab8f75396a",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 5428,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2140,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_5dd431d8b4ea3c3cee27",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/pluginContainer.ts",
+        "line": 688,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/server/pluginContainer.ts",
+          "line": 896,
+          "col": 10
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_61db0ea00b463ad893dc",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 533,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/refactors/moveToFile.ts",
+          "line": 1082,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_664a873a06ea6c377f74",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/route-modules/route-module.ts",
+        "line": 635,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/build/templates/app-page-runtime.ts",
+          "line": 245,
+          "col": 44
+        },
+        {
+          "path": "packages/next/src/build/templates/app-route.ts",
+          "line": 134,
+          "col": 42
+        },
+        {
+          "path": "packages/next/src/build/templates/edge-ssr-app.ts",
+          "line": 77,
+          "col": 46
+        },
+        {
+          "path": "packages/next/src/build/templates/edge-ssr.ts",
+          "line": 104,
+          "col": 46
+        },
+        {
+          "path": "packages/next/src/build/templates/pages-api.ts",
+          "line": 70,
+          "col": 42
+        },
+        {
+          "path": "packages/next/src/server/route-modules/pages/pages-handler.ts",
+          "line": 103,
+          "col": 44
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_678e30f439b4c5b3b490",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 537,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/organizeImports.ts",
+          "line": 172,
+          "col": 26
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_68655cdfbd1232f019f3",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/server/renderer.js",
+        "line": 1038,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/server/renderer.js",
+          "line": 269,
+          "col": 29
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_695580fd7d2e51a87e37",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/scope.js",
+        "line": 875,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/scope.js",
+          "line": 717,
+          "col": 20
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_69a9a29e96fecfcf0acf",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 3771,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 978,
+          "col": 35
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_6cc04bfa7bc6be1e6c5e",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/shared/lib/bloom-filter.ts",
+        "line": 42,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/lib/create-client-router-filter.ts",
+          "line": 78,
+          "col": 31
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_6f66c791819ba29dacaa",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/app-render/staged-rendering.ts",
+        "line": 159,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/node-environment-extensions/io-utils.tsx",
+          "line": 95,
+          "col": 24
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_712bf01b2bea26f428c2",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/moduleGraph.ts",
+        "line": 26,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/server/pluginContainer.ts",
+          "line": 241,
+          "col": 16
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_71d52168787dffda875a",
+      "project_id": "query",
+      "declaration": {
+        "path": "packages/query-core/src/query.ts",
+        "line": 286,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/query-core/src/queryClient.ts",
+          "line": 326,
+          "col": 57
+        }
+      ],
+      "feature_buckets": [
+        "callback-inference"
+      ]
+    },
+    {
+      "key": "tac_729c11804cd71d323eff",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/dom/blocks/boundary.js",
+        "line": 464,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/dom/blocks/boundary.js",
+          "line": 597,
+          "col": 17
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_752f31291118fadb59c4",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 731,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/fixOverrideModifier.ts",
+          "line": 178,
+          "col": 22
+        },
+        {
+          "path": "src/services/codefixes/fixStrictClassInitialization.ts",
+          "line": 126,
+          "col": 22
+        },
+        {
+          "path": "src/services/codefixes/inferFromUsage.ts",
+          "line": 245,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_75cc9dac99b031ade44e",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+        "line": 663,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/dom/blocks/await.js",
+          "line": 90,
+          "col": 11
+        },
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/async.js",
+          "line": 300,
+          "col": 38
+        },
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+          "line": 837,
+          "col": 10
+        },
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/deriveds.js",
+          "line": 247,
+          "col": 9
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_778def5ea0bf820cd994",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/scriptVersionCache.ts",
+        "line": 493,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/scriptVersionCache.ts",
+          "line": 310,
+          "col": 38
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_796b79e543194e1dfca1",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 1427,
+        "col": 21
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 646,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_7a1f86ad7f82aa7bccdf",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/environment.ts",
+        "line": 56,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/plugins/oxc.ts",
+          "line": 272,
+          "col": 20
+        },
+        {
+          "path": "packages/vite/src/node/plugins/resolve.ts",
+          "line": 245,
+          "col": 18
+        },
+        {
+          "path": "packages/vite/src/node/server/pluginContainer.ts",
+          "line": 216,
+          "col": 18
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_7a66498bcfb090d81ba5",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 848,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/fixAddMissingMember.ts",
+          "line": 461,
+          "col": 26
+        },
+        {
+          "path": "src/services/codefixes/fixClassDoesntImplementInheritedAbstractMember.ts",
+          "line": 74,
+          "col": 155
+        },
+        {
+          "path": "src/services/codefixes/fixClassIncorrectlyImplementsInterface.ts",
+          "line": 121,
+          "col": 26
+        },
+        {
+          "path": "src/services/codefixes/generateAccessors.ts",
+          "line": 281,
+          "col": 84
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_7e380c598bc4f7426001",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 4010,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 844,
+          "col": 32
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_8068f043d2061407fae3",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/incremental-cache/index.ts",
+        "line": 327,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/lib/patch-fetch.ts",
+          "line": 1060,
+          "col": 50
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_84117e71283f74da657b",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/nodes.js",
+        "line": 157,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/2-analyze/visitors/IfBlock.js",
+          "line": 38,
+          "col": 31
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_8546367a858312fdc24a",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/project.ts",
+        "line": 2773,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2270,
+          "col": 44
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_85ce40576e33bb0c5140",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/route-modules/app-page/module.ts",
+        "line": 226,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/dev/dev-validation-worker.ts",
+          "line": 372,
+          "col": 60
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_85f23b82821c3c60a378",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/content/data-store.ts",
+        "line": 78,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/content/runtime.ts",
+          "line": 112,
+          "col": 12
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_85f4091233673a50e54b",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/route-modules/route-module.ts",
+        "line": 185,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/build/templates/app-page-runtime.ts",
+          "line": 945,
+          "col": 37
+        },
+        {
+          "path": "packages/next/src/server/route-modules/pages/pages-handler.ts",
+          "line": 320,
+          "col": 43
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_897f6b3aa488460e5a45",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/nodes.js",
+        "line": 150,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/AwaitBlock.js",
+          "line": 74,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/HtmlTag.js",
+          "line": 20,
+          "col": 47
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+          "line": 19,
+          "col": 47
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/KeyBlock.js",
+          "line": 16,
+          "col": 47
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/shared/utils.js",
+          "line": 141,
+          "col": 80
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/SvelteElement.js",
+          "line": 98,
+          "col": 47
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_8c4ed14c924a1cf15472",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/1-parse/index.js",
+        "line": 224,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/read/context.js",
+          "line": 15,
+          "col": 19
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/element.js",
+          "line": 576,
+          "col": 21
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/tag.js",
+          "line": 280,
+          "col": 18
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_8e87454cd715cb5bf37c",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/scope.js",
+        "line": 767,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/2-analyze/index.js",
+          "line": 389,
+          "col": 27
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/scope.js",
+          "line": 768,
+          "col": 73
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_8e888fce39fbbd432b6e",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 2634,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/scriptInfo.ts",
+          "line": 605,
+          "col": 82
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_8ed491ed1da3685bed6f",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 1548,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 1047,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_99b7143fe2894549aff7",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/dev-bundler-service.ts",
+        "line": 138,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/lib/router-server.ts",
+          "line": 973,
+          "col": 42
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_9bc83d5e63dc5e3f0a1f",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/preferences/store.ts",
+        "line": 54,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/preferences/index.ts",
+          "line": 97,
+          "col": 20
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_9c09d95414a8908981df",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+        "line": 659,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/async.js",
+          "line": 151,
+          "col": 19
+        },
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+          "line": 789,
+          "col": 10
+        },
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/deriveds.js",
+          "line": 221,
+          "col": 9
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_9d71cd8de8a8b2291f9f",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/fetch/fetch-state.ts",
+        "line": 653,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/core/fetch/fetch-state.ts",
+          "line": 484,
+          "col": 17
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_9d8c66e2d063b2f6c7dd",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 984,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/convertToEsModule.ts",
+          "line": 418,
+          "col": 33
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_a22d1b4537f317511aad",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/fetch/fetch-state.ts",
+        "line": 523,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/core/fetch/fetch-state.ts",
+          "line": 474,
+          "col": 17
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_a2f7dbdc20aff2cd8e88",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 602,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/generateAccessors.ts",
+          "line": 265,
+          "col": 18
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_a38df3b1db8b6f1d97cd",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+        "line": 713,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/effects.js",
+          "line": 124,
+          "col": 16
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_a3a2447c71def2979b6d",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/3-transform/client/transform-template/template.js",
+        "line": 74,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/transform-template/index.js",
+          "line": 48,
+          "col": 69
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_a3c57808df11b22a3b84",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/content/content-layer.ts",
+        "line": 89,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/core/dev/dev.ts",
+          "line": 129,
+          "col": 15
+        },
+        {
+          "path": "packages/astro/src/core/sync/index.ts",
+          "line": 159,
+          "col": 17
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_a4549dfdc465a9e06f10",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 929,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/fixAddMissingParam.ts",
+          "line": 261,
+          "col": 28
+        },
+        {
+          "path": "src/services/refactors/convertExport.ts",
+          "line": 273,
+          "col": 24
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_a58570150901b3248410",
+      "project_id": "query",
+      "declaration": {
+        "path": "packages/query-core/src/query.ts",
+        "line": 275,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/query-core/src/queryClient.ts",
+          "line": 326,
+          "col": 34
+        }
+      ],
+      "feature_buckets": [
+        "callback-inference"
+      ]
+    },
+    {
+      "key": "tac_a7fadbd91b68fc65a02c",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 1425,
+        "col": 21
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 1078,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_a8743f46bbc96268ab59",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/trace/trace.ts",
+        "line": 143,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/build/babel/loader/index.ts",
+          "line": 24,
+          "col": 5
+        },
+        {
+          "path": "packages/next/src/build/babel/loader/transform.ts",
+          "line": 64,
+          "col": 5
+        },
+        {
+          "path": "packages/next/src/build/compiler.ts",
+          "line": 86,
+          "col": 13
+        },
+        {
+          "path": "packages/next/src/build/index.ts",
+          "line": 1173,
+          "col": 9
+        },
+        {
+          "path": "packages/next/src/build/webpack-build/impl.ts",
+          "line": 328,
+          "col": 5
+        },
+        {
+          "path": "packages/next/src/build/webpack/plugins/build-manifest-plugin.ts",
+          "line": 56,
+          "col": 32
+        },
+        {
+          "path": "packages/next/src/build/webpack/plugins/next-trace-entrypoints-plugin.ts",
+          "line": 641,
+          "col": 33
+        },
+        {
+          "path": "packages/next/src/export/index.ts",
+          "line": 204,
+          "col": 33
+        },
+        {
+          "path": "packages/next/src/trace/trace.test.ts",
+          "line": 101,
+          "col": 36
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_a8bf5ddc9dc84b856094",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 756,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/annotateWithTypeFromJSDoc.ts",
+          "line": 103,
+          "col": 39
+        },
+        {
+          "path": "src/services/codefixes/fixMissingTypeAnnotationOnExports.ts",
+          "line": 558,
+          "col": 26
+        },
+        {
+          "path": "src/services/codefixes/inferFromUsage.ts",
+          "line": 427,
+          "col": 20
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_a9cd1601a23c071eacb6",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/3-transform/client/transform-template/template.js",
+        "line": 78,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/transform-template/index.js",
+          "line": 48,
+          "col": 42
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_aa0d271c5aa2a17df736",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 549,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/fixOverrideModifier.ts",
+          "line": 203,
+          "col": 18
+        },
+        {
+          "path": "src/services/codefixes/fixUnusedIdentifier.ts",
+          "line": 354,
+          "col": 28
+        },
+        {
+          "path": "src/services/refactors/convertExport.ts",
+          "line": 216,
+          "col": 24
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_ac1e026451f61d60d6e6",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/1-parse/index.js",
+        "line": 166,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/read/context.js",
+          "line": 59,
+          "col": 13
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/read/style.js",
+          "line": 32,
+          "col": 8
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/element.js",
+          "line": 70,
+          "col": 12
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/tag.js",
+          "line": 27,
+          "col": 12
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_ae1e2f9cb7e40274ea21",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/scope.js",
+        "line": 709,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/migrate/index.js",
+          "line": 1902,
+          "col": 31
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/2-analyze/index.js",
+          "line": 476,
+          "col": 27
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/RegularElement.js",
+          "line": 187,
+          "col": 25
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/VariableDeclaration.js",
+          "line": 236,
+          "col": 24
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/scope.js",
+          "line": 711,
+          "col": 45
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_ae874fc7e487d0a31e1a",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 615,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/refactors/extractSymbol.ts",
+          "line": 1465,
+          "col": 30
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_b080650296e4b0b8f748",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 512,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/fixPropertyOverrideAccessor.ts",
+          "line": 45,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_b0978104a1568709a4db",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/environment.ts",
+        "line": 207,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/server/index.ts",
+          "line": 1052,
+          "col": 51
+        }
+      ],
+      "feature_buckets": [
+        "callback-inference"
+      ]
+    },
+    {
+      "key": "tac_b0d9163e0bf154040137",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/scriptVersionCache.ts",
+        "line": 417,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/scriptVersionCache.ts",
+          "line": 338,
+          "col": 41
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_b11c8c4f45919737905c",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 503,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/addConvertToUnknownForNonOverlappingTypes.ts",
+          "line": 28,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/addEmptyExportDeclaration.ts",
+          "line": 19,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/addMissingAsync.ts",
+          "line": 59,
+          "col": 93
+        },
+        {
+          "path": "src/services/codefixes/addMissingAwait.ts",
+          "line": 93,
+          "col": 93
+        },
+        {
+          "path": "src/services/codefixes/addMissingConst.ts",
+          "line": 36,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/addMissingDeclareProperty.ts",
+          "line": 25,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/addMissingInvocationForDecorator.ts",
+          "line": 22,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/addMissingResolutionModeImportAttribute.ts",
+          "line": 37,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/addNameToNamelessParameter.ts",
+          "line": 29,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/addOptionalPropertyUndefined.ts",
+          "line": 51,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/annotateWithTypeFromJSDoc.ts",
+          "line": 57,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/convertFunctionToEs6Class.ts",
+          "line": 75,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/convertLiteralTypeToMappedType.ts",
+          "line": 32,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/convertToAsyncFunction.ts",
+          "line": 94,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/convertToEsModule.ts",
+          "line": 88,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/convertToTypeOnlyExport.ts",
+          "line": 32,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/convertToTypeOnlyImport.ts",
+          "line": 39,
+          "col": 54
+        },
+        {
+          "path": "src/services/codefixes/convertTypedefToType.ts",
+          "line": 46,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/correctQualifiedNameToIndexedAccessType.ts",
+          "line": 27,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/fixAddMissingConstraint.ts",
+          "line": 60,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/fixClassIncorrectlyImplementsInterface.ts",
+          "line": 52,
+          "col": 54
+        },
+        {
+          "path": "src/services/codefixes/fixImplicitThis.ts",
+          "line": 34,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/fixNoPropertyAccessFromIndexSignature.ts",
+          "line": 32,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/fixOverrideModifier.ts",
+          "line": 133,
+          "col": 50
+        },
+        {
+          "path": "src/services/codefixes/importFixes.ts",
+          "line": 213,
+          "col": 67
+        },
+        {
+          "path": "src/services/codeFixProvider.ts",
+          "line": 114,
+          "col": 46
+        },
+        {
+          "path": "src/services/getEditsForFileRename.ts",
+          "line": 67,
+          "col": 37
+        },
+        {
+          "path": "src/services/refactors/addOrRemoveBracesToArrowFunction.ts",
+          "line": 119,
+          "col": 44
+        },
+        {
+          "path": "src/services/refactors/convertArrowFunctionOrFunctionExpression.ts",
+          "line": 265,
+          "col": 37
+        },
+        {
+          "path": "src/services/refactors/convertExport.ts",
+          "line": 107,
+          "col": 48
+        },
+        {
+          "path": "src/services/refactors/convertImport.ts",
+          "line": 100,
+          "col": 48
+        },
+        {
+          "path": "src/services/refactors/convertOverloadListToSingleSignature.ts",
+          "line": 155,
+          "col": 44
+        },
+        {
+          "path": "src/services/refactors/convertParamsToDestructuredObject.ts",
+          "line": 146,
+          "col": 48
+        },
+        {
+          "path": "src/services/refactors/convertStringOrTemplateLiteral.ts",
+          "line": 118,
+          "col": 41
+        },
+        {
+          "path": "src/services/refactors/convertToOptionalChainExpression.ts",
+          "line": 89,
+          "col": 44
+        },
+        {
+          "path": "src/services/refactors/extractType.ts",
+          "line": 145,
+          "col": 48
+        },
+        {
+          "path": "src/services/refactors/inferFunctionReturnType.ts",
+          "line": 54,
+          "col": 48
+        },
+        {
+          "path": "src/services/refactors/inlineVariable.ts",
+          "line": 122,
+          "col": 48
+        },
+        {
+          "path": "src/services/refactors/moveToFile.ts",
+          "line": 213,
+          "col": 52
+        },
+        {
+          "path": "src/services/refactors/moveToNewFile.ts",
+          "line": 73,
+          "col": 48
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_b316254a46a867fec29e",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/project.ts",
+        "line": 3042,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/editorServices.ts",
+          "line": 825,
+          "col": 29
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_b81983255d2ecc7a1b9b",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url-search-params.js",
+        "line": 124,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/reactivity/url.test.ts",
+          "line": 84,
+          "col": 37
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_b8a4df8033956ab30209",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/server/renderer.js",
+        "line": 1053,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/server/renderer.js",
+          "line": 749,
+          "col": 19
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_b95cde9433a7421c9ad4",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/dom/blocks/boundary.js",
+        "line": 448,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/async.js",
+          "line": 399,
+          "col": 11
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_b98088a6e1cd144871eb",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/pluginContainer.ts",
+        "line": 622,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/server/index.ts",
+          "line": 858,
+          "col": 36
+        },
+        {
+          "path": "packages/vite/src/node/server/pluginContainer.ts",
+          "line": 1262,
+          "col": 22
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_bcf1b253bd9149f5cde1",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 1710,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 1799,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_bee37139de7f50472834",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/route-modules/route-module.ts",
+        "line": 572,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/build/templates/app-page-runtime.ts",
+          "line": 1051,
+          "col": 26
+        },
+        {
+          "path": "packages/next/src/build/templates/app-route.ts",
+          "line": 374,
+          "col": 26
+        },
+        {
+          "path": "packages/next/src/build/templates/edge-ssr-app.ts",
+          "line": 239,
+          "col": 24
+        },
+        {
+          "path": "packages/next/src/build/templates/edge-ssr.ts",
+          "line": 328,
+          "col": 27
+        },
+        {
+          "path": "packages/next/src/server/route-modules/pages/pages-handler.ts",
+          "line": 445,
+          "col": 32
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_bf66f0e5a8e4bee6c82f",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/server/renderer.js",
+        "line": 1047,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/server/renderer.js",
+          "line": 783,
+          "col": 26
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_c033e30b206e0a2c78d4",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/module-runner/evaluatedModules.ts",
+        "line": 107,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/module-runner/sourcemap/interceptor.ts",
+          "line": 106,
+          "col": 34
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_c08ca8cf343c0419da48",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 919,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/generateAccessors.ts",
+          "line": 282,
+          "col": 58
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_c13c522275ed919110e4",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 4290,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/session.ts",
+          "line": 897,
+          "col": 94
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_c1fc6a3f8fd60ed3b5ac",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/3-transform/client/transform-template/template.js",
+        "line": 14,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/transform-template/index.js",
+          "line": 75,
+          "col": 20
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_c228c46686939fbf7dc5",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/mixedModuleGraph.ts",
+        "line": 137,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/server/index.ts",
+          "line": 696,
+          "col": 47
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_c334441bc5fc5fe0fb78",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/app-render/app-render-prerender-utils.ts",
+        "line": 304,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/app-render/app-render.tsx",
+          "line": 9817,
+          "col": 32
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_c4399132fb54506ebf8d",
+      "project_id": "query",
+      "declaration": {
+        "path": "packages/query-core/src/mutationObserver.ts",
+        "line": 102,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/query-core/src/mutation.ts",
+          "line": 375,
+          "col": 17
+        }
+      ],
+      "feature_buckets": [
+        "callback-inference"
+      ]
+    },
+    {
+      "key": "tac_c5eaf1fb50f492a89b69",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 5681,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2231,
+          "col": 32
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_c6b03fcb3d5195ed2764",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 3594,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2306,
+          "col": 35
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_c70ff4f5aac8c0455ee7",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 743,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/fixOverrideModifier.ts",
+          "line": 197,
+          "col": 22
+        },
+        {
+          "path": "src/services/codefixes/fixUnmatchedParameter.ts",
+          "line": 67,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_c80a27028d7c13ba2423",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 3187,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2990,
+          "col": 45
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_c834fc435cc2a6cecabf",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/dev/turbopack-utils.ts",
+        "line": 523,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/dev/turbopack-utils.ts",
+          "line": 843,
+          "col": 32
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_cb573da83a058bd610e6",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/mixedModuleGraph.ts",
+        "line": 131,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/server/hmr.ts",
+          "line": 484,
+          "col": 53
+        },
+        {
+          "path": "packages/vite/src/node/server/mixedModuleGraph.ts",
+          "line": 554,
+          "col": 15
+        }
+      ],
+      "feature_buckets": [
+        "callback-inference"
+      ]
+    },
+    {
+      "key": "tac_cb94b4bd46bcc5c2e9ae",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/scope.js",
+        "line": 132,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/migrate/index.js",
+          "line": 641,
+          "col": 71
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/2-analyze/index.js",
+          "line": 617,
+          "col": 15
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/2-analyze/visitors/VariableDeclarator.js",
+          "line": 120,
+          "col": 13
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/transform-client.js",
+          "line": 306,
+          "col": 23
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/VariableDeclaration.js",
+          "line": 341,
+          "col": 59
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/transform-server.js",
+          "line": 242,
+          "col": 29
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/VariableDeclaration.js",
+          "line": 179,
+          "col": 63
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_cba560d22abc67224736",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/1-parse/index.js",
+        "line": 68,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/element.js",
+          "line": 109,
+          "col": 16
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_cbdf679276e04262e141",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/scriptInfo.ts",
+        "line": 231,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/session.ts",
+          "line": 2478,
+          "col": 74
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_cc2f9611311ba2ae4148",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/vite-plugin-app/app.ts",
+        "line": 94,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/vite-plugin-app/app.ts",
+          "line": 206,
+          "col": 36
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_cf0c389a83fedb0eff3a",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 679,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/refactors/moveToFile.ts",
+          "line": 1096,
+          "col": 16
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_cf68b16fd788c7c1c2f7",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/app-render/cache-signal.ts",
+        "line": 85,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/app-render/dynamic-rendering.ts",
+          "line": 488,
+          "col": 34
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_cf7c92c786dcf391f341",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/scriptInfo.ts",
+        "line": 657,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/session.ts",
+          "line": 2716,
+          "col": 23
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_cfefa76bc0d68e63bec4",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 1013,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/fixImportNonExportedMember.ts",
+          "line": 68,
+          "col": 28
+        },
+        {
+          "path": "src/services/refactors/moveToFile.ts",
+          "line": 706,
+          "col": 50
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_d05a222582f2deeeb408",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/1-parse/index.js",
+        "line": 300,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/element.js",
+          "line": 537,
+          "col": 10
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/tag.js",
+          "line": 156,
+          "col": 9
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_d184c8a4c7b0b77bea12",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 528,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/convertFunctionToEs6Class.ts",
+          "line": 101,
+          "col": 20
+        },
+        {
+          "path": "src/services/codefixes/convertToEsModule.ts",
+          "line": 322,
+          "col": 20
+        },
+        {
+          "path": "src/services/codefixes/fixClassSuperMustPrecedeThisAccess.ts",
+          "line": 55,
+          "col": 12
+        },
+        {
+          "path": "src/services/codefixes/fixImplicitThis.ts",
+          "line": 64,
+          "col": 20
+        },
+        {
+          "path": "src/services/codefixes/fixUnreachableCode.ts",
+          "line": 67,
+          "col": 24
+        },
+        {
+          "path": "src/services/codefixes/fixUnusedIdentifier.ts",
+          "line": 93,
+          "col": 83
+        },
+        {
+          "path": "src/services/codefixes/importFixes.ts",
+          "line": 617,
+          "col": 30
+        },
+        {
+          "path": "src/services/refactors/convertArrowFunctionOrFunctionExpression.ts",
+          "line": 284,
+          "col": 14
+        },
+        {
+          "path": "src/services/refactors/convertExport.ts",
+          "line": 192,
+          "col": 20
+        },
+        {
+          "path": "src/services/refactors/extractSymbol.ts",
+          "line": 1474,
+          "col": 30
+        },
+        {
+          "path": "src/services/refactors/inlineVariable.ts",
+          "line": 132,
+          "col": 20
+        },
+        {
+          "path": "src/services/refactors/moveToFile.ts",
+          "line": 554,
+          "col": 27
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_d24cbf9ae7795e5c78d6",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 1670,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/scriptInfo.ts",
+          "line": 286,
+          "col": 63
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_d327c3a028fcefd8c9e4",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/compiler/semver.ts",
+        "line": 109,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/compiler/semver.ts",
+          "line": 325,
+          "col": 86
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_d434dc19107ee0e3a483",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/scriptInfo.ts",
+        "line": 668,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/session.ts",
+          "line": 2709,
+          "col": 17
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_d4a81020bb3ee3d63a95",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 691,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/disableJsDiagnostics.ts",
+          "line": 79,
+          "col": 16
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_d4c2f0825b0cb2e639f6",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/server-islands/shared-state.ts",
+        "line": 65,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/core/server-islands/vite-plugin-server-islands.ts",
+          "line": 28,
+          "col": 26
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_d78c14d6fa9f35952c48",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/1-parse/index.js",
+        "line": 322,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/element.js",
+          "line": 74,
+          "col": 9
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/tag.js",
+          "line": 39,
+          "col": 9
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/text.js",
+          "line": 16,
+          "col": 8
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_d7edc72eca1470bceb1f",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 774,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/inferFromUsage.ts",
+          "line": 380,
+          "col": 16
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_db0a3bf2d1aa4601fdcd",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+        "line": 846,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/async.js",
+          "line": 400,
+          "col": 7
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_dcfef9d14c1f3c6238fd",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+        "line": 859,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/async.js",
+          "line": 404,
+          "col": 8
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_df071aad297bcab178de",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 573,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/refactors/convertOverloadListToSingleSignature.ts",
+          "line": 156,
+          "col": 10
+        },
+        {
+          "path": "src/services/refactors/convertParamsToDestructuredObject.ts",
+          "line": 174,
+          "col": 20
+        },
+        {
+          "path": "src/services/refactors/convertToOptionalChainExpression.ts",
+          "line": 340,
+          "col": 20
+        },
+        {
+          "path": "src/services/refactors/extractType.ts",
+          "line": 348,
+          "col": 12
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_dfcc0fe422eb1a1c3c49",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+        "line": 911,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+          "line": 1417,
+          "col": 21
+        },
+        {
+          "path": "packages/svelte/src/internal/client/runtime.js",
+          "line": 532,
+          "col": 23
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_e112b4acdc188c3c2489",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 619,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/utilities.ts",
+          "line": 2620,
+          "col": 20
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_e16d0ebc32709e861dba",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/internal/client/dom/blocks/boundary.js",
+        "line": 368,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/internal/client/reactivity/batch.js",
+          "line": 994,
+          "col": 12
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_e412c90f6a524fce6e7e",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/scope.js",
+        "line": 151,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/2-analyze/index.js",
+          "line": 1102,
+          "col": 10
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/2-analyze/visitors/DeclarationTag.js",
+          "line": 48,
+          "col": 20
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/2-analyze/visitors/SnippetBlock.js",
+          "line": 91,
+          "col": 14
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/DeclarationTag.js",
+          "line": 75,
+          "col": 20
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/shared/utils.js",
+          "line": 56,
+          "col": 15
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/transform-server.js",
+          "line": 218,
+          "col": 67
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/DeclarationTag.js",
+          "line": 70,
+          "col": 20
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/shared/utils.js",
+          "line": 379,
+          "col": 15
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/nodes.js",
+          "line": 139,
+          "col": 10
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_e5d103076e116424d256",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/base-pipeline.ts",
+        "line": 308,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/core/session/handler.ts",
+          "line": 30,
+          "col": 38
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_e60ecd5a982d35bd3aff",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 826,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/fixAddMissingMember.ts",
+          "line": 470,
+          "col": 22
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_e747ecd127e9cb23ffbd",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/fetch/fetch-state.ts",
+        "line": 644,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/astro/src/core/fetch/fetch-state.ts",
+          "line": 481,
+          "col": 17
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_e88c7588a7564a4bb398",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 581,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/convertToAsyncFunction.ts",
+          "line": 181,
+          "col": 24
+        },
+        {
+          "path": "src/services/codefixes/convertToEsModule.ts",
+          "line": 274,
+          "col": 16
+        },
+        {
+          "path": "src/services/codefixes/convertToTypeOnlyImport.ts",
+          "line": 125,
+          "col": 20
+        },
+        {
+          "path": "src/services/codefixes/fixMissingTypeAnnotationOnExports.ts",
+          "line": 575,
+          "col": 22
+        },
+        {
+          "path": "src/services/organizeImports.ts",
+          "line": 184,
+          "col": 26
+        },
+        {
+          "path": "src/services/refactors/extractSymbol.ts",
+          "line": 1338,
+          "col": 22
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_e97d3e83c690604051a5",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/base-http/index.ts",
+        "line": 91,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/base-server.ts",
+          "line": 1016,
+          "col": 12
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_eb0d30d2ea53c7fb8b32",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 559,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/refactors/moveToFile.ts",
+          "line": 297,
+          "col": 16
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_ed9172eea61047d43104",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/mixedModuleGraph.ts",
+        "line": 341,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/server/hmr.ts",
+          "line": 454,
+          "col": 45
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_ee11496b14a3b183902b",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/nodes.js",
+        "line": 167,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/AnimateDirective.js",
+          "line": 27,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/AttachTag.js",
+          "line": 14,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/BindDirective.js",
+          "line": 266,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/EachBlock.js",
+          "line": 343,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/shared/element.js",
+          "line": 130,
+          "col": 79
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/TransitionDirective.js",
+          "line": 30,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/UseDirective.js",
+          "line": 37,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/HtmlTag.js",
+          "line": 14,
+          "col": 30
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/KeyBlock.js",
+          "line": 11,
+          "col": 43
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_efdc3f0d4f4f4a850973",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/app-render/staged-rendering.ts",
+        "line": 131,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/node-environment-extensions/io-utils.tsx",
+          "line": 59,
+          "col": 45
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_f0505d8321872ecc6ace",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 4224,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/session.ts",
+          "line": 816,
+          "col": 56
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_f3c4b9a1f23bca6b490d",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/compiler/semver.ts",
+        "line": 122,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/compiler/semver.ts",
+          "line": 365,
+          "col": 96
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_f59eeba39378ec667b77",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/client-component-renderer-logger.ts",
+        "line": 30,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/next/src/server/client-component-renderer-logger.ts",
+          "line": 116,
+          "col": 43
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_f5a271c4fee91a8d3642",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/compiler/phases/1-parse/index.js",
+        "line": 263,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/read/style.js",
+          "line": 662,
+          "col": 10
+        },
+        {
+          "path": "packages/svelte/src/compiler/phases/1-parse/state/element.js",
+          "line": 71,
+          "col": 22
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_f6deeb9f6dbd5e554c47",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/editorServices.ts",
+        "line": 2538,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/project.ts",
+          "line": 2468,
+          "col": 28
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_f85fe65206f7a71882cc",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/scriptVersionCache.ts",
+        "line": 413,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/server/scriptVersionCache.ts",
+          "line": 334,
+          "col": 41
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_fb7610e8601a5c262414",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/services/textChanges.ts",
+        "line": 781,
+        "col": 4
+      },
+      "uses": [
+        {
+          "path": "src/services/codefixes/annotateWithTypeFromJSDoc.ts",
+          "line": 96,
+          "col": 47
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_fd2527ae5fe0241e678e",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/pluginContainer.ts",
+        "line": 682,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/server/pluginContainer.ts",
+          "line": 891,
+          "col": 10
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_ff0b1c03fe968ca01c6e",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url-search-params.js",
+        "line": 186,
+        "col": 1
+      },
+      "uses": [
+        {
+          "path": "packages/svelte/src/reactivity/url.test.ts",
+          "line": 224,
+          "col": 29
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    },
+    {
+      "key": "tac_ff2014ee73489b71dae1",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/optimizer/scan.ts",
+        "line": 42,
+        "col": 2
+      },
+      "uses": [
+        {
+          "path": "packages/vite/src/node/plugins/oxc.ts",
+          "line": 272,
+          "col": 20
+        },
+        {
+          "path": "packages/vite/src/node/plugins/resolve.ts",
+          "line": 245,
+          "col": 18
+        },
+        {
+          "path": "packages/vite/src/node/server/pluginContainer.ts",
+          "line": 216,
+          "col": 18
+        }
+      ],
+      "feature_buckets": [
+        "exact-cross-file-symbol-use"
+      ]
+    }
+  ],
+  "contract_preservations": [
+    {
+      "key": "tac_013903889bbd99a0c977",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 33,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1238,
+          "col": 8,
+          "excerpt": "httpVersion: string;"
+        }
+      }
+    },
+    {
+      "key": "tac_0466d9cd7cee435a883e",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/app/dev/app.ts",
+        "line": 56,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "packages/astro/src/core/app/base.ts",
+          "line": 312,
+          "col": 1,
+          "excerpt": "public devMatch(pathname?: string): Promise<DevMatch | undefined> | undefined {"
+        }
+      }
+    },
+    {
+      "key": "tac_06321d52f6aabde3b117",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 373,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 681,
+          "col": 8,
+          "excerpt": "getHeaderNames(): string[];"
+        }
+      }
+    },
+    {
+      "key": "tac_0b4c783bf7c9cee45c62",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 447,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 555,
+          "col": 8,
+          "excerpt": "useChunkedEncodingByDefault: boolean;"
+        }
+      }
+    },
+    {
+      "key": "tac_0f212a0dc03b8c04d15d",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 399,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 736,
+          "col": 8,
+          "excerpt": "flushHeaders(): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_170e41f13879dead3891",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 237,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 571,
+          "col": 8,
+          "excerpt": "readonly connection: net.Socket | null;"
+        }
+      }
+    },
+    {
+      "key": "tac_1937ca869e6cb50d6402",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/app/app.ts",
+        "line": 12,
+        "col": 1
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/astro/src/core/app/base.ts",
+          "line": 197,
+          "col": 1,
+          "excerpt": "public abstract isDev(): boolean;"
+        }
+      }
+    },
+    {
+      "key": "tac_1e91adf4f7bb023612a9",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 34,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1239,
+          "col": 8,
+          "excerpt": "httpVersionMajor: number;"
+        }
+      }
+    },
+    {
+      "key": "tac_1fae592879239098c531",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/web/spec-extension/fetch-event.ts",
+        "line": 87,
+        "col": 2
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "packages/next/src/server/web/spec-extension/fetch-event.ts",
+          "line": 26,
+          "col": 2,
+          "excerpt": "respondWith(response: Response | Promise<Response>): void {"
+        }
+      }
+    },
+    {
+      "key": "tac_24ea9988a49988cb65e5",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 463,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 630,
+          "col": 8,
+          "excerpt": "setHeaders(headers: Headers | Map<string, number | string | readonly string[]>): this;"
+        }
+      }
+    },
+    {
+      "key": "tac_2a3c1a69a2451386ae65",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url-search-params.js",
+        "line": 129,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 44949,
+          "col": 4,
+          "excerpt": "keys(): URLSearchParamsIterator<string>;"
+        }
+      }
+    },
+    {
+      "key": "tac_2cd95d97c293f69f80de",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/container/pipeline.ts",
+        "line": 22,
+        "col": 1
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/astro/src/core/base-pipeline.ts",
+          "line": 247,
+          "col": 1,
+          "excerpt": "abstract getName(): string;"
+        }
+      }
+    },
+    {
+      "key": "tac_34793ae5331bb305da1b",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 115,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1264,
+          "col": 8,
+          "excerpt": "complete: boolean;"
+        }
+      }
+    },
+    {
+      "key": "tac_3ce7a66a36cd244e383f",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/base-http/node.ts",
+        "line": 119,
+        "col": 2
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/next/src/server/base-http/index.ts",
+          "line": 62,
+          "col": 2,
+          "excerpt": "abstract removeHeader(name: string): this"
+        }
+      }
+    },
+    {
+      "key": "tac_3d3e09b4f1f8d26ed93e",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url.js",
+        "line": 102,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37332,
+          "col": 4,
+          "excerpt": "hostname: string;"
+        }
+      }
+    },
+    {
+      "key": "tac_3e579ff2d2be1c548d82",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/client/components/readonly-url-search-params.ts",
+        "line": 26,
+        "col": 2
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37531,
+          "col": 4,
+          "excerpt": "delete(name: string, value?: string): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_4099bcbb6f67abda2936",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 119,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1355,
+          "col": 8,
+          "excerpt": "trailers: NodeJS.Dict<string>;"
+        }
+      }
+    },
+    {
+      "key": "tac_42c1a7177f9378d63930",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url-search-params.js",
+        "line": 172,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 44951,
+          "col": 4,
+          "excerpt": "values(): URLSearchParamsIterator<string>;"
+        }
+      }
+    },
+    {
+      "key": "tac_450b4464cb3fc6dee379",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 427,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 843,
+          "col": 8,
+          "excerpt": "writeContinue(callback?: () => void): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_470805b53dd807505e77",
+      "project_id": "vite",
+      "declaration": {
+        "path": "packages/vite/src/node/server/environments/fullBundleEnvironment.ts",
+        "line": 90,
+        "col": 2
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "packages/vite/src/node/server/environment.ts",
+          "line": 207,
+          "col": 2,
+          "excerpt": "async listen(server: ViteDevServer): Promise<void> {"
+        }
+      }
+    },
+    {
+      "key": "tac_4b80eb4c1453eedf8b25",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 431,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 976,
+          "col": 8,
+          "excerpt": "writeProcessing(callback?: () => void): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_4cb0db123952a439e74f",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/base-http/web.ts",
+        "line": 79,
+        "col": 2
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/next/src/server/base-http/index.ts",
+          "line": 74,
+          "col": 2,
+          "excerpt": "abstract hasHeader(name: string): boolean"
+        }
+      }
+    },
+    {
+      "key": "tac_50b24578ce241826828f",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 135,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1373,
+          "col": 8,
+          "excerpt": "setTimeout(msecs: number, callback?: () => void): this;"
+        }
+      }
+    },
+    {
+      "key": "tac_56f837fd79031c0fcf8c",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/set.js",
+        "line": 201,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.es2015.iterable.d.ts",
+          "line": 201,
+          "col": 4,
+          "excerpt": "entries(): SetIterator<[T, T]>;"
+        }
+      }
+    },
+    {
+      "key": "tac_605963062d9ea25fcb25",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url-search-params.js",
+        "line": 161,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37561,
+          "col": 4,
+          "excerpt": "sort(): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_6160b66f59131a415cc7",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 423,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 837,
+          "col": 8,
+          "excerpt": "detachSocket(socket: net.Socket): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_636bd9484a64e6c9d56e",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/base-http/web.ts",
+        "line": 59,
+        "col": 2
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/next/src/server/base-http/index.ts",
+          "line": 62,
+          "col": 2,
+          "excerpt": "abstract removeHeader(name: string): this"
+        }
+      }
+    },
+    {
+      "key": "tac_64be55f3485fe60143a7",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 131,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1350,
+          "col": 8,
+          "excerpt": "rawHeaders: string[];"
+        }
+      }
+    },
+    {
+      "key": "tac_65c2977010442fd05dab",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 415,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 552,
+          "col": 8,
+          "excerpt": "readonly req: Request;"
+        }
+      }
+    },
+    {
+      "key": "tac_665abb14bf2d37339ac6",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url.js",
+        "line": 136,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37351,
+          "col": 4,
+          "excerpt": "password: string;"
+        }
+      }
+    },
+    {
+      "key": "tac_6b3f44a0f102ce916db0",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/client/components/readonly-url-search-params.ts",
+        "line": 34,
+        "col": 2
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37561,
+          "col": 4,
+          "excerpt": "sort(): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_7f24123d1a3ace5ef04d",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url.js",
+        "line": 92,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37326,
+          "col": 4,
+          "excerpt": "host: string;"
+        }
+      }
+    },
+    {
+      "key": "tac_7fbcc5d7d6779b11cdfa",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url.js",
+        "line": 200,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37339,
+          "col": 4,
+          "excerpt": "toString(): string;"
+        }
+      }
+    },
+    {
+      "key": "tac_8007285dad0390b87006",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 395,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 701,
+          "col": 8,
+          "excerpt": "removeHeader(name: string): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_80c071d6b900ab414590",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/vite-plugin-app/app.ts",
+        "line": 64,
+        "col": 1
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/astro/src/core/app/base.ts",
+          "line": 197,
+          "col": 1,
+          "excerpt": "public abstract isDev(): boolean;"
+        }
+      }
+    },
+    {
+      "key": "tac_80deab523f7d9186466e",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 79,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1325,
+          "col": 8,
+          "excerpt": "headersDistinct: NodeJS.Dict<string[]>;"
+        }
+      }
+    },
+    {
+      "key": "tac_8363aec4651ab664d2f2",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 104,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1270,
+          "col": 8,
+          "excerpt": "connection: net.Socket;"
+        }
+      }
+    },
+    {
+      "key": "tac_885a0d1fb86652aba6d0",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 281,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/stream.d.ts",
+          "line": 852,
+          "col": 12,
+          "excerpt": "_write(chunk: any, encoding: BufferEncoding, callback: (error?: Error | null) => void): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_8b451833998082bef0d0",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/project.ts",
+        "line": 2538,
+        "col": 4
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "src/server/project.ts",
+          "line": 868,
+          "col": 4,
+          "excerpt": "scheduleInvalidateResolutionsOfFailedLookupLocations(): void {"
+        }
+      }
+    },
+    {
+      "key": "tac_8c5953d7ac6adaa3348b",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/project.ts",
+        "line": 3048,
+        "col": 4
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "src/server/project.ts",
+          "line": 466,
+          "col": 4,
+          "excerpt": "getRedirectFromSourceFile(_fileName: string): ResolvedRefAndOutputDts | undefined {"
+        }
+      }
+    },
+    {
+      "key": "tac_983e0de2f0a30079f22b",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url.js",
+        "line": 132,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37351,
+          "col": 4,
+          "excerpt": "password: string;"
+        }
+      }
+    },
+    {
+      "key": "tac_9c7457d58c6bc328efc9",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/project.ts",
+        "line": 2828,
+        "col": 4
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "src/server/project.ts",
+          "line": 1373,
+          "col": 4,
+          "excerpt": "onAutoImportProviderSettingsChanged(): void {"
+        }
+      }
+    },
+    {
+      "key": "tac_9cc33d3eb11778302fc0",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url.js",
+        "line": 184,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37387,
+          "col": 4,
+          "excerpt": "username: string;"
+        }
+      }
+    },
+    {
+      "key": "tac_9d9a919e69ad253331aa",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/project.ts",
+        "line": 2804,
+        "col": 4
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "src/server/project.ts",
+          "line": 868,
+          "col": 4,
+          "excerpt": "scheduleInvalidateResolutionsOfFailedLookupLocations(): void {"
+        }
+      }
+    },
+    {
+      "key": "tac_9ee34dd5ad068d494aae",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url.js",
+        "line": 189,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37345,
+          "col": 4,
+          "excerpt": "readonly origin: string;"
+        }
+      }
+    },
+    {
+      "key": "tac_a03369d4d9d5fa129842",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/client/components/readonly-url-search-params.ts",
+        "line": 22,
+        "col": 2
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37525,
+          "col": 4,
+          "excerpt": "append(name: string, value: string): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_a0b45e7289bae4ba6c32",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/vite-plugin-app/pipeline.ts",
+        "line": 39,
+        "col": 1
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/astro/src/core/base-pipeline.ts",
+          "line": 247,
+          "col": 1,
+          "excerpt": "abstract getName(): string;"
+        }
+      }
+    },
+    {
+      "key": "tac_aa45d110220f46b148f1",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 419,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 836,
+          "col": 8,
+          "excerpt": "assignSocket(socket: net.Socket): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_ab336dbb931dc06fdf58",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 407,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 834,
+          "col": 8,
+          "excerpt": "strictContentLength: boolean;"
+        }
+      }
+    },
+    {
+      "key": "tac_b41ef33bbaf74e46c389",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 361,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 691,
+          "col": 8,
+          "excerpt": "hasHeader(name: string): boolean;"
+        }
+      }
+    },
+    {
+      "key": "tac_bb1ae2ee5245c0c9d89a",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url.js",
+        "line": 98,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37332,
+          "col": 4,
+          "excerpt": "hostname: string;"
+        }
+      }
+    },
+    {
+      "key": "tac_bc0e8493f8ac67aebcef",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 214,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 646,
+          "col": 8,
+          "excerpt": "appendHeader(name: string, value: string | readonly string[]): this;"
+        }
+      }
+    },
+    {
+      "key": "tac_c1fc3c56b426e1248ba7",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 439,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 553,
+          "col": 8,
+          "excerpt": "chunkedEncoding: boolean;"
+        }
+      }
+    },
+    {
+      "key": "tac_c28b7d8ecd9477b9e7d2",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url.js",
+        "line": 204,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37393,
+          "col": 4,
+          "excerpt": "toJSON(): string;"
+        }
+      }
+    },
+    {
+      "key": "tac_c2bf3bf4f1896e7585c9",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 111,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1229,
+          "col": 8,
+          "excerpt": "aborted: boolean;"
+        }
+      }
+    },
+    {
+      "key": "tac_c5893e286d16bb064737",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/app/dev/app.ts",
+        "line": 31,
+        "col": 1
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/astro/src/core/app/base.ts",
+          "line": 197,
+          "col": 1,
+          "excerpt": "public abstract isDev(): boolean;"
+        }
+      }
+    },
+    {
+      "key": "tac_cf0be0753a905c2437a2",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 411,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 877,
+          "col": 8,
+          "excerpt": "writeEarlyHints(hints: Record<string, string | string[]>, callback?: () => void): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_cffd22bb5e664bcc7eb7",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url.js",
+        "line": 180,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37387,
+          "col": 4,
+          "excerpt": "username: string;"
+        }
+      }
+    },
+    {
+      "key": "tac_d0b9a08fc10e8b60b337",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 459,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 723,
+          "col": 8,
+          "excerpt": "addTrailers(headers: OutgoingHttpHeaders | ReadonlyArray<[string, string]>): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_d3030b3a0c1b20c87386",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/url.js",
+        "line": 86,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37326,
+          "col": 4,
+          "excerpt": "host: string;"
+        }
+      }
+    },
+    {
+      "key": "tac_d41c067ac84fa8fd81b8",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/app/dev/pipeline.ts",
+        "line": 23,
+        "col": 1
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/astro/src/core/base-pipeline.ts",
+          "line": 247,
+          "col": 1,
+          "excerpt": "abstract getName(): string;"
+        }
+      }
+    },
+    {
+      "key": "tac_d52d79bbbfede9c8bc7b",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 90,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/stream.d.ts",
+          "line": 175,
+          "col": 12,
+          "excerpt": "_read(size: number): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_d91308d5519ee421c2bb",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/base-http/web.ts",
+        "line": 64,
+        "col": 2
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/next/src/server/base-http/index.ts",
+          "line": 72,
+          "col": 2,
+          "excerpt": "abstract getHeaderValues(name: string): string[] | undefined"
+        }
+      }
+    },
+    {
+      "key": "tac_dd34fe3408b226eb2b48",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 443,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 554,
+          "col": 8,
+          "excerpt": "shouldKeepAlive: boolean;"
+        }
+      }
+    },
+    {
+      "key": "tac_df5f506f91cbad8362f6",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 123,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1362,
+          "col": 8,
+          "excerpt": "trailersDistinct: NodeJS.Dict<string[]>;"
+        }
+      }
+    },
+    {
+      "key": "tac_e076139dd315beae1c76",
+      "project_id": "svelte",
+      "declaration": {
+        "path": "packages/svelte/src/reactivity/map.js",
+        "line": 273,
+        "col": 1
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.es2015.iterable.d.ts",
+          "line": 151,
+          "col": 4,
+          "excerpt": "keys(): MapIterator<K>;"
+        }
+      }
+    },
+    {
+      "key": "tac_e1d0c42b1152d11428d0",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/core/app/pipeline.ts",
+        "line": 16,
+        "col": 1
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/astro/src/core/base-pipeline.ts",
+          "line": 247,
+          "col": 1,
+          "excerpt": "abstract getName(): string;"
+        }
+      }
+    },
+    {
+      "key": "tac_e7e9cd8ec0700a4769df",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/base-http/node.ts",
+        "line": 134,
+        "col": 2
+      },
+      "contract": {
+        "relation": "abstract-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "packages/next/src/server/base-http/index.ts",
+          "line": 74,
+          "col": 2,
+          "excerpt": "abstract hasHeader(name: string): boolean"
+        }
+      }
+    },
+    {
+      "key": "tac_e7ec9a12795e0d4cb9c7",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 35,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1240,
+          "col": 8,
+          "excerpt": "httpVersionMinor: number;"
+        }
+      }
+    },
+    {
+      "key": "tac_ec9013d96c25a38766a0",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 127,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 1368,
+          "col": 8,
+          "excerpt": "rawTrailers: string[];"
+        }
+      }
+    },
+    {
+      "key": "tac_f60dde147dcda2fb1f31",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 451,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 556,
+          "col": 8,
+          "excerpt": "sendDate: boolean;"
+        }
+      }
+    },
+    {
+      "key": "tac_f735a5286d5833fb4ba3",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/client/components/readonly-url-search-params.ts",
+        "line": 30,
+        "col": 2
+      },
+      "contract": {
+        "relation": "override",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts",
+          "line": 37555,
+          "col": 4,
+          "excerpt": "set(name: string, value: string): void;"
+        }
+      }
+    },
+    {
+      "key": "tac_ff86b49e4054121b76fe",
+      "project_id": "next.js",
+      "declaration": {
+        "path": "packages/next/src/server/lib/mock-request.ts",
+        "line": 455,
+        "col": 2
+      },
+      "contract": {
+        "relation": "interface-implementation",
+        "optional": false,
+        "declaration": {
+          "path": "node_modules/@types/node/http.d.ts",
+          "line": 585,
+          "col": 8,
+          "excerpt": "setTimeout(msecs: number, callback?: () => void): this;"
+        }
+      }
+    }
+  ],
+  "known_unused_retained": [
+    {
+      "key": "tac_30f22fc455c0944fcff9",
+      "project_id": "astro",
+      "declaration": {
+        "path": "packages/astro/src/content/content-layer.ts",
+        "line": 98,
+        "col": 1
+      }
+    },
+    {
+      "key": "tac_32088e6c4f7a2034f692",
+      "project_id": "typescript",
+      "declaration": {
+        "path": "src/server/project.ts",
+        "line": 2209,
+        "col": 4
+      }
+    }
+  ]
+}

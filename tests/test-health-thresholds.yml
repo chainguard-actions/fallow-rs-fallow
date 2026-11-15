@@ -1,0 +1,41 @@
+name: Test health command with explicit thresholds
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: '3.43.1'
+          format: json
+          max-cyclomatic: '20'
+          max-cognitive: '15'
+          max-crap: '30'
+          max-file-lines: '1000'
+          sort: cognitive
+          top: '5'
+          min-severity: critical
+          threads: '2'
+          fail-on-issues: 'true'
+      - name: Assert health ran clean with thresholds
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: trivial project should have no findings under default-ish thresholds"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq . "$RESULTS" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
+          echo "PASS"

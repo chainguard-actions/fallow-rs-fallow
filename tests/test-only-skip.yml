@@ -1,0 +1,48 @@
+name: Test combined run with only and skip selectors
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: only
+        uses: .
+        with:
+          root: tests/fixtures/clean-project
+          version: '3.43.1'
+          format: json
+          only: dead-code,health
+          fail-on-issues: 'true'
+      - name: Assert only run succeeded
+        env:
+          ISSUES: ${{ steps.only.outputs.issues }}
+          RESULTS: ${{ steps.only.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: clean project should report 0 issues"
+            exit 1
+          fi
+          jq . "$RESULTS" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
+          echo "PASS"
+      - id: skip
+        uses: .
+        with:
+          root: tests/fixtures/clean-project
+          version: '3.43.1'
+          format: json
+          skip: dupes
+          fail-on-issues: 'true'
+      - name: Assert skip run succeeded
+        env:
+          ISSUES: ${{ steps.skip.outputs.issues }}
+          RESULTS: ${{ steps.skip.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: clean project should report 0 issues"
+            exit 1
+          fi
+          jq . "$RESULTS" > /dev/null || { echo "FAIL: invalid JSON"; exit 1; }
+          echo "PASS"

@@ -1,0 +1,35 @@
+name: Test security command with security-gate
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - id: action
+        uses: .
+        with:
+          command: security
+          root: tests/fixtures/clean-project
+          version: '3.43.1'
+          format: json
+          changed-since: HEAD
+          security-gate: new
+          fail-on-issues: 'true'
+      - name: Assert security gate ran with no candidates
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "issues: '$ISSUES' gate: '$GATE'"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: clean project should have no security candidates"
+            exit 1
+          fi
+          if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
+            echo "FAIL: gate output should be 'new' when set"
+            exit 1
+          fi
+          echo "PASS"

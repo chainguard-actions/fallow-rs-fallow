@@ -1,0 +1,38 @@
+name: Test dupes with min-tokens, min-lines, threshold and top
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/dupes-project
+          version: '3.43.1'
+          format: json
+          min-tokens: '10'
+          min-lines: '2'
+          threshold: '100'
+          top: '10'
+          fail-on-issues: 'false'
+      - name: Assert dupes ran with options
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "gates-failed: '$GATES_FAILED'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one clone group"
+            cat "$RESULTS" || true
+            exit 1
+          fi
+          if echo "$GATES_FAILED" | grep -q "threshold"; then
+            echo "FAIL: threshold 100 must never fail"
+            exit 1
+          fi
+          echo "PASS"

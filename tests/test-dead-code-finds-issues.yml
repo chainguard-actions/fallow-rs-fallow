@@ -1,0 +1,51 @@
+name: Test dead-code finds unused code
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/unused-project
+          version: '3.43.1'
+          fail-on-issues: 'false'
+          format: json
+      - name: Assert issues were found
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not numeric"
+            exit 1
+          fi
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one unused-code issue"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq . "$RESULTS" > /dev/null || { echo "FAIL: results is not valid JSON"; exit 1; }
+          if ! grep -q "orphan" "$RESULTS"; then
+            echo "FAIL: expected orphan.ts to be reported"
+            exit 1
+          fi
+          echo "PASS"
+      - name: Assert verdict empty for non-audit command
+        env:
+          VERDICT: ${{ steps.action.outputs.verdict }}
+        run: |
+          echo "verdict: '$VERDICT'"
+          if [ -n "$VERDICT" ]; then
+            echo "FAIL: verdict should be empty when command is not audit"
+            exit 1
+          fi
+          echo "PASS"
