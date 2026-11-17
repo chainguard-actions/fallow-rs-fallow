@@ -1,0 +1,30 @@
+name: Test dupes detects clones
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dupes
+          root: tests/act-fixtures/dupes-project
+          fail-on-issues: 'false'
+          min-tokens: '20'
+          min-lines: '5'
+          artifacts-dir: fallow-out-dupes
+      - name: Assert clone groups found
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one clone group"
+            [ -f "$RESULTS" ] && cat "$RESULTS"
+            exit 1
+          fi
+          jq -e '.stats.clone_groups >= 1' "$RESULTS" || { echo "FAIL: stats.clone_groups < 1"; exit 1; }
+          echo "PASS"

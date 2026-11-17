@@ -1,0 +1,37 @@
+name: Test combined run restricted with only
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          root: tests/act-fixtures/clean-project
+          only: dead-code
+          fail-on-issues: 'false'
+          # mutation is disabled, so these must be inert
+          mutation: 'false'
+          mutation-max-mutants: '10'
+          mutation-min-score: '50'
+          artifacts-dir: fallow-out-only
+      - name: Assert only forwarded and mutation stayed off
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          MUT_OUTCOME: ${{ steps.action.outputs.mutation-outcome }}
+        run: |
+          ARGS_FILE="fallow-out-only/fallow-analysis-args.sh"
+          cat "$ARGS_FILE"
+          grep -qF -- "--only dead-code" "$ARGS_FILE" || { echo "FAIL: --only not forwarded"; exit 1; }
+          echo "issues: $ISSUES mutation-outcome: '$MUT_OUTCOME'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          if [ -n "$MUT_OUTCOME" ]; then
+            echo "FAIL: mutation-outcome should be empty when mutation is false"
+            exit 1
+          fi
+          echo "PASS"

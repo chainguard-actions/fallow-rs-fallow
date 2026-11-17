@@ -1,0 +1,54 @@
+name: Test regression baseline save and compare
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/act-fixtures/sample-project
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-out-save-regression
+      - name: Assert regression baseline saved
+        run: |
+          ARGS_FILE="fallow-out-save-regression/fallow-analysis-args.sh"
+          cat "$ARGS_FILE"
+          grep -qF -- "--save-regression-baseline" "$ARGS_FILE" || { echo "FAIL: flag not forwarded"; exit 1; }
+          if [ ! -s "$GITHUB_WORKSPACE/fallow-regression.json" ]; then
+            echo "FAIL: regression baseline not written"
+            exit 1
+          fi
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/act-fixtures/sample-project
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
+          fail-on-regression: 'true'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-out-regression
+      - name: Assert no regression against identical baseline
+        env:
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          FAILED: ${{ steps.compare.outputs.gates-failed }}
+        run: |
+          ARGS_FILE="fallow-out-regression/fallow-analysis-args.sh"
+          cat "$ARGS_FILE"
+          grep -qF -- "--regression-baseline" "$ARGS_FILE" || { echo "FAIL: --regression-baseline not forwarded"; exit 1; }
+          grep -qF -- "--fail-on-regression" "$ARGS_FILE" || { echo "FAIL: --fail-on-regression not forwarded"; exit 1; }
+          echo "issues: $ISSUES gates-failed: '$FAILED'"
+          if echo "$FAILED" | grep -q regression; then
+            echo "FAIL: regression gate failed on identical results"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          echo "PASS"

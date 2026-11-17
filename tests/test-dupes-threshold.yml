@@ -1,0 +1,38 @@
+name: Test dupes with a permissive threshold
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dupes
+          root: tests/act-fixtures/dupes-project
+          threshold: '100'
+          top: '3'
+          min-tokens: '20'
+          min-lines: '5'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-out-dupes-threshold
+      - name: Assert threshold forwarded and gate not failed
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          FAILED: ${{ steps.action.outputs.gates-failed }}
+        run: |
+          ARGS_FILE="fallow-out-dupes-threshold/fallow-analysis-args.sh"
+          cat "$ARGS_FILE"
+          grep -qF -- "--threshold 100" "$ARGS_FILE" || { echo "FAIL: --threshold not forwarded"; exit 1; }
+          grep -qF -- "--top 3" "$ARGS_FILE" || { echo "FAIL: --top not forwarded"; exit 1; }
+          echo "issues: $ISSUES gates-failed: '$FAILED'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          if echo "$FAILED" | grep -q threshold; then
+            echo "FAIL: 100% threshold should never fail"
+            exit 1
+          fi
+          echo "PASS"

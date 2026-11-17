@@ -1,0 +1,28 @@
+name: Test dead-code on a clean project
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/act-fixtures/clean-project
+          fail-on-issues: 'true'
+          artifacts-dir: fallow-out-clean
+      - name: Assert zero issues
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues"
+            [ -f "$RESULTS" ] && cat "$RESULTS"
+            exit 1
+          fi
+          jq -e '.total_issues == 0' "$RESULTS" || { echo "FAIL: total_issues != 0"; exit 1; }
+          echo "PASS"

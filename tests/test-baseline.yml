@@ -1,0 +1,68 @@
+name: Test dead-code save-baseline then baseline
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/act-fixtures/sample-project
+          config: ${{ github.workspace }}/tests/act-fixtures/sample-project/.fallowrc.json
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-out-save-baseline
+      - name: Assert baseline saved
+        env:
+          ISSUES: ${{ steps.save.outputs.issues }}
+        run: |
+          ARGS_FILE="fallow-out-save-baseline/fallow-analysis-args.sh"
+          cat "$ARGS_FILE"
+          grep -qF -- "--save-baseline" "$ARGS_FILE" || { echo "FAIL: --save-baseline not forwarded"; exit 1; }
+          grep -qF -- "--config" "$ARGS_FILE" || { echo "FAIL: --config not forwarded"; exit 1; }
+          if [ ! -s "$GITHUB_WORKSPACE/fallow-dead-code-baseline.json" ]; then
+            echo "FAIL: baseline file not written"
+            exit 1
+          fi
+          jq -e '.' "$GITHUB_WORKSPACE/fallow-dead-code-baseline.json" > /dev/null || { echo "FAIL: baseline not JSON"; exit 1; }
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one issue before baseline"
+            exit 1
+          fi
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/act-fixtures/sample-project
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-out-baseline
+      - name: Assert baseline loaded and suppresses issues
+        env:
+          BEFORE: ${{ steps.save.outputs.issues }}
+          AFTER: ${{ steps.compare.outputs.issues }}
+          ENTRIES: ${{ steps.compare.outputs.baseline-entries }}
+          BPATH: ${{ steps.compare.outputs.baseline-path }}
+        run: |
+          ARGS_FILE="fallow-out-baseline/fallow-analysis-args.sh"
+          cat "$ARGS_FILE"
+          grep -qF -- "--baseline" "$ARGS_FILE" || { echo "FAIL: --baseline not forwarded"; exit 1; }
+          echo "before: $BEFORE after: $AFTER entries: '$ENTRIES' path: '$BPATH'"
+          if ! [[ "$AFTER" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          if [ "$AFTER" -ge "$BEFORE" ]; then
+            echo "FAIL: baseline should reduce the issue count"
+            exit 1
+          fi
+          if [ -n "$ENTRIES" ] && ! [[ "$ENTRIES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: baseline-entries not numeric"
+            exit 1
+          fi
+          echo "PASS"

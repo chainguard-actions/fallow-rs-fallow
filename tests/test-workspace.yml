@@ -1,0 +1,35 @@
+name: Test dead-code scoped to one workspace
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/act-fixtures/monorepo
+          workspace: pkg-a
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-out-workspace
+      - name: Assert workspace forwarded and results produced
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          ARGS_FILE="fallow-out-workspace/fallow-analysis-args.sh"
+          cat "$ARGS_FILE"
+          grep -qF -- "--workspace pkg-a" "$ARGS_FILE" || { echo "FAIL: --workspace not forwarded"; exit 1; }
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          jq -e '.' "$RESULTS" > /dev/null || { echo "FAIL: invalid results JSON"; exit 1; }
+          if grep -q 'pkg-b/src' "$RESULTS"; then
+            echo "FAIL: findings from pkg-b leaked into pkg-a scoped run"
+            exit 1
+          fi
+          echo "PASS"

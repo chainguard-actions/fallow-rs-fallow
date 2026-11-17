@@ -1,0 +1,39 @@
+name: Test audit rejects an invalid gate value
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: audit
+          root: tests/act-fixtures/sample-project
+          gate: not-a-gate
+          worsened: warn
+          dead-code-baseline: dead-code-baseline.json
+          health-baseline: health-baseline.json
+          dupes-baseline: dupes-baseline.json
+          artifacts-dir: fallow-out-audit-invalid
+      - name: Assert validation failure before analysis
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME issues: '$ISSUES'"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: invalid gate must fail the action"
+            exit 1
+          fi
+          if [ -f "fallow-out-audit-invalid/fallow-analysis-args.sh" ]; then
+            echo "FAIL: fallow should not run when gate is invalid"
+            exit 1
+          fi
+          if [ -n "$ISSUES" ]; then
+            echo "FAIL: issues should be empty after validation error"
+            exit 1
+          fi
+          echo "PASS"

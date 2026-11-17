@@ -1,0 +1,35 @@
+name: Test health with Istanbul coverage and coverage-root
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/act-fixtures/clean-project
+          coverage: ${{ github.workspace }}/tests/act-fixtures/coverage/coverage-final.json
+          coverage-root: /ci/build
+          max-crap: '30'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-out-coverage
+      - name: Assert coverage flags forwarded and run succeeded
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          ARGS_FILE="fallow-out-coverage/fallow-analysis-args.sh"
+          cat "$ARGS_FILE"
+          grep -qF -- "--coverage " "$ARGS_FILE" || { echo "FAIL: --coverage not forwarded"; exit 1; }
+          grep -qF -- "coverage-final.json" "$ARGS_FILE" || { echo "FAIL: coverage path not forwarded"; exit 1; }
+          grep -qF -- "--coverage-root /ci/build" "$ARGS_FILE" || { echo "FAIL: --coverage-root not forwarded"; exit 1; }
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          jq -e '.' "$RESULTS" > /dev/null || { echo "FAIL: invalid results JSON"; exit 1; }
+          echo "PASS"

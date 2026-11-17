@@ -1,0 +1,421 @@
+#!/usr/bin/env node
+/**
+ * Generate Claude skill and reviewer-agent adapters from the client-neutral
+ * `.agents/skills` and `.agents/agents` source trees.
+ *
+ * Codex and other Agent Skills clients consume `.agents/skills` and
+ * `.agents/agents` directly. Claude receives byte-stable generated copies
+ * under `.claude/skills` and `.claude/agents`.
+ *
+ * Some maintainer skills are themselves generated: `.agents/skills/<name>`
+ * mirrors each released skill under `npm/fallow/skills/<name>`.
+ */
+
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { RELEASED_SKILLS_ROOT, releasedSkillNames } from "./released-skills.mjs";
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const SKILL_GENERATED_MARKER = "<!-- Generated from .agents/skills. Do not edit. -->";
+const AGENT_GENERATED_MARKER = "<!-- Generated from .agents/agents. Do not edit. -->";
+const AGENT_TEMPLATE_NAME = "_template.md";
+const MAINTAINER_SKILLS_ROOT = [".agents", "skills"];
+
+const parseFrontmatter = (text, sourcePath) => {
+  const match = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) {
+    throw new Error(`${sourcePath}: missing YAML frontmatter`);
+  }
+  const nameMatch = match[1].match(/^name:\s*([a-z0-9-]+)\s*$/m);
+  if (!nameMatch) {
+    throw new Error(`${sourcePath}: missing valid name`);
+  }
+  return { body: match[2], frontmatter: match[1], name: nameMatch[1] };
+};
+
+const renderAdapter = ({ body, frontmatter }, marker) =>
+  `---\n${frontmatter}\n---\n${marker}\n${body}`;
+
+/**
+ * Repository-relative paths under `.claude` that the index tracks, or `null`
+ * when git cannot answer.
+ *
+ * Ownership of an adapter is a property of repository content, not of what
+ * happens to sit on disk. A host keeps its own skill and agent directories
+ * under `.claude`, and those carry the same generated marker once they were
+ * copied from a released contract, so the marker alone cannot tell a stale
+ * adapter from someone's local file. `null` means unknown, never "nothing is
+ * tracked": the caller then falls back to judging by marker alone.
+ *
+ * `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` are stripped so an ambient
+ * value from a hook or a wrapping tool cannot point the query at another
+ * repository's index. Paths come back relative to `repoRoot`, which is what the
+ * lookup key is: a checkout that sits inside another repository is not that
+ * repository's top level, so a top-relative spelling would match nothing.
+ */
+const trackedAdapterPaths = (repoRoot) => {
+  const result = spawnSync("git", ["ls-files", "-z", "--", ".claude"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: gitEnv(),
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (result.error || result.status !== 0) {
+    return null;
+  }
+  return new Set(result.stdout.split("\0").filter((path) => path.length > 0));
+};
+
+/**
+ * The environment for a git child process. A git hook exports these variables,
+ * and they would point the child at the hook's repository instead of `repoRoot`.
+ */
+const gitEnv = () => {
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_INDEX_FILE;
+  return env;
+};
+
+/**
+ * Whether `path` differs from `HEAD`. `null` when git cannot answer, for
+ * example outside a repository or before the first commit.
+ */
+const changedSinceHead = (repoRoot, path) => {
+  const result = spawnSync("git", ["diff", "--quiet", "HEAD", "--", repoPath(repoRoot, path)], {
+    cwd: repoRoot,
+    env: gitEnv(),
+  });
+  if (result.error || (result.status !== 0 && result.status !== 1)) {
+    return null;
+  }
+  return result.status === 1;
+};
+
+/** Repository-relative path in the forward-slash spelling git reports. */
+const repoPath = (repoRoot, path) => relative(repoRoot, path).replaceAll("\\", "/");
+
+/**
+ * Whether a generated file that has no canonical source is this repository's to
+ * report and to delete. An untracked file is not repository content.
+ */
+const isTracked = (tracked, relativePath) => tracked === null || tracked.has(relativePath);
+
+const canonicalSkills = (repoRoot = REPO_ROOT) => {
+  const sourceRoot = join(repoRoot, ".agents", "skills");
+  if (!existsSync(sourceRoot)) {
+    throw new Error(`missing canonical skill root: ${relative(repoRoot, sourceRoot)}`);
+  }
+  return readdirSync(sourceRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const sourcePath = join(sourceRoot, entry.name, "SKILL.md");
+      if (!existsSync(sourcePath)) {
+        throw new Error(`missing canonical skill: ${relative(repoRoot, sourcePath)}`);
+      }
+      const source = readFileSync(sourcePath, "utf8");
+      const parsed = parseFrontmatter(source, relative(repoRoot, sourcePath));
+      if (parsed.name !== entry.name) {
+        throw new Error(
+          `${relative(repoRoot, sourcePath)}: name ${parsed.name} does not match directory ${entry.name}`,
+        );
+      }
+      return { ...parsed, sourcePath };
+    })
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+};
+
+const skillAdapterPath = (repoRoot, name) => join(repoRoot, ".claude", "skills", name, "SKILL.md");
+
+const staleGeneratedSkillAdapters = (repoRoot, names) => {
+  const root = join(repoRoot, ".claude", "skills");
+  if (!existsSync(root)) {
+    return [];
+  }
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !names.has(entry.name))
+    .map((entry) => join(root, entry.name, "SKILL.md"))
+    .filter(
+      (path) => existsSync(path) && readFileSync(path, "utf8").includes(SKILL_GENERATED_MARKER),
+    );
+};
+
+/// Files a skill ships alongside its SKILL.md, relative to the skill directory.
+/// A skill whose SKILL.md links to `references/x.md` is broken in the adapter
+/// tree unless those files travel with it.
+const companionFiles = (skillDir, prefix = "") => {
+  const root = join(skillDir, prefix);
+  if (!existsSync(root)) {
+    return [];
+  }
+  return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      return companionFiles(skillDir, relativePath);
+    }
+    return relativePath === "SKILL.md" ? [] : [relativePath];
+  });
+};
+
+const generateSkillAdapters = (repoRoot, check, tracked, onSkip) => {
+  const skills = canonicalSkills(repoRoot);
+  const drifted = [];
+  for (const skill of skills) {
+    const destination = skillAdapterPath(repoRoot, skill.name);
+    const expected = renderAdapter(skill, SKILL_GENERATED_MARKER);
+    const current = existsSync(destination) ? readFileSync(destination, "utf8") : null;
+    if (current !== expected) {
+      drifted.push(relative(repoRoot, destination));
+      if (!check) {
+        mkdirSync(dirname(destination), { recursive: true });
+        writeFileSync(destination, expected);
+      }
+    }
+
+    const sourceDir = dirname(skill.sourcePath);
+    for (const companion of companionFiles(sourceDir)) {
+      const companionSource = readFileSync(join(sourceDir, companion), "utf8");
+      const companionDestination = join(dirname(destination), companion);
+      const companionCurrent = existsSync(companionDestination)
+        ? readFileSync(companionDestination, "utf8")
+        : null;
+      if (companionCurrent === companionSource) {
+        continue;
+      }
+      drifted.push(relative(repoRoot, companionDestination));
+      if (!check) {
+        mkdirSync(dirname(companionDestination), { recursive: true });
+        writeFileSync(companionDestination, companionSource);
+      }
+    }
+
+    // A companion deleted from the source would otherwise linger in the
+    // generated tree forever, since the loop above only visits source files.
+    const expectedCompanions = new Set(companionFiles(sourceDir));
+    for (const orphan of companionFiles(dirname(destination))) {
+      if (expectedCompanions.has(orphan)) {
+        continue;
+      }
+      const orphanPath = join(dirname(destination), orphan);
+      const orphanRelative = repoPath(repoRoot, orphanPath);
+      if (!isTracked(tracked, orphanRelative)) {
+        onSkip(orphanRelative);
+        continue;
+      }
+      drifted.push(orphanRelative);
+      if (!check) {
+        rmSync(orphanPath, { force: true });
+      }
+    }
+  }
+
+  const names = new Set(skills.map(({ name }) => name));
+  for (const stalePath of staleGeneratedSkillAdapters(repoRoot, names)) {
+    const staleRelative = repoPath(repoRoot, stalePath);
+    if (!isTracked(tracked, staleRelative)) {
+      onSkip(staleRelative);
+      continue;
+    }
+    drifted.push(staleRelative);
+    if (!check) {
+      rmSync(dirname(stalePath), { recursive: true, force: true });
+    }
+  }
+  return drifted;
+};
+
+/**
+ * Mirror each released Fallow skill into the maintainer skill tree.
+ *
+ * `npm/fallow/skills/<name>` is the released skill contract. Codex reads
+ * `.agents/skills/<name>` directly, so that copy must state the same facts. The
+ * two trees drifted when an edit landed in only one of them. `SKILL.md` and every
+ * file under `references/` are byte copies of the released tree, and a
+ * reference that only the maintainer copy has is drift. Host interface files
+ * such as `agents/openai.yaml` stay with the released package. A checkout
+ * without the released tree has nothing to mirror.
+ */
+const mirrorReleasedSkills = (repoRoot, check) =>
+  releasedSkillNames(repoRoot).flatMap((name) => mirrorReleasedSkill(repoRoot, name, check));
+
+const mirrorReleasedSkill = (repoRoot, name, check) => {
+  const releasedDir = join(repoRoot, ...RELEASED_SKILLS_ROOT, name);
+  const maintainerDir = join(repoRoot, ...MAINTAINER_SKILLS_ROOT, name);
+  const mirroredFiles = (skillDir) => [
+    ...(existsSync(join(skillDir, "SKILL.md")) ? ["SKILL.md"] : []),
+    ...companionFiles(skillDir, "references"),
+  ];
+  const expected = mirroredFiles(releasedDir);
+  if (!check) {
+    refuseMirrorHandEdits(repoRoot, releasedDir, maintainerDir, expected);
+  }
+  const drifted = [];
+  for (const file of expected) {
+    const source = readFileSync(join(releasedDir, file), "utf8");
+    const destination = join(maintainerDir, file);
+    const current = existsSync(destination) ? readFileSync(destination, "utf8") : null;
+    if (current === source) {
+      continue;
+    }
+    drifted.push(repoPath(repoRoot, destination));
+    if (!check) {
+      mkdirSync(dirname(destination), { recursive: true });
+      writeFileSync(destination, source);
+    }
+  }
+  const expectedSet = new Set(expected);
+  for (const orphan of mirroredFiles(maintainerDir)) {
+    if (expectedSet.has(orphan)) {
+      continue;
+    }
+    const orphanPath = join(maintainerDir, orphan);
+    drifted.push(repoPath(repoRoot, orphanPath));
+    if (!check) {
+      rmSync(orphanPath, { force: true });
+    }
+  }
+  return drifted;
+};
+
+/**
+ * Stop before a regeneration discards an edit made in the generated copy.
+ *
+ * An edit in `.agents/skills/<name>` while the released file is unchanged is a
+ * change in the wrong tree: the mirror would overwrite it without a word.
+ */
+const refuseMirrorHandEdits = (repoRoot, releasedDir, maintainerDir, files) => {
+  const misplaced = files.filter((file) => {
+    const mirror = join(maintainerDir, file);
+    return (
+      existsSync(mirror) &&
+      readFileSync(mirror, "utf8") !== readFileSync(join(releasedDir, file), "utf8") &&
+      changedSinceHead(repoRoot, mirror) === true &&
+      changedSinceHead(repoRoot, join(releasedDir, file)) === false
+    );
+  });
+  if (misplaced.length === 0) {
+    return;
+  }
+  const lines = misplaced.map(
+    (file) =>
+      `  ${repoPath(repoRoot, join(maintainerDir, file))} -> edit ${repoPath(repoRoot, join(releasedDir, file))}`,
+  );
+  throw new Error(
+    `the generated skill copy has edits that its released source does not have. Move each edit to the released file, then run the generator again:\n${lines.join("\n")}`,
+  );
+};
+
+const canonicalAgents = (repoRoot = REPO_ROOT) => {
+  const sourceRoot = join(repoRoot, ".agents", "agents");
+  if (!existsSync(sourceRoot)) {
+    throw new Error(`missing canonical agent root: ${relative(repoRoot, sourceRoot)}`);
+  }
+  return readdirSync(sourceRoot, { withFileTypes: true })
+    .filter(
+      (entry) => entry.isFile() && entry.name.endsWith(".md") && entry.name !== AGENT_TEMPLATE_NAME,
+    )
+    .map((entry) => {
+      const sourcePath = join(sourceRoot, entry.name);
+      const expectedName = basename(entry.name, ".md");
+      const source = readFileSync(sourcePath, "utf8");
+      const parsed = parseFrontmatter(source, relative(repoRoot, sourcePath));
+      if (parsed.name !== expectedName) {
+        throw new Error(
+          `${relative(repoRoot, sourcePath)}: name ${parsed.name} does not match file ${expectedName}`,
+        );
+      }
+      return { ...parsed, sourcePath };
+    })
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+};
+
+const agentAdapterPath = (repoRoot, name) => join(repoRoot, ".claude", "agents", `${name}.md`);
+
+const staleGeneratedAgentAdapters = (repoRoot, names) => {
+  const root = join(repoRoot, ".claude", "agents");
+  if (!existsSync(root)) {
+    return [];
+  }
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .filter((entry) => !names.has(basename(entry.name, ".md")))
+    .map((entry) => join(root, entry.name))
+    .filter((path) => readFileSync(path, "utf8").includes(AGENT_GENERATED_MARKER));
+};
+
+const generateAgentDefinitionAdapters = (repoRoot, check, tracked, onSkip) => {
+  const agents = canonicalAgents(repoRoot);
+  const drifted = [];
+  for (const agent of agents) {
+    const destination = agentAdapterPath(repoRoot, agent.name);
+    const expected = renderAdapter(agent, AGENT_GENERATED_MARKER);
+    const current = existsSync(destination) ? readFileSync(destination, "utf8") : null;
+    if (current !== expected) {
+      drifted.push(relative(repoRoot, destination));
+      if (!check) {
+        mkdirSync(dirname(destination), { recursive: true });
+        writeFileSync(destination, expected);
+      }
+    }
+  }
+
+  const names = new Set(agents.map(({ name }) => name));
+  for (const stalePath of staleGeneratedAgentAdapters(repoRoot, names)) {
+    const staleRelative = repoPath(repoRoot, stalePath);
+    if (!isTracked(tracked, staleRelative)) {
+      onSkip(staleRelative);
+      continue;
+    }
+    drifted.push(staleRelative);
+    if (!check) {
+      rmSync(stalePath, { force: true });
+    }
+  }
+  return drifted;
+};
+
+export const generateAgentAdapters = ({
+  check = false,
+  onSkip = () => {},
+  repoRoot = REPO_ROOT,
+} = {}) => {
+  const tracked = trackedAdapterPaths(repoRoot);
+  // The mirror runs first so the Claude adapter of each released skill is
+  // generated from the refreshed maintainer copy in the same run.
+  const drifted = [
+    ...mirrorReleasedSkills(repoRoot, check),
+    ...generateSkillAdapters(repoRoot, check, tracked, onSkip),
+    ...generateAgentDefinitionAdapters(repoRoot, check, tracked, onSkip),
+  ];
+  return drifted.toSorted();
+};
+
+const main = (argv = process.argv.slice(2)) => {
+  const unknown = argv.filter((arg) => arg !== "--check");
+  if (unknown.length > 0) {
+    throw new Error(`unknown argument: ${unknown[0]}`);
+  }
+  const check = argv.includes("--check");
+  const skipped = [];
+  const drifted = generateAgentAdapters({ check, onSkip: (path) => skipped.push(path) });
+  for (const path of skipped.toSorted()) {
+    console.log(`untracked, left alone: ${path}`);
+  }
+  for (const path of drifted) {
+    console.log(`${check ? "stale" : "generated"}: ${path}`);
+  }
+  return check && drifted.length > 0 ? 1 : 0;
+};
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    process.exitCode = main();
+  } catch (error) {
+    console.error(`generate-agent-adapters: ${error.message}`);
+    process.exitCode = 1;
+  }
+}

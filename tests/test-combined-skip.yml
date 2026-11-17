@@ -1,0 +1,31 @@
+name: Test combined run with skip
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          root: tests/act-fixtures/clean-project
+          skip: dupes,health
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-out-skip
+      - name: Assert skip forwarded
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          ARGS_FILE="fallow-out-skip/fallow-analysis-args.sh"
+          cat "$ARGS_FILE"
+          # printf %q may escape the comma, so accept dupes,health or dupes\,health
+          grep -qE -- '--skip dupes\\?,health' "$ARGS_FILE" || { echo "FAIL: --skip not forwarded"; exit 1; }
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues not numeric"
+            exit 1
+          fi
+          jq -e '.' "$RESULTS" > /dev/null || { echo "FAIL: invalid results JSON"; exit 1; }
+          echo "PASS"
