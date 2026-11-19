@@ -1,0 +1,31 @@
+[package]
+name = "fallow-report-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://fallow.tools/docs/cli/report/"
+keywords.workspace = true
+categories.workspace = true
+description = "Language-neutral report contract shared by the fallow CLIs"
+readme = "README.md"
+
+[lib]
+doctest = false
+
+[dependencies]
+serde = { workspace = true }
+# Not the workspace entry: its `chrono04` feature would put chrono into each
+# consumer of the published crate, and no type of this crate uses chrono.
+schemars = { version = "1", optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[features]
+schema = ["dep:schemars"]
+
+[lints]
+workspace = true

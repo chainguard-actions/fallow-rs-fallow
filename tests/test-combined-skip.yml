@@ -1,0 +1,43 @@
+name: Test combined run with skip selector
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          root: tests/fixtures/sample-project
+          version: 3.44.0
+          fail-on-issues: 'false'
+          sarif: 'false'
+          auto-changed-since: 'false'
+          type-aware: 'false'
+          skip: health
+          mutation: 'false'
+          mutation-max-mutants: '10'
+          mutation-min-score: '50'
+      - name: Assert outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          MUTATION_OUTCOME: ${{ steps.action.outputs.mutation-outcome }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          echo "mutation-outcome: '$MUTATION_OUTCOME'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues is not numeric"
+            exit 1
+          fi
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if [ -n "$MUTATION_OUTCOME" ]; then
+            echo "FAIL: mutation-outcome should be empty when mutation is false"
+            exit 1
+          fi
+          echo "PASS"

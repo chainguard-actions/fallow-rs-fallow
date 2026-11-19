@@ -1,0 +1,7 @@
+name: gen
+on: push
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx tsup src/ci-input.ts

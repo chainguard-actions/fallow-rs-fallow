@@ -1,0 +1,36 @@
+---
+source: crates/output/src/mutation_ci_tests.rs
+expression: both_headings(&view)
+---
+#### Mutation testing
+
+**Score below the minimum.** The score is 62.5%, and the minimum is 80%.
+
+<details>
+<summary>Counts and details</summary>
+
+| Killed | Survived | No coverage | Score |
+| --: | --: | --: | --: |
+| 10 | 6 | 0 | 62.5% |
+
+A survived mutant is a code change that no test detects. The **Tests** section above lists the survived mutants on the changed lines. Add a test that fails on the change.
+
+To inspect a mutant, run `fallow mutation inspect <mutant-id> --report fallow-mutation.json` with the report that this job writes.
+
+</details>
+
+===== summary heading =====
+
+## Mutation testing
+
+**Score below the minimum.** The score is 62.5%, and the minimum is 80%.
+
+| Killed | Survived | No coverage | Score |
+| --: | --: | --: | --: |
+| 10 | 6 | 0 | 62.5% |
+
+The run took 4m 12s. 3 results came from the cache.
+
+A survived mutant is a code change that no test detects. Add a test that fails on the change.
+
+To inspect a mutant, run `fallow mutation inspect <mutant-id> --report fallow-mutation.json` with the report that this job writes.
