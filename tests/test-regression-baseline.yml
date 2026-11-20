@@ -1,0 +1,53 @@
+name: Test regression baseline save and compare
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: 3.45.0
+          issue-types: unused-files,unused-exports
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression.json
+      - name: Assert regression baseline saved
+        run: |
+          if [ ! -f "$GITHUB_WORKSPACE/fallow-regression.json" ]; then
+            echo "FAIL: regression baseline file not written"
+            exit 1
+          fi
+          cat "$GITHUB_WORKSPACE/fallow-regression.json"
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: 3.45.0
+          issue-types: unused-files,unused-exports
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          fail-on-regression: 'true'
+          regression-baseline: ${{ github.workspace }}/fallow-regression.json
+      - name: Assert no regression on identical code
+        env:
+          OUTCOME: ${{ steps.compare.outcome }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "issues: $ISSUES"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected no regression"
+            exit 1
+          fi
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]] || [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected the known issues to still be counted"
+            exit 1
+          fi
+          echo "PASS"

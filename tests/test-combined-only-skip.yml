@@ -1,0 +1,47 @@
+name: Test combined run with only and skip selectors
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: only
+        uses: .
+        with:
+          root: tests/fixtures/clean-project
+          version: 3.45.0
+          auto-changed-since: 'false'
+          fail-on-issues: 'false'
+          only: dead-code
+      - id: skip
+        uses: .
+        with:
+          root: tests/fixtures/clean-project
+          version: 3.45.0
+          auto-changed-since: 'false'
+          fail-on-issues: 'false'
+          artifacts-dir: skip-artifacts
+          skip: dupes,health
+      - name: Assert both combined runs produced results
+        env:
+          ONLY_ISSUES: ${{ steps.only.outputs.issues }}
+          ONLY_RESULTS: ${{ steps.only.outputs.results }}
+          SKIP_ISSUES: ${{ steps.skip.outputs.issues }}
+          SKIP_RESULTS: ${{ steps.skip.outputs.results }}
+        run: |
+          echo "only: issues=$ONLY_ISSUES results=$ONLY_RESULTS"
+          echo "skip: issues=$SKIP_ISSUES results=$SKIP_RESULTS"
+          for v in "$ONLY_ISSUES" "$SKIP_ISSUES"; do
+            if ! [[ "$v" =~ ^[0-9]+$ ]]; then
+              echo "FAIL: issues output is not a number: '$v'"
+              exit 1
+            fi
+          done
+          for f in "$ONLY_RESULTS" "$SKIP_RESULTS"; do
+            if [ ! -f "$f" ]; then
+              echo "FAIL: results file missing: $f"
+              exit 1
+            fi
+          done
+          echo "PASS"

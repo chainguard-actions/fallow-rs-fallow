@@ -1,0 +1,70 @@
+{
+  "name": "api-combined-per-analysis-split",
+  "files": {
+    ".fallowrc.json": "{\"production\":{\"deadCode\":true,\"dupes\":false}}",
+    "package.json": "{}"
+  },
+  "env": {
+    "FALLOW_PRODUCTION_HEALTH": "1"
+  },
+  "inputs": {
+    "mcp": {
+      "not_expressible": "The typed MCP rows of this matrix have no combined tool"
+    },
+    "api": {
+      "entry": "combined"
+    },
+    "node": {
+      "not_expressible": "The Node bindings have no combined entry point"
+    },
+    "lsp": {
+      "initializationOptions": {}
+    },
+    "vscode": {
+      "settings": {
+        "fallow.production": "auto"
+      },
+      "compare_keys": [
+        "production"
+      ]
+    },
+    "cli": {
+      "argv": [
+        "fallow"
+      ]
+    }
+  },
+  "expected": {
+    "surface": "<row>",
+    "command": "combined",
+    "analyses.dead_code.production": {
+      "value": true,
+      "source": "config-file:production.deadCode"
+    },
+    "analyses.duplication.production": {
+      "value": false,
+      "source": "config-file:production.dupes"
+    },
+    "analyses.health.production": {
+      "value": false,
+      "source": "config-file:production.health"
+    }
+  },
+  "deviations": {
+    "lsp": {
+      "reason": "The language server has one editor command, which plans dead code and duplication",
+      "expected": {
+        "command": "editor"
+      }
+    },
+    "cli": {
+      "reason": "The CLI reads the FALLOW_PRODUCTION* variables for the bare run",
+      "expected": {
+        "analyses.health.production": {
+          "value": true,
+          "source": "environment:FALLOW_PRODUCTION_HEALTH"
+        }
+      }
+    }
+  }
+}

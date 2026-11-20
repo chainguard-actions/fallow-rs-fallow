@@ -1,0 +1,83 @@
+{
+  "name": "given-production-flag",
+  "files": {
+    ".fallowrc.json": "{\"production\":false}",
+    "package.json": "{}"
+  },
+  "inputs": {
+    "mcp": {
+      "tool": "analyze",
+      "params": {
+        "production": true
+      }
+    },
+    "cli": {
+      "argv": [
+        "fallow",
+        "dead-code",
+        "--production"
+      ]
+    },
+    "api": {
+      "entry": "dead-code",
+      "options": {
+        "production_override": true
+      }
+    },
+    "node": {
+      "function": "detectDeadCode",
+      "options": {
+        "production": true
+      }
+    },
+    "lsp": {
+      "initializationOptions": {
+        "production": true
+      }
+    },
+    "vscode": {
+      "settings": {
+        "fallow.production": "on"
+      },
+      "compare_keys": [
+        "production"
+      ]
+    }
+  },
+  "expected": {
+    "surface": "<row>",
+    "analyses.dead_code.production": {
+      "value": true,
+      "source": "given:production"
+    }
+  },
+  "deviations": {
+    "api": {
+      "reason": "The Rust API names its option analysis.production_override",
+      "expected": {
+        "analyses.dead_code.production": {
+          "value": true,
+          "source": "given:analysis.production_override"
+        }
+      }
+    },
+    "lsp": {
+      "reason": "The editor names the setting fallow.production",
+      "expected": {
+        "analyses.dead_code.production": {
+          "value": true,
+          "source": "given:fallow.production"
+        }
+      }
+    },
+    "cli": {
+      "reason": "The CLI names the flag --production",
+      "expected": {
+        "analyses.dead_code.production": {
+          "value": true,
+          "source": "given:--production"
+        }
+      }
+    }
+  }
+}

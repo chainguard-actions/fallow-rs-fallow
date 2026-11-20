@@ -1,0 +1,32 @@
+name: Test custom artifacts-dir
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean-project
+          version: 3.45.0
+          artifacts-dir: fallow-artifacts
+          issue-types: unused-files,unused-exports
+          auto-changed-since: 'false'
+      - name: Assert artifacts written to custom dir
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          ls -la fallow-artifacts || true
+          case "$RESULTS" in
+            *fallow-artifacts/fallow-results.json) ;;
+            *) echo "FAIL: results path not under fallow-artifacts"; exit 1 ;;
+          esac
+          if [ ! -f "$GITHUB_WORKSPACE/fallow-artifacts/fallow-results.json" ]; then
+            echo "FAIL: fallow-artifacts/fallow-results.json not found"
+            exit 1
+          fi
+          echo "PASS"

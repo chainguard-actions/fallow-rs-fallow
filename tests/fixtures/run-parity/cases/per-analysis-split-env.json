@@ -1,0 +1,74 @@
+{
+  "name": "per-analysis-split-env",
+  "files": {
+    ".fallowrc.json": "{\"production\":{\"deadCode\":true,\"dupes\":false}}",
+    "package.json": "{}"
+  },
+  "env": {
+    "FALLOW_PRODUCTION_HEALTH": "1"
+  },
+  "inputs": {
+    "mcp": {
+      "tool": "audit",
+      "params": {}
+    },
+    "cli": {
+      "argv": [
+        "fallow",
+        "audit"
+      ]
+    },
+    "api": {
+      "entry": "audit"
+    },
+    "node": {
+      "not_expressible": "The Node bindings have no audit entry point"
+    },
+    "lsp": {
+      "initializationOptions": {}
+    },
+    "vscode": {
+      "settings": {},
+      "compare_keys": [
+        "production"
+      ]
+    }
+  },
+  "expected": {
+    "surface": "<row>",
+    "command": "audit",
+    "analyses.dead_code.production": {
+      "value": true,
+      "source": "config-file:production.deadCode"
+    },
+    "analyses.duplication.production": {
+      "value": false,
+      "source": "config-file:production.dupes"
+    },
+    "analyses.health.production": {
+      "value": true,
+      "source": "environment:FALLOW_PRODUCTION_HEALTH"
+    }
+  },
+  "deviations": {
+    "api": {
+      "reason": "The Rust API and the Node bindings read no FALLOW_PRODUCTION* variable",
+      "expected": {
+        "analyses.health.production": {
+          "value": false,
+          "source": "config-file:production.health"
+        }
+      }
+    },
+    "lsp": {
+      "reason": "The language server has one editor command, which plans dead code and duplication. The language server reads no FALLOW_PRODUCTION* variable",
+      "expected": {
+        "command": "editor",
+        "analyses.health.production": {
+          "value": false,
+          "source": "config-file:production.health"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+name: Test health command with complexity thresholds
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/clean-project
+          version: 3.45.0
+          auto-changed-since: 'false'
+          max-cyclomatic: '50'
+          max-cognitive: '50'
+          max-crap: '100.5'
+          max-file-lines: '1000'
+          sort: cognitive
+          top: '5'
+          min-severity: critical
+      - name: Assert health run succeeded with no findings
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 health findings with generous thresholds"
+            cat "$RESULTS" || true
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          jq . "$RESULTS" > /dev/null || { echo "FAIL: results not valid JSON"; exit 1; }
+          echo "PASS"

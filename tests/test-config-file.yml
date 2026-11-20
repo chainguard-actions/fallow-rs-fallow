@@ -1,0 +1,42 @@
+name: Test explicit config file with inert mutation inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/clean-project
+          config: ${{ github.workspace }}/tests/fixtures/config/.fallowrc.json
+          version: 3.45.0
+          issue-types: unused-files,unused-exports
+          auto-changed-since: 'false'
+          threads: '2'
+          mutation-max-mutants: '5'
+          mutation-min-score: '50'
+      - name: Assert clean run with config and no mutation step
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          MUTATION_OUTCOME: ${{ steps.action.outputs.mutation-outcome }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "results: $RESULTS"
+          echo "mutation-outcome: '$MUTATION_OUTCOME'"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 issues"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if [ -n "$MUTATION_OUTCOME" ]; then
+            echo "FAIL: mutation-outcome must be empty when mutation is false"
+            exit 1
+          fi
+          echo "PASS"
