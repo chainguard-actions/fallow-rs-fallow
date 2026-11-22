@@ -1,0 +1,47 @@
+{
+  "name": "trace-import-path-production-env",
+  "files": {
+    "package.json": "{}"
+  },
+  "env": {
+    "FALLOW_PRODUCTION": "1"
+  },
+  "inputs": {
+    "mcp": {
+      "tool": "trace_import_path",
+      "params": {
+        "from": "src/a.ts",
+        "to": "src/b.ts"
+      }
+    },
+    "api": {
+      "entry": "trace-path"
+    },
+    "node": {
+      "not_expressible": "The Node bindings have no trace entry point"
+    },
+    "lsp": {
+      "not_expressible": "The language server has no trace command"
+    },
+    "vscode": {
+      "not_expressible": "The editor has no trace input for the language server"
+    },
+    "cli": {
+      "argv": [
+        "fallow",
+        "trace",
+        "--path",
+        "src/a.ts",
+        "src/b.ts"
+      ]
+    }
+  },
+  "expected": {
+    "surface": "<row>",
+    "command": "trace-path",
+    "analyses.dead_code.production": {
+      "value": false,
+      "source": "default:production-off"
+    }
+  }
+}

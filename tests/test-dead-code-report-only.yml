@@ -1,0 +1,67 @@
+name: Test dead-code report-only (fail-on-issues false)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.46.0'
+          fail-on-issues: 'false'
+          artifacts-dir: fallow-artifacts-dead-code
+      - name: Assert issues were found
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ "$ISSUES" -lt 1 ]; then
+            echo "FAIL: expected at least one dead-code issue in the dirty fixture"
+            exit 1
+          fi
+          echo "PASS"
+      - name: Assert results file is valid JSON
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if ! jq -e . "$RESULTS" > /dev/null; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
+          case "$RESULTS" in
+            *fallow-artifacts-dead-code*) ;;
+            *) echo "FAIL: results not written under artifacts-dir"; exit 1 ;;
+          esac
+          if ! grep -q "orphan" "$RESULTS"; then
+            echo "FAIL: expected orphan.ts to be reported"
+            exit 1
+          fi
+          echo "PASS"
+      - name: Assert non-audit outputs
+        env:
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          UNAVAILABLE: ${{ steps.action.outputs.changed-files-unavailable }}
+        run: |
+          echo "verdict: '$VERDICT' changed-files-unavailable: '$UNAVAILABLE'"
+          if [ -n "$VERDICT" ]; then
+            echo "FAIL: verdict should be empty for dead-code"
+            exit 1
+          fi
+          if [ "$UNAVAILABLE" != "true" ] && [ "$UNAVAILABLE" != "false" ]; then
+            echo "FAIL: changed-files-unavailable should be true/false"
+            exit 1
+          fi
+          echo "PASS"

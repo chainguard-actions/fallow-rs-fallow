@@ -1,0 +1,61 @@
+name: Test combined run with only and per-analysis baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: health-save
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/dirty-project
+          version: '3.46.0'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-health-baseline.json
+          artifacts-dir: fallow-artifacts-health-save
+      - id: dupes-save
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/dirty-project
+          version: '3.46.0'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-dupes-baseline.json
+          artifacts-dir: fallow-artifacts-dupes-save
+      - name: Assert baselines were saved
+        run: |
+          for f in fallow-health-baseline.json fallow-dupes-baseline.json; do
+            if [ ! -s "$GITHUB_WORKSPACE/$f" ]; then
+              echo "FAIL: $f missing"
+              exit 1
+            fi
+          done
+          echo "PASS"
+      - id: action
+        uses: .
+        with:
+          command: ''
+          root: tests/fixtures/dirty-project
+          version: '3.46.0'
+          fail-on-issues: 'false'
+          only: health,dupes
+          health-baseline: ${{ github.workspace }}/fallow-health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/fallow-dupes-baseline.json
+          artifacts-dir: fallow-artifacts-combined-baselines
+      - name: Assert combined run produced results
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES results: $RESULTS"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq -e . "$RESULTS" > /dev/null; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          echo "PASS"

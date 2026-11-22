@@ -1,0 +1,44 @@
+name: Test combined run skipping health and dupes
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          command: ''
+          root: tests/fixtures/dirty-project
+          version: '3.46.0'
+          fail-on-issues: 'false'
+          skip: health,dupes
+          mutation: 'false'
+          mutation-max-mutants: '5'
+          mutation-min-score: '80'
+          artifacts-dir: fallow-artifacts-combined-skip
+      - name: Assert combined run produced results
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+          MUTATION_OUTCOME: ${{ steps.action.outputs.mutation-outcome }}
+        run: |
+          echo "issues: $ISSUES mutation-outcome: '$MUTATION_OUTCOME'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ] || ! jq -e . "$RESULTS" > /dev/null; then
+            echo "FAIL: results file missing or invalid JSON"
+            exit 1
+          fi
+          if ! grep -q "orphan" "$RESULTS"; then
+            echo "FAIL: dead-code analysis should still report orphan.ts"
+            exit 1
+          fi
+          if [ -n "$MUTATION_OUTCOME" ]; then
+            echo "FAIL: mutation-outcome should be empty when mutation is false"
+            exit 1
+          fi
+          echo "PASS"

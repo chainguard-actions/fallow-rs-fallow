@@ -1,0 +1,30 @@
+---
+source: crates/cli/tests/integration/report_mutation_tests.rs
+expression: body
+---
+{
+  "kind": "review-envelope",
+  "event": "COMMENT",
+  "body": "### Fallow codebase report\n\n> Gates: failed error-severity-findings (2 at or above error).\n\n1 inline comment on the changed lines. Open the Files changed tab to review.\n\n<!-- fallow-review -->\n\n<!-- fallow-fingerprint:v3: 3c139c688d46ae07 -->",
+  "summary": {
+    "body": "### Fallow codebase report\n\n> Gates: failed error-severity-findings (2 at or above error).\n\n1 inline comment on the changed lines. Open the Files changed tab to review.\n\n<!-- fallow-review -->\n\n<!-- fallow-fingerprint:v3: 3c139c688d46ae07 -->",
+    "fingerprint": "3c139c688d46ae07"
+  },
+  "comments": [
+    {
+      "path": "src/age.ts",
+      "line": 5,
+      "side": "RIGHT",
+      "body": "**error** [`fallow/unused-export`](https://fallow.tools/docs/rules/unused-export/): Export `isSenior` is never imported by other modules\n\n**Fix:** Remove the export, or keep it when it is public API.\n\n```suggestion\nfunction isSenior(age: number): boolean {\n```\n\n<!-- fallow-fingerprint:v3: 61a33f11cb50d50e -->",
+      "fingerprint": "61a33f11cb50d50e",
+      "legacy_fingerprint": "7c61df017aab5b28"
+    }
+  ],
+  "marker_regex": "^<!-- fallow-fingerprint:v[23]: ((?:[a-z]+:)?[0-9a-f]{16}) -->\\s*$",
+  "marker_regex_flags": "m",
+  "meta": {
+    "schema": "fallow-review-envelope/v3",
+    "provider": "github",
+    "check_conclusion": "failure"
+  }
+}

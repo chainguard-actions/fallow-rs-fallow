@@ -1,0 +1,85 @@
+{
+  "name": "explicit-production-off",
+  "files": {
+    ".fallowrc.json": "{\"production\":true}",
+    "package.json": "{}"
+  },
+  "inputs": {
+    "mcp": {
+      "tool": "analyze",
+      "params": {
+        "production": false
+      }
+    },
+    "cli": {
+      "argv": [
+        "fallow",
+        "dead-code",
+        "--no-production"
+      ]
+    },
+    "api": {
+      "entry": "dead-code",
+      "options": {
+        "production_override": false
+      }
+    },
+    "node": {
+      "function": "detectDeadCode",
+      "options": {
+        "production": false
+      }
+    },
+    "lsp": {
+      "initializationOptions": {
+        "production": false
+      }
+    },
+    "vscode": {
+      "settings": {
+        "fallow.production": "off"
+      },
+      "compare_keys": [
+        "production"
+      ]
+    }
+  },
+  "expected": {
+    "surface": "<row>",
+    "command": "dead-code",
+    "analyses.dead_code.production": {
+      "value": false,
+      "source": "given:production"
+    }
+  },
+  "deviations": {
+    "api": {
+      "reason": "The Rust API names its option analysis.production_override",
+      "expected": {
+        "analyses.dead_code.production": {
+          "value": false,
+          "source": "given:analysis.production_override"
+        }
+      }
+    },
+    "lsp": {
+      "reason": "The language server has one editor command, which plans dead code and duplication. The editor names the setting fallow.production",
+      "expected": {
+        "command": "editor",
+        "analyses.dead_code.production": {
+          "value": false,
+          "source": "given:fallow.production"
+        }
+      }
+    },
+    "cli": {
+      "reason": "The CLI names the flag --no-production",
+      "expected": {
+        "analyses.dead_code.production": {
+          "value": false,
+          "source": "given:--no-production"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+name: Test dead-code save-baseline then compare against it
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.46.0'
+          fail-on-issues: 'false'
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          artifacts-dir: fallow-artifacts-baseline-save
+      - name: Assert baseline file was saved
+        run: |
+          F="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
+          if [ ! -s "$F" ] || ! jq -e . "$F" > /dev/null; then
+            echo "FAIL: baseline file missing or not valid JSON"
+            exit 1
+          fi
+          cat "$F"
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.46.0'
+          fail-on-issues: 'true'
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          artifacts-dir: fallow-artifacts-baseline-compare
+      - name: Assert baseline was loaded and suppresses existing issues
+        env:
+          OUTCOME: ${{ steps.compare.outcome }}
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          BASELINE_PATH: ${{ steps.compare.outputs.baseline-path }}
+          EXPECTED_PATH: ${{ github.workspace }}/fallow-dead-code-baseline.json
+        run: |
+          echo "outcome: $OUTCOME issues: $ISSUES baseline-path: '$BASELINE_PATH'"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected baseline to suppress all known issues"
+            exit 1
+          fi
+          if [ -n "$BASELINE_PATH" ] && [ "$BASELINE_PATH" != "$EXPECTED_PATH" ]; then
+            echo "FAIL: baseline-path should echo the baseline input"
+            exit 1
+          fi
+          echo "PASS"

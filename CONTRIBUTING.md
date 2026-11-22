@@ -1,0 +1,431 @@
+# Contributing to Fallow
+
+Thanks for contributing to fallow. This guide covers setup, development, and pull requests.
+
+## Getting started
+
+Repository tooling requires Node.js 22.13.0 or later, because pnpm 11 needs it. Published Node packages
+require Node.js 22 or later.
+
+```bash
+git clone https://github.com/fallow-rs/fallow.git
+cd fallow
+mise install         # Optional: pinned Node.js, pnpm, hk, pkl and cargo tools
+pnpm bootstrap       # Install the git hooks and all dependencies
+pnpm verify:fast     # Canonical local feedback loop
+```
+
+[mise](https://mise.jdx.dev) is optional. `mise install` gets the versions in
+`mise.toml`: Node.js, pnpm, [hk](https://hk.jdx.dev), pkl and the cargo tools
+that the hooks call (`typos`, `cargo-fallow` and others). Without mise, install
+pnpm, hk and pkl at the versions in `mise.toml`. Rustup installs Rust from
+`rust-toolchain.toml`, so `mise.toml` does not pin Rust. See
+[quality gates](docs/development/quality-gates.md#pinned-tools-with-mise-optional).
+
+`pnpm bootstrap` runs `scripts/bootstrap.mjs`. You can run it again at any
+time. It does these steps:
+
+1. It checks for Node.js 22.13.0 or later, pnpm and hk. For each missing tool,
+   it prints one install hint and stops.
+2. It removes `core.hooksPath` from the repository config when its value is
+   `.githooks`, the hooks folder of old clones. It keeps any other value, and
+   any value from your global config, and prints a warning. With git 2.54 or
+   later, git then runs the hooks in that folder in addition to the hk hooks.
+   With older git, the hk hooks do not run while the setting exists.
+3. It installs the hooks that `hk.pkl` defines. With mise on `PATH`, it runs
+   `hk install --mise`, so the hooks find the pinned tools also when your
+   shell does not activate mise. Without mise, it runs `hk install`.
+4. It runs `pnpm install --frozen-lockfile` at the root and in
+   `editors/vscode`.
+
+The hooks skip a check with a hint when its tool is missing. To skip the hooks
+for one command, use `HK=0 git commit` or `HK=0 git push`.
+
+On Windows, enable symlink checkout support before cloning. If you already
+cloned the repo, enable it and check out the repo again:
+
+```bash
+git config --global core.symlinks true
+```
+
+The CLI's bundled GitLab CI templates under `crates/cli/templates/ci/` are
+symlinks to the canonical workspace sources under `ci/`. Cargo dereferences
+them when packaging the published crate.
+
+## Development workflow
+
+### Building
+
+```bash
+cargo build --workspace              # Debug build
+cargo build --release -p fallow-cli  # Release build (CLI only)
+```
+
+### Testing
+
+```bash
+npm run verify                        # Alias for the canonical fast checks
+npm run verify:fast                   # Formatting, linting, contracts, boundaries
+npm run verify:full                   # Fast checks plus script/npm/Rust tests, benches, docs, NAPI
+cargo test -p fallow-core             # Focused single-crate test run
+```
+
+Run `pnpm bootstrap` before either verification command. Full verification also
+requires `npm ci` under `crates/napi` and a local platform compiler. It is the
+most comprehensive local gate and is recommended before pushing substantial
+changes.
+
+Local verification is deliberately not a simulation of every CI job. Miri,
+MSRV and cross-platform jobs, feature-specific and editor integration jobs,
+release and publish jobs, and network or real-project smoke tests remain
+CI-only. Run `npm run verify:full -- --help` to review the exact local scope and
+exclusions.
+
+### Rust structure checks
+
+[cargo-fallow](https://github.com/fallow-rs/cargo-fallow) checks the Rust
+workspace: unused dependencies and files, visibility, crate boundaries,
+complexity and duplication. The required `Rust Structure` CI job and the
+pre-push hook run it. Install the version in `mise.toml`, then run:
+
+```bash
+cargo fallow check --baseline cargo-fallow-baseline.json --fail-on-issues
+cargo fallow fix --dry-run   # Show the safe edits
+```
+
+See [Rust structure](docs/development/quality-gates.md#rust-structure).
+
+### Fuzzing
+
+The fuzz harnesses require a Rust nightly toolchain and cargo-fuzz 0.13.2:
+
+```bash
+rustup toolchain install nightly
+cargo install cargo-fuzz --version 0.13.2 --locked
+cargo +nightly fuzz list
+cargo +nightly fuzz run fuzz_sfc -- -max_total_time=30 -timeout=10
+```
+
+Each target uses seed inputs from `fuzz/corpus/<target-name>/`. Pushes to
+`main` that affect the parser pipeline run every target for 30 seconds. The
+scheduled workflow runs every target for five minutes each week and can also
+be started manually. Crashing inputs are retained as workflow artifacts.
+
+Most targets check that a parser does not panic or hang. Some targets also
+check a property:
+
+- `fuzz_config_glob` and `fuzz_config_files`: when glob validation accepts a
+  pattern, the pattern cannot name a path outside the project root.
+- `fuzz_extract_cache`: two parses of one source give the same cache bytes,
+  and a cache save and load cycle does not change a module.
+
+To add a target, add a `[[bin]]` entry to `fuzz/Cargo.toml`, add seed inputs
+to `fuzz/corpus/<target-name>/`, and add the name to the target list in
+`.github/workflows/fuzz-smoke.yml`. A target can have a libFuzzer dictionary
+at `fuzz/dicts/<target-name>.dict`; the smoke workflow and OSS-Fuzz use it.
+`node scripts/fuzz-seed-extract.mjs` writes the `fixture_*` seeds of the
+extraction targets from `tests/fixtures/`.
+
+When you run a target locally, give a scratch directory as the first corpus
+argument, so that new inputs do not go into the committed seed corpus. With
+`-O`, also pass `-a`: the `bitcode` crate reads past the end of a buffer for
+speed when debug assertions are off, and the sanitizer reports that read.
+
+```bash
+cargo +nightly fuzz run -O -a fuzz_extract /tmp/fuzz-extract fuzz/corpus/fuzz_extract -- -dict=fuzz/dicts/fuzz_extract.dict
+```
+
+### Running locally
+
+```bash
+cargo run --bin fallow -- dead-code       # Unused code analysis
+cargo run --bin fallow -- dupes           # Duplication detection
+cargo run --bin fallow -- health          # Complexity metrics
+cargo run --bin fallow -- fix --dry-run   # Auto-fix preview
+cargo run --bin fallow -- list --plugins  # Show detected plugins
+```
+
+### Benchmarks
+
+```bash
+cargo bench --bench analysis                                    # Criterion benchmarks
+cd benchmarks && npm run generate && npm run bench              # Dead code, end to end
+cd benchmarks && npm run generate:dupes && npm run bench:dupes  # Duplication, end to end
+cd benchmarks && npm run generate:circular && npm run bench:circular  # Circular dependencies, end to end
+```
+
+## Project structure
+
+The workspace follows the ownership boundaries in
+[`docs/architecture-invariants.md`](docs/architecture-invariants.md):
+
+| Path | Responsibility |
+| --- | --- |
+| `crates/types/` | Shared typed contracts, issue metadata, suppressions, and envelope data. |
+| `crates/config/` | Configuration loading, typed configuration, presets, and workspace discovery. |
+| `crates/process/` | Shared child-process lifecycle and cross-platform process-tree termination. |
+| `crates/extract/` | Parser-facing facts for JavaScript, TypeScript, framework files, MDX, and CSS. |
+| `crates/graph/` | Module graph construction, import resolution, dependency traversal, cycles, and impact facts. |
+| `crates/security/` | Shared security matcher catalogue and candidate helpers. |
+| `crates/core/` | Internal detector backend used by `fallow-engine` for private detector phases. Product adapters use the workspace facade instead. |
+| `crates/mutation/` | Mutant site discovery and mutation-switching instrumentation used by the mutation engine. |
+| `crates/engine/` | Analysis sessions, discovery, parsing, graph construction, and typed analysis orchestration. |
+| `crates/report-protocol/` | Language-neutral report contract: the error envelope, gate outcomes, and exit codes. |
+| `crates/output/` | Shared output contracts, action builders, summaries, SARIF builders, and reusable formatter pieces. |
+| `crates/api/` | Workspace Rust facade and programmatic workflow adapters. Its crate API is not an external semver contract. |
+| `crates/cli/` | CLI protocol adapter, command dispatch, terminal interaction, and protocol-specific serialization. |
+| `crates/lsp/` | LSP adapter for diagnostics, code actions, hover, and code lens. |
+| `crates/mcp/` | MCP adapter exposing fallow as typed tools for AI agents. |
+| `crates/multicall/` | Unpublished binary crate bundling the CLI, LSP, and MCP servers into the single `fallow` binary shipped by the npm platform packages. |
+| `crates/napi/` | NAPI adapter and Node.js bindings over the workspace Rust facade. |
+| `crates/license/` | Offline signed-license verification used by licensed CLI capabilities. |
+| `crates/v8-coverage/` | V8 coverage parsing and source-offset mapping. |
+| `crates/benchmarks/` | CodSpeed and Criterion benchmark suites for the Rust workspace. |
+| `editors/vscode/` | VS Code extension and generated TypeScript contract consumer. |
+| `editors/zed/` | Zed extension. |
+| `editors/nvim/` | Neovim integration documentation. |
+| `npm/fallow/` | npm wrapper, launchers, generated types, and bundled agent skill. |
+| `npm/<platform>/` | Platform-specific native binary packages consumed by the npm wrapper. |
+| `packaging/crates-io/fallow/` | Thin binary crate `fallow` outside the workspace, so that `cargo install fallow` installs the command of `fallow-cli`. The release publishes it after `fallow-cli` with the same version. |
+
+Dependency direction is deliberate. Foundation and analysis crates do not
+depend on protocol adapters. `fallow-core` remains an internal detector backend
+behind `fallow-engine`; `fallow-output` shapes reusable contracts without
+starting analysis; `fallow-api` provides the workspace Rust facade. The CLI,
+LSP, MCP, and NAPI adapters translate their protocol options and call
+`fallow-api` or `fallow-engine` rather than calling `fallow-core` directly.
+
+## Adding a framework plugin
+
+The most common contribution is adding support for a new framework. Each plugin lives in `crates/core/src/plugins/` as a single Rust file.
+
+1. Create `crates/core/src/plugins/my_framework.rs`.
+2. Implement the `Plugin` trait using an existing built-in as a reference.
+3. Declare the module in `crates/core/src/plugins/mod.rs`.
+4. Import and instantiate it in the correct category in
+   `crates/core/src/plugins/registry/builtin.rs`.
+5. Add focused plugin tests and an end-to-end fixture.
+
+A minimal plugin needs these methods:
+
+- `name()`: framework name
+- `enablers()`: package.json dependencies that activate the plugin
+- `entry_patterns()`: glob patterns for entry point files
+- Optionally: `resolve_config()` for AST-based config parsing
+
+See the [Plugin Authoring Guide](docs/plugin-authoring.md) for external plugin
+files and the built-in extension points.
+
+## Adding an analyzer or finding
+
+New built-in findings need more than detector code: rule metadata, output
+formats, suppressions, LSP/MCP surfaces, fixtures, and generated contract files
+must move together. Use the [Analyzer Authoring Guide](docs/analyzer-authoring.md)
+before adding a new issue kind or framework-specific analyzer.
+
+## Adding a known tooling dependency
+
+Some dev tools are used through the CLI or config rather than imported in source (`typescript`, `prettier`, `husky`, `@types/*`), so an import is not what makes them used. These live in a data-driven catalogue at `crates/core/data/tooling.toml`. Adding one is a single-file, one-entry change with no regeneration step:
+
+```toml
+# A whole package family (every member is tooling):
+[[prefix]]
+pattern = "@types/"
+notes = "TypeScript type definitions"
+
+# A single package:
+[[exact]]
+name = "typescript"
+ecosystem = "core"
+```
+
+- Use `[[prefix]]` when every package under a scope or name family is tooling (matched with `name.starts_with(pattern)`); use `[[exact]]` for a single package name. `notes` / `ecosystem` are optional, for human context only.
+- Add `cli = true` to an entry for a command-line tool. A command-line tool in `devDependencies` is credited only when a package.json script, a CI workflow or a git hook runs it, when a plugin credits it, or when its own config file exists. List the config files of a tool that no plugin covers in `config = ["..."]`, relative to the package root (for example `config = [".jscpd.json"]`). An entry without `cli` is a library and is credited by name.
+- A `@types/X` package is not credited by the `@types/` prefix alone. In `devDependencies` it is credited when the project declares `X`, imports `X` or names `X` in a tsconfig `types` entry. A type package that declares globals and is never imported (`@types/node`, `@types/jest`, `bun-types`) goes under `[[ambient_types]]` with its exact `name`; keep that list short.
+- Do **not** add framework-plugin packages (`vite-plugin-*`, `prettier-plugin-*`, `eslint-plugin-*`, `@rollup/plugin-*`, or scoped forms like `@ianvs/prettier-plugin-sort-imports`). Those must be credited by the relevant plugin's config parser when they actually appear in the config file; listing them here would hide a declared-but-unused plugin. The catalogue's parse tests reject such entries.
+- Run `cargo test -p fallow-core plugins::tooling` to validate the catalogue (it checks the TOML parses, has no empty/whitespace prefixes, no duplicates, and no framework-plugin entries). The file is embedded into the binary via `include_str!`, so a passing test means a working release.
+
+## Crediting a dependency named by a config value
+
+Some packages are loaded at runtime only because a config value names them, with no import anywhere: `test.environment: "jsdom"` makes jsdom lazily require its optional peer `canvas`, and Vite's `css.transformer: "lightningcss"` makes Vite require `lightningcss`. Those rules live in a second data-driven catalogue at `crates/core/data/config_value_credits.toml`, next to `tooling.toml` and parsed the same way (embedded via `include_str!`, no regeneration step):
+
+```toml
+[[credit]]
+surface = "test-environment-optional-peer"
+value = "jsdom"
+credits = ["canvas"]
+notes = "optional, human context only"
+```
+
+- `surface` says which config location the value came from. The set is closed, because each surface has a call site in a plugin that knows how to normalize the value first. Adding a row for an existing surface is pure data; adding a surface means adding the `CreditSurface` variant and its call site in the same change.
+- `value` is matched exactly, after that normalization (the test-environment surfaces strip the `jest-environment-` / `vitest-environment-` prefix). `credits` must be non-empty. Only packages the project actually declares are ever reported, so a credit never invents a dependency.
+- Do **not** turn this into "credit every optional peer of a used package". Vite alone declares twelve optional peers, so that rule would silently exempt all of them and hide genuinely unused dependencies. Every row needs a specific, config-observable reason the package is loaded.
+- Run `cargo test -p fallow-core config_value_credits` to validate the catalogue (it checks the TOML parses, rejects unknown surfaces and fields, empty values or credits, and duplicate rows).
+
+## Crediting a dependency named by a CLI flag value
+
+Some CLIs load an npm package because a flag value names it: `eslint --format gha` loads `eslint-formatter-gha`, `mocha --reporter mochawesome` loads `mochawesome`, `node -r dotenv/config` loads `dotenv`. Those conventions live in a third data-driven catalogue at `crates/core/data/cli_flag_credits.toml`, next to the other two and parsed the same way (embedded via `include_str!`, no regeneration step):
+
+```toml
+[[flag-credit]]
+binaries = ["mocha"]
+flags = ["--reporter", "-R"]
+resolution = "verbatim"
+builtins = ["spec", "dot", "json"]
+notes = "optional, human context only"
+```
+
+- `resolution` says how the tool maps the value to a package: `prefixed` (eslint's `normalizePackageName` expansion with the entry's `prefix`), `prefixed-then-bare` (jest-resolve tries the prefixed name and then the plain one, so both are credited), or `verbatim` (the value is the package, optionally with a subpath such as `dotenv/config`). The set is closed; a new resolution algorithm means a new enum variant in `crates/core/src/scripts/flag_credits.rs` in the same change.
+- `builtins` lists values the tool resolves internally; they credit nothing. List them whenever built-in names collide with real npm packages (mocha's `json`, `markdown` and `list` reporters do).
+- Do **not** add a generic "any bare token matching a declared dependency" rule. A wrong credit produces no signal anywhere, it just makes a real finding vanish, and values like `--platform node` and `--env production` collide with real package names. Every row needs a documented, tool-specific loading convention.
+- Run `cargo test -p fallow-core flag_credits` to validate the catalogue (it checks the TOML parses, rejects unknown resolutions and fields, malformed flags, prefix-contract violations, and duplicate `(binary, flag)` rows).
+
+## Editing the JSON output contract
+
+Fallow's JSON output schema lives in `docs/output-schema.json` (JSON Schema draft-07) and is consumed by downstream tools (VS Code extension TypeScript codegen, GitHub Action jq scripts, AI agents using AJV validation).
+
+The schema covers two layers, with different ownership rules:
+
+### Layer 1: types derived from Rust
+
+Rust-owned schema types live across `crates/types/src/` (analysis and base payloads), `crates/output/src/` (health, action, utility, and envelope wire shapes), `crates/report-protocol/src/` (the error envelope and gate outcomes), `crates/api/src/` (programmatic and attribution wrappers), and `crates/config/src/` (configuration inputs). The types, output, and API crates gate their `JsonSchema` derives behind a `schema` feature; config derives `JsonSchema` unconditionally because it also owns the configuration schema. The authoritative output-contract inventory is `derived_definition_names()` plus the corresponding registrations and imports in `crates/cli/src/bin/schema_emit.rs`.
+
+The CLI's `schema-emit` feature enables the feature-gated derives through `fallow-cli/schema` and includes config's always-available schema types, so a single `cargo run -p fallow-cli --features schema-emit --bin fallow-schema-emit` covers the whole tree.
+
+A drift gate (`cargo test -p fallow-cli --features schema-emit --bin fallow-schema-emit`) compares the derived shape against the committed `docs/output-schema.json` and fails when:
+- a Rust struct gains a field that is missing from the schema,
+- a Rust struct loses a field that is still listed in the schema,
+- a Rust field is required but the schema has it optional (or vice versa),
+- any structural divergence on the Rust-owned definitions (full equality after canonicalization erases cosmetic differences: doc-comment prose, `oneOf`/`anyOf` choice, single-arm `allOf` wrappers, schemars integer-width hints, `Option<T>` nullable-union form).
+
+To regenerate `docs/output-schema.json` against the Rust source of truth:
+
+```bash
+cargo run -p fallow-cli --features schema-emit --bin fallow-schema-emit > docs/output-schema.json
+```
+
+Every type in `derived_definition_names()` is regenerated from Rust. Descriptions come from `///` doc comments, and per-envelope titles come from `#[schemars(title = "...")]`. Hand edits to these committed definitions fail the strict gate on the next `cargo test`.
+
+### Layer 2: hand-written sections
+
+The following metadata and registration rules apply to `docs/output-schema.json`:
+
+- **Top-level metadata** (`$schema`, `$id`, `$comment`, `title`); the `merge_with_committed` step in `crates/cli/src/bin/schema_emit.rs` preserves them verbatim. `$id` is the canonical raw GitHub URL and is used by consumers to SHA-pin a schema revision (see `docs/backwards-compatibility.md`). `description` is now overwritten by `rewrite_document_root_one_of` to keep it in sync with the typed root.
+- **Definition exceptions**: `HAND_MAINTAINED_ALLOW_LIST` inside `drift_tests` in `crates/cli/src/bin/schema_emit.rs` is empty. `CloneFamilyAction`, `CloneGroupAction`, and `CoverageAnalyzeOutput` are derived from Rust. The strict drift gate rejects any committed definition that is absent from the derived schema.
+- **Root registration**: `HAND_MAINTAINED_ROOT_ENVELOPES` contains `ErrorOutput`, the derived JSON failure document. It has no `kind` discriminator and uses `error: true` instead. The `hand_maintained_root_envelopes_appear_in_root_one_of` drift test checks that it remains in the root `oneOf`.
+
+The `committed_property_refs_match_derived_property_refs` drift test catches `$ref`-value drift between derived and committed property shapes (e.g. if a future change repoints `CombinedOutput.dupes` away from `DuplicationReport`); this is a check, not a hand-maintained section.
+
+The document-root `oneOf` is generated by `rewrite_document_root_one_of` in `crates/cli/src/bin/schema_emit.rs`. Its object-analysis branch is the typed `FallowOutput` enum in `crates/output/src/root_envelopes.rs`. Hand edits to the root `oneOf` are overwritten on regeneration. The root union is `[FallowOutput, CodeClimateOutput, ...HAND_MAINTAINED_ROOT_ENVELOPES]`. `CodeClimateOutput` uses `#[serde(transparent)]` to serialize as a bare JSON array, as required by Code Climate and GitLab Code Quality. It stays outside `FallowOutput`, whose `#[serde(tag = "kind")]` variants serialize as objects.
+
+If you add a new finding type or utility shape, derive `JsonSchema` on the matching Rust struct, register it in `derived_definition_names()`, and the drift gate forces the schema to follow. **Adding a new top-level envelope** also requires adding a new variant to `FallowOutput` in `crates/output/src/root_envelopes.rs` so the document root keeps documenting every wire shape.
+
+### After editing the schema
+
+Regenerate the complete contract bundle from the repository root after changing
+any schema or generated contract surface:
+
+```bash
+npm run generate:contracts
+```
+
+Before opening a pull request, confirm every committed contract matches a fresh
+generation:
+
+```bash
+npm run generate:contracts:check
+```
+
+## Git conventions
+
+- **Conventional commits**: `feat:`, `fix:`, `chore:`, `refactor:`, `test:`, `docs:`
+- **Commit linting**: `npm run commitlint -- --last --verbose` uses the same rule set as CI
+- **Signed commits**: `git commit -S` (or `git commit -S -s` to add the sign-off too)
+- **Sign-off**: `git commit -s` (see [Developer Certificate of Origin](#developer-certificate-of-origin))
+- Pre-commit hooks run `cargo fmt` and `cargo clippy` automatically
+
+## Developer Certificate of Origin
+
+Fallow uses the [Developer Certificate of Origin](https://developercertificate.org/) (DCO). With a sign-off, you confirm that you wrote the change or have the right to submit it under the project license.
+
+Add a `Signed-off-by` line to every commit with the `-s` flag:
+
+```bash
+git commit -s -m "fix: describe the change"
+```
+
+The line uses your `user.name` and `user.email` from git config:
+
+```text
+Signed-off-by: Your Name <you@example.com>
+```
+
+The email must match the commit author. The sign-off is separate from `-S`, which adds a cryptographic signature. You can use both: `git commit -S -s`.
+
+To add a sign-off to the commits you already made:
+
+```bash
+git rebase --signoff origin/main
+git push --force-with-lease
+```
+
+The `Commit messages` check fails a pull request that has a commit without a sign-off. Pull requests from bots are exempt. After `pnpm bootstrap`, the `commit-msg` hook runs the same check on each commit, so a missing sign-off stops the commit before the push.
+
+## Code style
+
+- Follow existing code patterns
+- `cargo clippy --workspace --all-targets -- -D warnings` must pass (pedantic, nursery and selected restriction lints enabled)
+- `cargo fmt --all -- --check` must pass
+- No `unsafe` without justification
+- Prefer early returns with guard clauses
+
+## Submitting changes
+
+1. Fork the repository
+2. Create a feature branch from `main`
+3. Make your changes with conventional commit messages
+4. Every feature or fix must add or update automated tests. Ensure `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` pass
+5. For a user-visible change, add a changelog fragment: a new file in
+   [`changelog.d/`](changelog.d/README.md). Do not edit `CHANGELOG.md`. The
+   release collects the fragments into it.
+6. Open a pull request against `main`
+
+Sort each item that the change leaves open into one of three groups:
+
+- **Needed work:** a defect that the change finds or leaves, or a part of the task that is not done. Open an issue for each item and link it under a heading such as "Not in this change". The same rule applies to an inline phrase such as "a separate change" or "out of scope". CI verifies that each reference to this repository identifies an existing issue. A pull request reference does not qualify. CI accepts a reference to another repository on its syntax.
+- **Possible follow-ups:** an improvement idea with no known need, for example a small gain for a large refactor. Put it under a "Possible follow-ups" heading, with the reason in a few words. It needs no issue. The maintainer lists these ideas with `node scripts/list-possible-follow-ups.mjs` and opens an issue for each idea that is worth the work.
+- **Known limits:** intended behavior, or a limit that only a change of the design can remove. Put it under a "Known limits" heading. It needs no issue, but CI still checks its text for the deferral phrases above, so describe the limit without them.
+
+Reviewers check that each linked issue covers the deferred work, and that no needed work is under "Possible follow-ups" or "Known limits".
+
+## Contributions made with coding agents
+
+You can use any tool to write a change, including a coding agent. Reviewers judge the change, not the tool. You do not have to say which tool you used.
+
+These rules apply to every pull request:
+
+- You know what the change does and why. You know its impact on users and on other parts of fallow, and the trade-offs that you made. You can explain them in review without the tool. You do not have to know each line.
+- You are responsible for the change. Your `Signed-off-by` line is your own statement under the [DCO](#developer-certificate-of-origin). Add it only when you can stand behind the change.
+- Run the checks in [Submitting changes](#submitting-changes) yourself. Write in the pull request what you did not verify, for example a platform that you did not test.
+- Keep the description short. Remove generated filler before you post it.
+
+A maintainer can close a pull request when the author cannot explain it. A maintainer can also finish a useful pull request in its branch and merge it.
+
+Issues that an agent helped to write are welcome. Read the issue before you post it, and keep the exact command and output. When an agent used fallow and misread the output, the flags or the docs, tell us in the issue form. These reports show where the CLI, JSON or MCP contract is unclear. Maintainers mark them with the `type:agent-ux` label.
+
+## Reporting issues
+
+- **Bug reports**: [Open an issue](https://github.com/fallow-rs/fallow/issues/new?template=bug_report.yml) with reproduction steps
+- **Feature requests**: [Open an issue](https://github.com/fallow-rs/fallow/issues/new?template=feature_request.yml) describing the problem and proposed solution
+- **False positives**: Include the fallow output and a minimal reproduction
+
+## Documentation
+
+Public user documentation lives at
+[fallow.tools/docs](https://fallow.tools/docs/) and is authored in the public
+[`fallow-rs/docs`](https://github.com/fallow-rs/docs) repository.
+
+Maintainer documentation for this codebase starts at
+[`docs/README.md`](docs/README.md). Use the
+[task context map](docs/development/task-context-map.md) before changing
+architecture, implementation references, skills, or verification workflows.

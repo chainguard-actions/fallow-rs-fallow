@@ -1,0 +1,50 @@
+name: Test dead-code regression baseline with no regression
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.46.0'
+          fail-on-issues: 'false'
+          save-regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+          artifacts-dir: fallow-artifacts-regression-save
+      - name: Assert regression baseline was saved
+        run: |
+          F="$GITHUB_WORKSPACE/fallow-regression-baseline.json"
+          if [ ! -s "$F" ]; then
+            echo "FAIL: regression baseline file missing"
+            exit 1
+          fi
+          cat "$F"
+          echo "PASS"
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/dirty-project
+          version: '3.46.0'
+          fail-on-issues: 'false'
+          fail-on-regression: 'true'
+          regression-baseline: ${{ github.workspace }}/fallow-regression-baseline.json
+          artifacts-dir: fallow-artifacts-regression-compare
+      - name: Assert no regression detected
+        env:
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          FAILED: ${{ steps.compare.outputs.gates-failed }}
+        run: |
+          echo "issues: $ISSUES gates-failed: '$FAILED'"
+          if ! [[ "$ISSUES" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          case ",$FAILED," in
+            *regression*) echo "FAIL: unexpected regression gate failure"; exit 1 ;;
+          esac
+          echo "PASS"
