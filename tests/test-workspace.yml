@@ -1,0 +1,43 @@
+name: Test dead-code scoped to a single workspace
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/monorepo
+          workspace: pkg-a
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - name: Assert issues numeric and no pkg-b findings
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results missing"
+            exit 1
+          fi
+          if jq -r '.. | strings' "$RESULTS" | grep -q 'packages/pkg-b/'; then
+            echo "FAIL: findings from pkg-b leaked into pkg-a scoped run"
+            exit 1
+          fi
+          echo "PASS"

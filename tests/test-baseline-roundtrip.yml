@@ -1,0 +1,68 @@
+name: Test save-baseline then baseline comparison (dead-code)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: save
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/js-project
+          format: json
+          save-baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - name: Assert baseline file was saved
+        run: |
+          F="$GITHUB_WORKSPACE/fallow-dead-code-baseline.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: baseline not saved at $F"
+            exit 1
+          fi
+          jq empty "$F" || { echo "FAIL: baseline is not valid JSON"; exit 1; }
+          cat "$F"
+          echo "PASS"
+
+      - id: compare
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/js-project
+          format: json
+          baseline: ${{ github.workspace }}/fallow-dead-code-baseline.json
+          fail-on-issues: 'true'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - name: Assert baseline suppresses all known issues
+        env:
+          ISSUES: ${{ steps.compare.outputs.issues }}
+          STALE: ${{ steps.compare.outputs.baseline-stale-entries }}
+          BPATH: ${{ steps.compare.outputs.baseline-path }}
+        run: |
+          echo "issues: $ISSUES"
+          echo "baseline-stale-entries: '$STALE'"
+          echo "baseline-path: '$BPATH'"
+          if [ "$ISSUES" != "0" ]; then
+            echo "FAIL: expected 0 new issues against freshly saved baseline"
+            exit 1
+          fi
+          if [ -n "$STALE" ] && [ "$STALE" != "0" ]; then
+            echo "FAIL: freshly saved baseline should have no stale entries"
+            exit 1
+          fi
+          echo "PASS"

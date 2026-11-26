@@ -10,7 +10,24 @@
 
 **Harden Agent Version:** `2`
 
-Action **fallow-rs--fallow/v3.33.0** was hardened automatically. 0 finding(s) were identified and resolved across 2 iteration(s).
+Action **fallow-rs--fallow/v3.33.0** was hardened automatically. 1 finding(s) were identified and resolved across 1 iteration(s).
+
+## Findings Fixed
+
+### script-injection (severity: high)
+
+Sub-rule (a): a GitHub Actions expression is placed directly inside run: shell commands. All nine script-launching steps in the composite action use the form `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`. The steps are Install fallow (install.sh), Fallow branded token (broker-token.sh), Run analysis (analyze.sh), Check Code Scanning availability (check-code-scanning.sh), Post PR comment (comment.sh), Emit inline annotations (annotate.sh), Job summary (summary.sh) and Post review comments (review.sh). The expression is substituted as unquoted text before the shell runs, so a path containing spaces or shell metacharacters would be split or run as shell code. Fix: use the runner-provided env var in double quotes, e.g. `run: bash "$GITHUB_ACTION_PATH/action/scripts/install.sh"`.
+
+Locations:
+
+- `action.yml:411`
+- `action.yml:419`
+- `action.yml:532`
+- `action.yml:545`
+- `action.yml:592`
+- `action.yml:614`
+- `action.yml:640`
+- `action.yml:673`
 
 ## Iteration Notes
 
@@ -20,13 +37,5 @@ Action **fallow-rs--fallow/v3.33.0** was hardened automatically. 0 finding(s) we
 
 **Notes:**
 
-Fixed all 8 script-injection findings in action.yml. Each step that used `bash ${{ github.action_path }}/action/scripts/X.sh` in its `run:` line was updated to add `ACTION_PATH: ${{ github.action_path }}` to the step's `env:` block and changed the `run:` line to `bash "$ACTION_PATH/action/scripts/X.sh"`. This applies to: install.sh, broker-token.sh, analyze.sh, check-code-scanning.sh, comment.sh, annotate.sh, summary.sh, and review.sh steps.
-
-### Iteration 2
-
-**Fixes applied:** github-env-injection
-
-**Notes:**
-
-In action/scripts/analyze.sh, added sanitization of FALLOW_RENDER_PATH_PREFIX before writing it to $GITHUB_ENV. The fix introduces a `_SAFE_RENDER_PATH_PREFIX` variable that strips newlines and carriage returns using `printf '%s' "${FALLOW_RENDER_PATH_PREFIX}" | tr -d '\n\r'`, then uses `_SAFE_RENDER_PATH_PREFIX` in the printf that writes to $GITHUB_ENV. This prevents an attacker from injecting additional environment variables via embedded newlines in the --report-path-prefix or --annotations-path-prefix arguments.
+In action.yml, all eight script-launching steps (install, broker-token, analyze, check-code-scanning, comment, annotate, summary, review) used `run: bash ${{ github.action_path }}/action/scripts/<script>.sh`. Each now reads `run: bash "$GITHUB_ACTION_PATH/action/scripts/<script>.sh"`, so the path comes from the runner's environment variable in double quotes. All steps use shell: bash. The two ACTION_JQ_DIR entries that use github.action_path are in env: blocks, not in shell code, so they were left alone. No run: lines in action.yml contain ${{ }} expressions any more; the only remaining matches are example snippets in a docs markdown file.
 

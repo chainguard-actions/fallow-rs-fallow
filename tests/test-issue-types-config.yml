@@ -1,0 +1,56 @@
+name: Test dead-code with explicit config file and issue-types filter
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/js-project
+          config: ${{ github.workspace }}/tests/fixtures/fallow-config/.fallowrc.json
+          issue-types: unused-exports,unused-files
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - name: Assert issues output matches total_issues
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
+            exit 1
+          fi
+          TOTAL=$(jq -r '.total_issues' "$RESULTS")
+          echo "total_issues: $TOTAL"
+          if [ "$TOTAL" != "$ISSUES" ]; then
+            echo "FAIL: issues output ($ISSUES) != total_issues ($TOTAL)"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert only filtered issue types are reported
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          for key in unused_dependencies unused_types unresolved_imports; do
+            COUNT=$(jq -r --arg k "$key" '(.[$k] // []) | length' "$RESULTS")
+            echo "$key: $COUNT"
+            if [ "$COUNT" != "0" ]; then
+              echo "FAIL: $key should be filtered out by issue-types"
+              exit 1
+            fi
+          done
+          echo "PASS"

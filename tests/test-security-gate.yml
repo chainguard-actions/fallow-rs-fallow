@@ -1,0 +1,42 @@
+name: Test security command with security-gate new
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - id: action
+        uses: .
+        with:
+          command: security
+          root: tests/fixtures/js-project
+          format: json
+          changed-since: HEAD
+          security-gate: new
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - name: Assert outputs
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          GATE: ${{ steps.action.outputs.gate }}
+        run: |
+          echo "issues: $ISSUES gate: '$GATE'"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -n "$GATE" ] && [ "$GATE" != "new" ]; then
+            echo "FAIL: expected gate 'new', got '$GATE'"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,0 +1,40 @@
+name: Test invalid audit gate value is rejected
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          command: audit
+          root: tests/fixtures/js-project
+          format: json
+          gate: sometimes
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - name: Assert action failed validation
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          VERDICT: ${{ steps.action.outputs.verdict }}
+        run: |
+          echo "outcome: $OUTCOME verdict: '$VERDICT'"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: invalid gate value should fail"
+            exit 1
+          fi
+          if [ -n "$VERDICT" ]; then
+            echo "FAIL: no verdict expected when validation fails"
+            exit 1
+          fi
+          echo "PASS"

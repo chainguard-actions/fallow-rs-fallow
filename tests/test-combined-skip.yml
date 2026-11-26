@@ -1,0 +1,40 @@
+name: Test combined mode with skip selector and duplication threshold
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          root: tests/fixtures/js-project
+          skip: health
+          threshold: '100'
+          format: json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - name: Assert issues numeric and health section absent
+        env:
+          ISSUES: ${{ steps.action.outputs.issues }}
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "issues: $ISSUES"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          jq 'keys' "$RESULTS"
+          if [ "$(jq -r '.health != null' "$RESULTS")" = "true" ]; then
+            echo "FAIL: health section present despite skip: health"
+            exit 1
+          fi
+          echo "PASS"

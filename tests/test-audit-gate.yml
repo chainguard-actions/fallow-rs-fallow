@@ -1,0 +1,96 @@
+name: Test audit command with gate and per-analysis baselines
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - id: dc
+        uses: .
+        with:
+          command: dead-code
+          root: tests/fixtures/js-project
+          format: json
+          save-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - id: hl
+        uses: .
+        with:
+          command: health
+          root: tests/fixtures/js-project
+          format: json
+          save-baseline: ${{ github.workspace }}/audit-health-baseline.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - id: dp
+        uses: .
+        with:
+          command: dupes
+          root: tests/fixtures/js-project
+          format: json
+          save-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - id: action
+        uses: .
+        with:
+          command: audit
+          root: tests/fixtures/js-project
+          format: json
+          changed-since: HEAD
+          gate: all
+          dead-code-baseline: ${{ github.workspace }}/audit-dead-code-baseline.json
+          health-baseline: ${{ github.workspace }}/audit-health-baseline.json
+          dupes-baseline: ${{ github.workspace }}/audit-dupes-baseline.json
+          max-crap: '30'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
+          annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
+
+      - name: Assert audit verdict and gate outputs
+        env:
+          VERDICT: ${{ steps.action.outputs.verdict }}
+          GATE: ${{ steps.action.outputs.gate }}
+          ISSUES: ${{ steps.action.outputs.issues }}
+        run: |
+          echo "verdict: $VERDICT gate: $GATE issues: $ISSUES"
+          case "$VERDICT" in
+            pass|warn|fail) ;;
+            *) echo "FAIL: unexpected verdict '$VERDICT'"; exit 1 ;;
+          esac
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number"
+            exit 1
+          fi
+          if [ -n "$GATE" ] && [ "$GATE" != "all" ]; then
+            echo "FAIL: expected gate 'all', got '$GATE'"
+            exit 1
+          fi
+          echo "PASS"

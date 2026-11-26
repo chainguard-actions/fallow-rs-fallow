@@ -1,4 +1,4 @@
-name: Test health command thresholds and options
+name: Test health command with complexity thresholds, sorting and hotspots
 on:
   workflow_dispatch:
 jobs:
@@ -6,63 +6,67 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Create a minimal JS project for health analysis
-        run: |
-          mkdir -p /tmp/fallow-health-project
-          cat > /tmp/fallow-health-project/index.js << 'EOF'
-          export function complexFunction(a, b, c, d) {
-            if (a) { if (b) { if (c) { if (d) { return 1; } return 2; } return 3; } return 4; }
-            return 0;
-          }
-          EOF
-          cat > /tmp/fallow-health-project/package.json << 'EOF'
-          { "name": "health-test-project", "version": "1.0.0", "type": "module" }
-          EOF
-          # Create a minimal Istanbul coverage file
-          cat > /tmp/fallow-coverage.json << 'EOF'
-          {}
-          EOF
+        with:
+          fetch-depth: 0
 
       - id: action
         uses: .
-        continue-on-error: true
         with:
           command: health
-          root: /tmp/fallow-health-project
-          fail-on-issues: 'false'
+          root: tests/fixtures/js-project
+          format: json
           max-cyclomatic: '25'
           max-cognitive: '20'
-          max-crap: '50.0'
-          min-severity: 'high'
-          min-score: '0'
-          sort: 'cyclomatic'
-          top: '10'
-          coverage: /tmp/fallow-coverage.json
-          coverage-root: /tmp/fallow-health-project
-          runtime-coverage: /tmp/fallow-coverage.json
-          min-invocations-hot: '200'
-          min-observation-volume: '100'
-          low-traffic-threshold: '0.01'
+          max-crap: '40'
+          top: '5'
+          sort: cognitive
+          min-severity: critical
+          hotspots: 'true'
           since: '1y'
-          min-commits: '5'
-          save-snapshot: /tmp/fallow-snapshot
-          trend: 'false'
-          format: json
+          min-commits: '1'
+          threads: '2'
+          fail-on-issues: 'false'
+          auto-changed-since: 'false'
+          sarif: 'false'
           annotations: 'false'
+          type-aware: 'false'
+          no-cache: 'true'
+          version: '3.33.0'
 
-      - name: Assert action ran
+      - name: Assert issues output is a number
         env:
-          OUTCOME: ${{ steps.action.outcome }}
           ISSUES: ${{ steps.action.outputs.issues }}
         run: |
-          echo "outcome: $OUTCOME"
           echo "issues: $ISSUES"
-          if [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded"
-          elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected in harness environment)"
-          else
-            echo "FAIL: unexpected outcome '$OUTCOME'"
+          if ! echo "$ISSUES" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: issues output is not a number: '$ISSUES'"
             exit 1
           fi
+          echo "PASS: issues=$ISSUES"
+
+      - name: Assert results file is valid JSON
+        env:
+          RESULTS: ${{ steps.action.outputs.results }}
+        run: |
+          echo "results path: $RESULTS"
+          if [ -z "$RESULTS" ] || [ ! -f "$RESULTS" ]; then
+            echo "FAIL: results file missing"
+            exit 1
+          fi
+          if ! jq empty "$RESULTS"; then
+            echo "FAIL: results file is not valid JSON"
+            exit 1
+          fi
+          jq 'keys' "$RESULTS"
+          echo "PASS"
+
+      - name: Assert no critical-severity gate failure on the tiny fixture
+        env:
+          GATES_FAILED: ${{ steps.action.outputs.gates-failed }}
+        run: |
+          echo "gates-failed: '$GATES_FAILED'"
+          if echo "$GATES_FAILED" | grep -q 'severity'; then
+            echo "FAIL: min-severity critical gate failed on a trivial fixture"
+            exit 1
+          fi
+          echo "PASS"
